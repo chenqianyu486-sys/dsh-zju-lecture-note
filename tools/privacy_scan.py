@@ -201,8 +201,23 @@ def _is_skipped(path: str) -> bool:
     return os.path.splitext(normalised)[1].lower() in SKIP_SUFFIXES
 
 
+def _walk_files(root: str) -> List[str]:
+    files: List[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
+        for name in filenames:
+            files.append(os.path.join(dirpath, name))
+    return files
+
+
 def list_repository_files(root: str = REPO_ROOT) -> List[str]:
     """Return files that would be committed: tracked plus non-ignored untracked."""
+    # An explicit --root (e.g. the local, git-ignored `output/` directory) is
+    # scanned in full instead of being filtered by the repository's ignore
+    # rules: the point is to check what is actually on disk there.
+    if os.path.abspath(root) != os.path.abspath(REPO_ROOT):
+        return _walk_files(root)
+
     try:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
@@ -221,24 +236,21 @@ def list_repository_files(root: str = REPO_ROOT) -> List[str]:
     except (OSError, subprocess.SubprocessError):
         pass
 
-    files: List[str] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [name for name in dirnames if name not in SKIP_DIRS]
-        for name in filenames:
-            files.append(os.path.join(dirpath, name))
-    return files
+    return _walk_files(root)
 
 
 def scan_files(root: str = REPO_ROOT, files: Optional[Iterable[str]] = None) -> List[Finding]:
     """Scan repository files (or an explicit list) for privacy leaks."""
     findings: List[Finding] = []
     for path in files if files is not None else list_repository_files(root):
-        if _is_skipped(path):
+        relative = os.path.relpath(path, root).replace("\\", "/")
+        # Judge skip rules against the path relative to the scan root, so an
+        # explicit `--root output` is scanned instead of skipping itself.
+        if _is_skipped(relative):
             continue
         text = _read_text(path)
         if text is None:
             continue
-        relative = os.path.relpath(path, root).replace("\\", "/")
         findings.extend(scan_text(text, "file", relative))
     return findings
 
