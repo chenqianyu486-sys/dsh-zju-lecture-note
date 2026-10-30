@@ -10,7 +10,20 @@
  * 缺失时输出 {"ok":true,"skipped":true} 并以 0 退出，方便在无 dsh 的机器上跑测试。
  */
 
-import { apply } from "../lib/index.js";
+// The plugin imports the dsh peer packages statically, so a missing peer set
+// fails while loading the module. Import dynamically to keep this smoke test
+// runnable (as a skip) on machines without a dsh installation.
+let apply;
+try {
+  ({ apply } = await import("../lib/index.js"));
+} catch (error) {
+  const message = String(error?.message ?? error);
+  if (/Cannot find package '@deepseek-ai\//.test(message)) {
+    process.stdout.write(`${JSON.stringify({ ok: true, skipped: true, reason: message })}\n`);
+    process.exit(0);
+  }
+  throw error;
+}
 
 const SAMPLE_URL = "https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456&tenant_code=112";
 
