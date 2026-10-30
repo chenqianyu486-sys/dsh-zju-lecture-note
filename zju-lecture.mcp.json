@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "zju-lecture": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./server.mjs"
+      ],
+      "env": {},
+      "description": "提供浙大智云课堂回放的字幕、投影 PPT、课件文本与视频直链提取工具。",
+      "timeout": 120000
+    }
+  }
+}

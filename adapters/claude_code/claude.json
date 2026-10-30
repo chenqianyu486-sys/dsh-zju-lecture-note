@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zju-lecture": {
+      "command": "python3",
+      "args": ["${plugin_dir}/mcp_server.py"]
+    }
+  }
+}

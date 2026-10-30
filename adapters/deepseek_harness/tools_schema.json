@@ -1,0 +1,185 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_parse_url",
+      "description": "解析浙大智云课堂 (classroom.zju.edu.cn) 回放链接，提取 sub_id、course_id 与 tenant_code。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "智云课堂回放 URL（例如 https://classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...）或纯 sub_id 数字"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_fetch_transcript",
+      "description": "抓取智云课堂某节课的语音识别字幕。该接口为浙大公开接口，无需登录或 Cookie 即可获取整节课的语音识别文本。支持按分钟/秒切片、分块输出以及字符上限截断。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url_or_sub_id": {
+            "type": "string",
+            "description": "回放 URL 或 sub_id"
+          },
+          "tenant_code": {
+            "type": "string",
+            "description": "租户代码，默认为 112 (浙大)",
+            "default": "112"
+          },
+          "view_format": {
+            "type": "string",
+            "enum": [
+              "per_minute",
+              "per_segment",
+              "chunked",
+              "json"
+            ],
+            "description": "返回视图格式：'per_minute'（推荐：按分钟整合，带 [时:分] 时间戳）、'per_segment'（逐句带秒级时间戳）、'chunked'（按约 11k 字符自动分块，便于长课分批总结）、'json'（原始数据段）",
+            "default": "per_minute"
+          },
+          "start_minute": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "起始分钟（可选，例如只分析第 30 分钟后的内容）"
+          },
+          "end_minute": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "结束分钟（可选，例如分析到第 60 分钟为止）"
+          },
+          "max_chars": {
+            "type": "integer",
+            "minimum": 1000,
+            "description": "单次返回的字符上限（默认 60000）。超出会截断并在末尾标注，长课程建议改用 view_format=chunked",
+            "default": 60000
+          }
+        },
+        "required": [
+          "url_or_sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_fetch_slides",
+      "description": "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。需要登录态：可先调用 zju_read_browser_cookie 让服务端缓存登录态，或直接传入 cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url_or_sub_id": {
+            "type": "string",
+            "description": "回放 URL 或 sub_id"
+          },
+          "cookie": {
+            "type": "string",
+            "description": "智云课堂登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）"
+          },
+          "tenant_code": {
+            "type": "string",
+            "description": "租户代码，默认为 112",
+            "default": "112"
+          }
+        },
+        "required": [
+          "url_or_sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_extract_courseware",
+      "description": "从本地上传的课件（PPTX, DOCX, TXT, MD, CSV, JSON, PDF）中提取纯文本，用于注入 Agent 上下文以校准专业术语、公式与章节结构。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "课件文件的绝对路径或相对路径"
+          },
+          "max_chars": {
+            "type": "integer",
+            "minimum": 100,
+            "description": "最多提取字符数（默认 10000 字符）",
+            "default": 10000
+          }
+        },
+        "required": [
+          "file_path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_get_video_url",
+      "description": "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url_or_sub_id": {
+            "type": "string",
+            "description": "回放 URL 或 sub_id"
+          },
+          "cookie": {
+            "type": "string",
+            "description": "登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）"
+          },
+          "course_id": {
+            "type": "string",
+            "description": "课程 ID（可选，若从完整 URL 解析则自动包含）"
+          },
+          "tenant_code": {
+            "type": "string",
+            "description": "租户代码，默认为 112",
+            "default": "112"
+          }
+        },
+        "required": [
+          "url_or_sub_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "zju_read_browser_cookie",
+      "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态。默认只返回 Cookie 名称与长度，明文保留在 MCP 服务端缓存中供其他工具使用；确实需要明文时传 reveal=true。注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "待读取 Cookie 的域名，默认为 classroom.zju.edu.cn",
+            "default": "classroom.zju.edu.cn"
+          },
+          "reveal": {
+            "type": "boolean",
+            "description": "是否回显 Cookie 明文（默认 false）。明文会进入模型上下文，请谨慎使用。",
+            "default": false
+          }
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "zju-lecture",
+  "displayName": "浙大智云课堂讲义",
+  "version": "1.1.0",
+  "description": "抓取浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕、投影 PPT 与本地课件文本，生成带时间戳、LaTeX 公式与考点预测的结构化讲义。字幕接口公开免登录。",
+  "author": "chenqianyu486",
+  "icon": "icon.png",
+  "darkIcon": "icon-dark.png",
+  "category": "Education",
+  "exampleQueries": [
+    "帮我把这节课整理成讲义：https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456",
+    "提取这节课第 20 到 45 分钟老师讲解的例题与推导过程",
+    "根据课堂录音与课件，整理一份期末高频考点预测清单"
+  ],
+  "apps": [],
+  "mcpServers": [
+    "zju-lecture.mcp.json"
+  ],
+  "skills": [
+    "skills/zju-lecture-summarizer/SKILL.md"
+  ]
+}

@@ -1,0 +1,34 @@
+[project]
+name = "zju-lecture-agent-plugin"
+version = "1.1.0"
+description = "浙大智云课堂（classroom.zju.edu.cn）回放提取与智能知识蒸馏的 Agent Plugin / MCP Server"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "chenqianyu486" }]
+keywords = ["zju", "classroom", "lecture", "transcript", "mcp", "agent", "skill"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Education",
+]
+dependencies = []
+
+[project.optional-dependencies]
+# PDF 课件文本提取需要；其余功能零依赖。
+pdf = ["pypdf>=3.0"]
+# macOS 上部分 Python 安装的根证书不全时，安装后可避免关闭 SSL 校验。
+cert = ["certifi"]
+
+[project.scripts]
+zju-lecture = "zju_lecture.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["zju_lecture"]
+
+[tool.setuptools.package-data]
+zju_lecture = ["py.typed"]
