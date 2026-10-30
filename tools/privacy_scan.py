@@ -244,12 +244,14 @@ def scan_files(root: str = REPO_ROOT, files: Optional[Iterable[str]] = None) -> 
 
 
 def scan_git_history(root: str = REPO_ROOT) -> List[Finding]:
-    """Scan every line ever added or removed in git history.
+    """Scan every line ever added to git history.
 
     ``git log -p`` is used instead of ``git grep`` because the rules rely on
-    Python regex features (lookarounds) that POSIX ERE does not support. Both
-    added and removed lines are scanned, so a secret that was deleted still
-    surfaces — git history keeps it reachable.
+    Python regex features (lookarounds) that POSIX ERE does not support.
+    Added lines are enough: any line that ever existed in a reachable commit
+    was introduced by some commit's ``+`` side, including the root commit.
+    Removed lines are skipped so a cleanup commit is not blamed for the
+    secret it deletes.
     """
     findings: List[Finding] = []
     try:
@@ -277,9 +279,7 @@ def scan_git_history(root: str = REPO_ROOT) -> List[Finding]:
         if line.startswith("+++ b/"):
             current_file = line[len("+++ b/"):]
             continue
-        if not line.startswith(("+", "-")):
-            continue
-        if line.startswith(("+++", "---")):
+        if not line.startswith("+") or line.startswith("+++"):
             continue
         content = line[1:]
         for finding in scan_text(content, "history", f"{commit}:{current_file}"):

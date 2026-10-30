@@ -9,6 +9,8 @@ and it must report the real repository as clean.
 
 import io
 import os
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -80,8 +82,37 @@ class TestScanner(unittest.TestCase):
             self.assertTrue(findings)
             self.assertEqual(findings[0].rule, "github-token")
         finally:
-            import shutil
             shutil.rmtree(directory, ignore_errors=True)
+
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_history_scan_blames_the_commit_that_added_the_secret(self):
+        root = tempfile.mkdtemp(prefix="privacy-history-")
+        try:
+            def git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.name=Privacy Test",
+                     "-c", "user.email=test@example.com", "-C", root, *args],
+                    check=True, capture_output=True, text=True, encoding="utf-8",
+                )
+
+            git("init", "-q")
+            leaked = os.path.join(root, "leak.py")
+            with open(leaked, "w", encoding="utf-8") as handle:
+                handle.write('KEY = "sk-' + "C" * 32 + '"\n')
+            git("add", "leak.py")
+            git("commit", "-q", "-m", "add leak")
+            os.unlink(leaked)
+            git("add", "-A")
+            git("commit", "-q", "-m", "remove leak")
+
+            findings = privacy_scan.scan_git_history(root)
+            # The cleanup commit must not be blamed for the removal; the
+            # adding commit is the one that introduced the line.
+            self.assertEqual(len(findings), 1, findings)
+            self.assertEqual(findings[0].rule, "openai-key")
+            self.assertIn("leak.py", findings[0].location)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":
