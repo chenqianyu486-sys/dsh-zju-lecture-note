@@ -162,6 +162,31 @@
   {
     "type": "function",
     "function": {
+      "name": "zju_check_note",
+      "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。建议在写完讲义后、交付给用户前调用一次。",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "讲义 Markdown 文件的绝对路径或相对路径"
+          },
+          "fix": {
+            "type": "boolean",
+            "description": "是否自动修正可机械修复的问题并回写文件（默认 false，只检查）",
+            "default": false
+          }
+        },
+        "required": [
+          "file_path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "zju_read_browser_cookie",
       "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态。默认只返回 Cookie 名称与长度，明文保留在 MCP 服务端缓存中供其他工具使用；确实需要明文时传 reveal=true。注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用。",
       "parameters": {

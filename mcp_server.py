@@ -33,6 +33,7 @@ from zju_lecture.client import (
 )
 from zju_lecture.cookies import CookieAccessError, read_edge_cookies
 from zju_lecture.courseware import CoursewareError, extract_courseware_text
+from zju_lecture.note_lint import check_markdown, fix_markdown, format_report
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -42,7 +43,7 @@ from zju_lecture.formatter import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -203,6 +204,33 @@ TOOLS: List[Dict[str, Any]] = [
                 },
             },
             "required": ["url_or_sub_id"],
+        },
+    },
+    {
+        "name": "zju_check_note",
+        "description": (
+            "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。"
+            "静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、"
+            "块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。"
+            "传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、"
+            "表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。"
+            "建议在写完讲义后、交付给用户前调用一次。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "讲义 Markdown 文件的绝对路径或相对路径",
+                },
+                "fix": {
+                    "type": "boolean",
+                    "description": "是否自动修正可机械修复的问题并回写文件（默认 false，只检查）",
+                    "default": False,
+                },
+            },
+            "required": ["file_path"],
         },
     },
     {
@@ -382,6 +410,37 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
             ensure_ascii=False,
             indent=2,
         )
+
+    if name == "zju_check_note":
+        file_path = str(arguments.get("file_path", "")).strip()
+        if not file_path:
+            raise ValueError("zju_check_note 需要 file_path 参数")
+        if not os.path.isfile(file_path):
+            return f"错误: 找不到讲义文件: {file_path}"
+        try:
+            with open(file_path, "r", encoding="utf-8") as handle:
+                note_text = handle.read()
+        except UnicodeDecodeError:
+            return f"错误: 讲义文件不是 UTF-8 编码: {file_path}"
+        except OSError as exc:
+            return f"错误: 读取讲义文件失败: {exc}"
+
+        applied = []
+        if arguments.get("fix"):
+            fixed_text, applied = fix_markdown(note_text)
+            if fixed_text != note_text:
+                try:
+                    with open(file_path, "w", encoding="utf-8", newline="\n") as handle:
+                        handle.write(fixed_text)
+                except OSError as exc:
+                    return f"错误: 回写讲义文件失败: {exc}"
+                note_text = fixed_text
+
+        report = format_report(os.path.basename(file_path), check_markdown(note_text))
+        if applied:
+            applied_block = "\n".join(f"- {item}" for item in applied)
+            report = f"=== 已自动修复 ===\n{applied_block}\n\n{report}"
+        return report
 
     if name == "zju_read_browser_cookie":
         domain = str(arguments.get("domain") or DEFAULT_DOMAIN)

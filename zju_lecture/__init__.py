@@ -14,6 +14,7 @@ from .client import (
 )
 from .cookies import CookieAccessError, get_edge_cookie, read_edge_cookies
 from .courseware import CoursewareError, extract_courseware_text
+from .note_lint import Issue, check_markdown, fix_markdown, format_report
 from .formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -33,6 +34,10 @@ __all__ = [
     "fetch_slides",
     "fetch_video_url",
     "extract_courseware_text",
+    "check_markdown",
+    "fix_markdown",
+    "format_report",
+    "Issue",
     "get_edge_cookie",
     "read_edge_cookies",
     "format_timestamp",

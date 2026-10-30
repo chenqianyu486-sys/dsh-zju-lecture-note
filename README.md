@@ -33,6 +33,7 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** |
 | `zju_fetch_slides` | 抓课堂投影的 PPT 文字层与 OCR | 需登录态（可自动读本机 Edge） |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 |
+| `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（可一键修复机械问题） | 本地文件 |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 需登录态 |
 | `zju_read_browser_cookie` | 读取本机 Edge 登录态（**默认不回显明文**，只在服务端缓存） | 本机读取 |
 
@@ -100,29 +101,51 @@ zju-lecture-agent-plugin/
 │   ├── client.py                    # 智云课堂 API 客户端
 │   ├── cookies.py                   # Edge Cookie 读取与解密
 │   ├── courseware.py                # 课件文本提取
+│   ├── note_lint.py                 # 讲义 Markdown 公式规范检查 / 自动修复
 │   ├── formatter.py                 # 时间戳 / 分钟聚合 / 分块
 │   └── cli.py                       # 命令行入口
-├── skills/zju-lecture-summarizer/SKILL.md   # 讲义生成 SOP（五段式模板）
+├── skills/zju-lecture-summarizer/SKILL.md   # 讲义生成 SOP（五段式模板 + 公式规范）
 ├── adapters/                        # 其他宿主的接入示例（不进入插件包）
 ├── tests/test_plugin.py             # 回归测试
 ├── tools/build_plugin.py            # 校验 / 打包 / 安装
+├── tools/check_note.py              # 讲义渲染规范检查（CLI）
 ├── tools/export_schemas.py          # 从 TOOLS 重新生成适配器 schema
 ├── icon.png / icon-dark.png         # 插件图标
 ├── LICENSE / ATTRIBUTION.md
 └── README.md
 ```
 
+## 讲义的公式规范
+
+生成的讲义要**能渲染**，而不只是"公式写对了"。插件把这件事做成了两道闸门：
+
+1. **规范写进 Skill**（`skills/zju-lecture-summarizer/SKILL.md` §4④）——行内 `$...$` / 独立 `$$...$$`、
+   分式 `\frac{分子}{分母}`（分子分母都带花括号）、绝对值 `\lvert ... \rvert`（不写裸 `|`）、
+   虚数单位 `\mathrm{i}`、中文不塞进 `\text{}`、`<details>` 写成多行。
+2. **产出后自检**——`zju_check_note` 静态扫描讲义，捕获"表格列被裸竖线截断""行内公式没闭合"
+   "块级公式没独立成行""`\frac` 缺花括号""单行 `<details>`"这类会让整篇散架的问题。
+
+```bash
+python tools/check_note.py 讲义.md            # 只检查
+python tools/check_note.py --fix 讲义.md       # 自动修正机械问题（单行 $$ 块、\dfrac、
+                                              # \frac 补花括号、表格裸竖线、单行 <details>）
+```
+
+自动修复只做**语义无歧义**的改写；需要判断的（未闭合的 `$`、`\text{}` 里的中文、裸虚数单位）
+保持原样并继续报出来。
+
 ## 开发与测试
 
 ```bash
 python -m unittest discover -s tests -v     # 全部回归测试
 python tools/build_plugin.py --validate     # 按插件规范校验包结构
+python tools/check_note.py 讲义.md           # 讲义渲染规范检查
 python tools/export_schemas.py              # 改动 TOOLS 后重新生成适配器 schema
 ```
 
 测试覆盖：URL 解析、时间戳格式化、分块时间区间回归、课件提取、工具 schema 健全性、
 MCP 协议往返（`initialize` / `tools/list` / `tools/call` / 通知不响应）、
-FIPS-197 AES-128 已知向量、Edge Cookie 失败原因分类。
+FIPS-197 AES-128 已知向量、Edge Cookie 失败原因分类、讲义公式规范检查与自动修复。
 
 ## 已知限制
 

@@ -227,7 +227,11 @@ def collect_package_files() -> List[str]:
         if not os.path.isdir(abs_dir):
             continue
         for entry in sorted(os.listdir(abs_dir)):
-            if entry.endswith(".py") and not entry.startswith("__"):
+            # Skip the bytecode cache only: "__init__.py" must ship, otherwise
+            # the installed package relies on namespace-package semantics.
+            if entry == "__pycache__":
+                continue
+            if entry.endswith(".py"):
                 files.append(f"{package_dir}/{entry}")
     return files
 

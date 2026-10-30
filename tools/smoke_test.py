@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 DEFAULT_DIR = os.path.join(
     os.environ.get("MINIMAX_DATA_DIR", "C:/Users/me/.minimax"), "plugins", "zju-lecture"
@@ -89,7 +90,19 @@ def main() -> int:
 
         listed = client.call({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = [tool["name"] for tool in listed["result"]["tools"]]
-        checks.append(("tools/list", len(names) == 6, f"{len(names)} 个工具: {', '.join(names)}"))
+        expected = [
+            "zju_parse_url",
+            "zju_fetch_transcript",
+            "zju_fetch_slides",
+            "zju_extract_courseware",
+            "zju_get_video_url",
+            "zju_read_browser_cookie",
+            "zju_check_note",
+        ]
+        missing = [name for name in expected if name not in names]
+        checks.append(("tools/list", not missing,
+                       f"{len(names)} 个工具: {', '.join(names)}"
+                       + (f" | 缺失: {missing}" if missing else "")))
         print(f"[smoke] tools/list -> {names}")
 
         parsed = client.call({
@@ -124,6 +137,29 @@ def main() -> int:
             checks.append(("zju_read_browser_cookie", actionable,
                            cookie_text.replace("\n", " | ")[:160]))
             print(f"[smoke] zju_read_browser_cookie -> {cookie_text.replace(chr(10), ' | ')[:160]}")
+
+        # The note linter must catch the failure modes that silently break a
+        # rendered lecture note (a table column cut in half, unclosed math).
+        note_path = os.path.join(tempfile.gettempdir(), "zju_smoke_note.md")
+        with open(note_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "| A | B |\n| :--- | :--- |\n"
+                "| $x$ | $|y|=1$ |\n\n"
+                "$$z=\\frac12$$\n"
+            )
+        try:
+            linted = client.call({
+                "jsonrpc": "2.0", "id": 6, "method": "tools/call",
+                "params": {"name": "zju_check_note",
+                           "arguments": {"file_path": note_path}},
+            })
+            lint_text = linted["result"]["content"][0]["text"]
+            caught = "table_bare_pipe" in lint_text and "frac_no_brace" in lint_text
+            checks.append(("zju_check_note", caught, lint_text.replace("\n", " | ")[:160]))
+            print(f"[smoke] zju_check_note -> {lint_text.replace(chr(10), ' | ')[:160]}")
+        finally:
+            if os.path.exists(note_path):
+                os.unlink(note_path)
 
     except SmokeError as exc:
         checks.append(("protocol", False, str(exc)))

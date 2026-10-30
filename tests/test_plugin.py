@@ -37,6 +37,7 @@ from zju_lecture.formatter import (
     format_timestamp,
 )
 from zju_lecture.courseware import extract_courseware_text
+from zju_lecture.note_lint import check_markdown, fix_markdown
 import mcp_server
 from mcp_server import TOOLS, handle_request, handle_tool_call
 
@@ -123,6 +124,148 @@ class TestCourseware(unittest.TestCase):
             extract_courseware_text(os.path.join(tempfile.gettempdir(), "nope.xyz"))
 
 
+class TestNoteLint(unittest.TestCase):
+    """The note linter must catch exactly the things that break rendering."""
+
+    CLEAN = (
+        "# 标题\n"
+        "\n"
+        "正文 $E=mc^2$ 结束。\n"
+        "\n"
+        "| 列 A | 列 B |\n"
+        "| :--- | :--- |\n"
+        "| $x=1$ | $\\lvert y\\rvert=2$ |\n"
+        "\n"
+        "$$\n"
+        "f(x)=\\frac{1}{2}x\n"
+        "$$\n"
+        "\n"
+        "结尾 $\\mathrm{i}$。\n"
+    )
+
+    def _codes(self, text):
+        return {issue.code for issue in check_markdown(text)}
+
+    def _errors(self, text):
+        return [i for i in check_markdown(text) if i.level == "error"]
+
+    def test_clean_note_has_no_findings(self):
+        issues = check_markdown(self.CLEAN)
+        self.assertEqual([i.code for i in issues], [], f"clean note flagged: {issues}")
+
+    def test_bare_pipe_in_table_cell_is_an_error(self):
+        """A bare ``|`` inside a table formula silently cuts the column in half."""
+        text = (
+            "| 时间段 | 要点 |\n"
+            "| :--- | :--- |\n"
+            "| `00:03` | 用 $e^z$ 的 $|w|=e^x$ 做分析 |\n"
+        )
+        self.assertIn("table_bare_pipe", self._codes(text))
+        self.assertTrue(self._errors(text))
+
+    def test_lvert_avoids_the_table_trap(self):
+        text = (
+            "| 时间段 | 要点 |\n"
+            "| :--- | :--- |\n"
+            "| `00:03` | 用 $e^z$ 的 $\\lvert w\\rvert=e^x$ 做分析 |\n"
+        )
+        self.assertNotIn("table_bare_pipe", self._codes(text))
+        self.assertEqual(self._errors(text), [])
+
+    def test_unclosed_inline_math_is_an_error(self):
+        self.assertIn("inline_math_unclosed", self._codes("公式写成 $x=1 就不对了。\n"))
+
+    def test_frac_requires_braces_on_both_sides(self):
+        self.assertIn("frac_no_brace", self._codes("写成 $\\frac12$ 不行。\n"))
+        self.assertIn("frac_no_brace", self._codes("写成 $\\frac{1}2$ 不行。\n"))
+        self.assertNotIn("frac_no_brace", self._codes("写成 $\\frac{1}{2}$ 可以。\n"))
+
+    def test_display_block_must_be_isolated(self):
+        glued = "上句\n$$\nx=1\n$$\n下句\n"
+        self.assertIn("display_not_isolated", self._codes(glued))
+        self.assertIn("display_inline", self._codes("写成 $$x=1$$ 不行。\n"))
+
+    def test_unclosed_display_block_is_an_error(self):
+        self.assertIn("display_unclosed", self._codes("$$\nx=1\n"))
+
+    def test_single_line_details_is_an_error(self):
+        text = "<details><summary>答案</summary>正文</details>\n"
+        self.assertIn("details_single_line", self._codes(text))
+
+    def test_multiline_details_is_accepted(self):
+        text = (
+            "<details>\n"
+            "<summary>答案</summary>\n"
+            "\n"
+            "正文 $x=1$\n"
+            "\n"
+            "</details>\n"
+        )
+        self.assertEqual(self._errors(text), [])
+
+    def test_dfrac_is_a_warning_not_an_error(self):
+        issues = check_markdown("写成 $\\dfrac{1}{2}$ 不统一。\n")
+        self.assertIn("dfrac_used", {i.code for i in issues})
+        self.assertEqual([i for i in issues if i.level == "error"], [])
+
+    def test_bare_imaginary_unit_is_a_warning(self):
+        issues = check_markdown("写成 $i\\mapsto\\frac{1}{2}$ 不统一。\n")
+        self.assertIn("bare_imaginary_unit", {i.code for i in issues})
+
+    def test_code_fence_contents_are_not_linted(self):
+        text = "```\n| $x$ | $y$ |\n| $a$ | $b$ |\n```\n"
+        self.assertEqual(self._errors(text), [])
+
+    def test_fixer_repairs_the_real_failure_modes(self):
+        broken = (
+            "| A | B |\n"
+            "| :--- | :--- |\n"
+            "| $x$ | $|y|=1$ |\n"
+            "\n"
+            "$$z=\\frac12$$\n"
+            "\n"
+            "<details><summary>答案</summary>正文 $x$</details>\n"
+        )
+        fixed, applied = fix_markdown(broken)
+        self.assertTrue(applied)
+        self.assertIn("\\lvert y\\rvert", fixed)
+        self.assertIn("\\frac{1}{2}", fixed)
+        self.assertIn("<details>\n", fixed)
+        errors = [i for i in check_markdown(fixed) if i.level == "error"]
+        self.assertEqual([i.code for i in errors], [], f"still broken: {errors}")
+
+    def test_fixer_leaves_code_fences_alone(self):
+        text = "```\n$$z=\\frac12$$\n```\n"
+        fixed, applied = fix_markdown(text)
+        self.assertEqual(fixed, text)
+        self.assertEqual(applied, [])
+
+    def test_fixer_does_not_touch_a_clean_note(self):
+        fixed, applied = fix_markdown(self.CLEAN)
+        self.assertEqual(fixed, self.CLEAN)
+        self.assertEqual(applied, [])
+
+
+class TestPackaging(unittest.TestCase):
+
+    def test_package_collects_init_and_skips_bytecode(self):
+        """``__init__.py`` must ship; ``__pycache__`` must not."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "build_plugin",
+            os.path.join(BASE_DIR, "tools", "build_plugin.py"),
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        collected = module.collect_package_files()
+        self.assertIn("zju_lecture/__init__.py", collected)
+        self.assertIn("zju_lecture/note_lint.py", collected)
+        self.assertNotIn("zju_lecture/__pycache__", collected)
+        self.assertFalse([f for f in collected if "__pycache__" in f])
+
+
 class TestMCPTools(unittest.TestCase):
 
     def test_tool_schemas_are_wellformed(self):
@@ -134,6 +277,7 @@ class TestMCPTools(unittest.TestCase):
             "zju_extract_courseware",
             "zju_get_video_url",
             "zju_read_browser_cookie",
+            "zju_check_note",
         ):
             self.assertIn(expected, names)
 
@@ -186,6 +330,39 @@ class TestMCPTools(unittest.TestCase):
         self.assertTrue(truncated.startswith("x" * 100))
         self.assertIn("已截断", truncated)
         self.assertEqual(mcp_server._truncate(text, 1000), text)
+
+    def test_check_note_tool_dispatch(self):
+        note = os.path.join(tempfile.gettempdir(), "zju_note_check.md")
+        with open(note, "w", encoding="utf-8") as handle:
+            handle.write("| A | B |\n| :--- | :--- |\n| $x$ | $|y|=1$ |\n")
+        try:
+            report = handle_tool_call("zju_check_note", {"file_path": note})
+            self.assertIn("不通过", report)
+            self.assertIn("table_bare_pipe", report)
+        finally:
+            if os.path.exists(note):
+                os.unlink(note)
+
+    def test_check_note_tool_reports_missing_file(self):
+        report = handle_tool_call(
+            "zju_check_note", {"file_path": os.path.join(tempfile.gettempdir(), "nope.md")}
+        )
+        self.assertIn("找不到讲义文件", report)
+
+    def test_check_note_tool_can_fix_in_place(self):
+        note = os.path.join(tempfile.gettempdir(), "zju_note_fix.md")
+        with open(note, "w", encoding="utf-8") as handle:
+            handle.write("| A | B |\n| :--- | :--- |\n| $x$ | $|y|=1$ |\n")
+        try:
+            report = handle_tool_call("zju_check_note", {"file_path": note, "fix": True})
+            self.assertIn("已自动修复", report)
+            self.assertIn("结论: 通过", report)
+            with open(note, "r", encoding="utf-8") as handle:
+                fixed = handle.read()
+            self.assertIn("\\lvert y\\rvert", fixed)
+        finally:
+            if os.path.exists(note):
+                os.unlink(note)
 
 
 class TestCrypto(unittest.TestCase):
