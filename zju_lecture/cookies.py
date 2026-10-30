@@ -8,12 +8,15 @@ Also supports cookie string formatting and manual token injection.
 import glob
 import hashlib
 import os
+import pathlib
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
+
+from .security import sanitize_cookie_header
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -241,25 +244,111 @@ def _cookie_db_candidates(edge_root: str) -> List[str]:
     )
 
 
-def _copy_cookie_db(db_path: str) -> str:
-    """Copy the live Edge cookie DB to a temp file.
+def _host_matches(host_key: str, domain: str) -> bool:
+    """Exact-or-subdomain match, never a substring match.
 
-    Chromium keeps the database locked while the browser runs, so the file is
-    copied out before it is opened. Raises OSError (PermissionError on
-    Windows) when the copy is refused.
+    ``LIKE '%classroom.zju.edu.cn%'`` would also match
+    ``classroom.zju.edu.cn.attacker.example``; only the real host and its
+    subdomains may contribute a login cookie.
     """
-    handle = tempfile.NamedTemporaryFile(prefix="edge-cookies-", suffix=".db", delete=False)
-    tmp_path = handle.name
-    handle.close()
+    host = (host_key or "").strip().lower().lstrip(".")
+    wanted = (domain or "").strip().lower().lstrip(".")
+    if not host or not wanted:
+        return False
+    return host == wanted or host.endswith("." + wanted)
+
+
+class _DirectReadUnavailable(Exception):
+    """The live database could not be opened read-only; copy it first."""
+
+
+def _query_cookie_rows(db_path: str, domain: str) -> List[Tuple[str, str, str, Optional[bytes]]]:
+    """Query the ``cookies`` table without modifying the database.
+
+    The file is opened read-only, so reading a live Edge database does not
+    create a temporary copy at all whenever Chromium allows shared reads.
+    """
+    try:
+        target = pathlib.Path(db_path).as_uri() + "?mode=ro"
+    except ValueError as exc:  # pragma: no cover - malformed path
+        raise _DirectReadUnavailable(str(exc)) from exc
+
+    try:
+        conn = sqlite3.connect(target, uri=True, timeout=2.0)
+    except sqlite3.Error as exc:
+        raise _DirectReadUnavailable(str(exc)) from exc
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT host_key, name, value, encrypted_value FROM cookies WHERE host_key LIKE ?",
+            (f"%{domain}%",),
+        )
+        return [row for row in cursor.fetchall() if _host_matches(str(row[0]), domain)]
+    except sqlite3.Error as exc:
+        raise _DirectReadUnavailable(str(exc)) from exc
+    finally:
+        conn.close()
+
+
+def _secure_remove(path: str) -> None:
+    """Overwrite then delete a temporary file that held browser cookies."""
+    try:
+        with open(path, "r+b") as handle:
+            length = handle.seek(0, os.SEEK_END)
+            handle.seek(0)
+            if length:
+                handle.write(b"\0" * length)
+                handle.flush()
+                os.fsync(handle.fileno())
+    except OSError:
+        pass
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _copy_cookie_db(db_path: str) -> str:
+    """Copy the live Edge cookie DB into a private 0600 temp file.
+
+    Used only when a read-only connection is refused (Chromium holds an
+    exclusive lock). The file is truncated and removed by the caller with
+    :func:`_secure_remove`, so an abrupt exit does not leave readable browser
+    credentials behind in the temp directory.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="zju-lecture-cookie-")
+    try:
+        os.chmod(tmp_dir, 0o700)
+    except OSError:
+        pass
+    tmp_path = os.path.join(tmp_dir, "Cookies")
     try:
         shutil.copyfile(db_path, tmp_path)
-    except OSError:
         try:
-            os.unlink(tmp_path)
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        _secure_remove(tmp_path)
+        try:
+            os.rmdir(tmp_dir)
         except OSError:
             pass
         raise
     return tmp_path
+
+
+def _read_rows_with_copy(db_path: str, domain: str) -> List[Tuple[str, str, str, Optional[bytes]]]:
+    """Fallback path: copy the database, read it, then shred the copy."""
+    tmp_path = _copy_cookie_db(db_path)
+    try:
+        return _query_cookie_rows(tmp_path, domain)
+    finally:
+        _secure_remove(tmp_path)
+        try:
+            os.rmdir(os.path.dirname(tmp_path))
+        except OSError:
+            pass
 
 
 def read_edge_cookies(
@@ -272,12 +361,23 @@ def read_edge_cookies(
     actionable hint. The failure modes are deliberately distinguishable: a
     locked database and a missing login look identical if every exception is
     swallowed.
+
+    Only cookies whose host is exactly ``domain_filter`` or one of its
+    subdomains are returned, and cookie values never appear in error text.
     """
+    domain = (domain_filter or "").strip()
+    if not domain:
+        return None, CookieAccessError(
+            "未提供要读取的域名。",
+            f"本插件只读取 {DEFAULT_DOMAIN} 的登录态。",
+            reason="no_domain",
+        )
+
     edge_root = _edge_root()
     if not edge_root:
         return None, CookieAccessError(
             f"当前系统（{sys.platform}）不支持自动读取 Edge Cookie。",
-            "请在浏览器开发者工具里复制 Cookie 后手动传入 cookie 参数。",
+            "请在宿主配置里设置 ZJU_COOKIE 环境变量（不要把 Cookie 粘贴到对话里）。",
             reason="unsupported_platform",
         )
 
@@ -294,7 +394,7 @@ def read_edge_cookies(
             return None, CookieAccessError(
                 "无法从 macOS 钥匙串读取 Edge 的 Safe Storage 密钥。",
                 "首次运行请在弹出的钥匙串授权框中选择『始终允许』；"
-                "或改用手动粘贴 Cookie。",
+                "或在宿主配置里设置 ZJU_COOKIE 环境变量。",
                 reason="keychain_denied",
             )
         decrypt_fn = lambda raw: _decrypt_mac_cookie(raw, key)
@@ -315,33 +415,16 @@ def read_edge_cookies(
 
     for db_path in candidates:
         try:
-            tmp_path = _copy_cookie_db(db_path)
-        except PermissionError:
-            locked = True
-            continue
-        except OSError:
-            locked = True
-            continue
-        try:
-            conn = sqlite3.connect(tmp_path)
+            rows = _query_cookie_rows(db_path, domain)
+        except _DirectReadUnavailable:
             try:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT host_key, name, value, encrypted_value FROM cookies "
-                    "WHERE host_key LIKE ?",
-                    (f"%{domain_filter}%",),
-                )
-                rows.extend(cursor.fetchall())
-            finally:
-                conn.close()
-        except sqlite3.Error as exc:
-            db_error = exc
-            continue
-        finally:
-            try:
-                os.unlink(tmp_path)
+                rows = _read_rows_with_copy(db_path, domain)
             except OSError:
-                pass
+                locked = True
+                continue
+            except (_DirectReadUnavailable, sqlite3.Error) as exc:
+                db_error = exc
+                continue
         if rows:
             break
 
@@ -350,7 +433,7 @@ def read_edge_cookies(
             return None, CookieAccessError(
                 "Edge 正在运行，Cookie 数据库被独占锁定，无法读取。",
                 "请完全退出 Edge（包括后台驻留进程）后重试；"
-                "或直接在浏览器开发者工具里复制 Cookie 手动传入。",
+                "或在宿主配置里设置 ZJU_COOKIE 环境变量（不要把 Cookie 粘贴到对话里）。",
                 reason="locked",
             )
         if db_error is not None:
@@ -360,7 +443,7 @@ def read_edge_cookies(
                 reason="db_error",
             )
         return None, CookieAccessError(
-            f"Edge 中没有 {domain_filter} 的 Cookie。",
+            f"Edge 中没有 {domain} 的 Cookie。",
             "请先在 Edge 中登录智云课堂，然后再读取登录态。",
             reason="no_rows",
         )
@@ -386,9 +469,9 @@ def read_edge_cookies(
 
     if not pairs:
         return None, CookieAccessError(
-            f"读取到 {len(rows)} 条 {domain_filter} 的 Cookie，但全部解密失败。",
+            f"读取到 {len(rows)} 条 {domain} 的 Cookie，但全部解密失败。",
             "新版 Edge（v20 应用绑定加密）可能无法用本地权限解密；"
-            "请在浏览器开发者工具里复制 Cookie 手动传入。",
+            "请在宿主配置里设置 ZJU_COOKIE 环境变量。",
             reason="decrypt_failed",
         )
 
@@ -398,7 +481,14 @@ def read_edge_cookies(
             file=sys.stderr,
         )
 
-    return "; ".join(pairs), None
+    try:
+        return sanitize_cookie_header("; ".join(pairs)), None
+    except ValueError as exc:
+        return None, CookieAccessError(
+            f"Edge 中的 Cookie 格式不合法：{exc}",
+            "已拒绝发送该 Cookie。请退出 Edge 后重新登录智云课堂再试。",
+            reason="invalid",
+        )
 
 
 def get_edge_cookie(domain_filter: str = DEFAULT_DOMAIN) -> Optional[str]:

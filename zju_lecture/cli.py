@@ -17,7 +17,7 @@ from .client import (
     parse_lecture_url,
 )
 from .cookies import get_edge_cookie
-from .courseware import extract_courseware_text
+from .courseware import CoursewareError, extract_courseware_text
 from .formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -25,6 +25,30 @@ from .formatter import (
     format_slides_as_markdown,
     format_timestamp,
 )
+from .security import describe_cookie, sanitize_cookie_header
+
+
+def _read_cookie_file(path: str) -> str:
+    """Read a cookie header from a local file (never printed)."""
+    with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
+        raw = handle.readline().strip()
+    return sanitize_cookie_header(raw)
+
+
+def _load_cookie(explicit: str = "", cookie_file: str = "") -> str:
+    """Resolve a cookie: explicit arg > file > ZJU_COOKIE env > local Edge."""
+    if explicit:
+        print(
+            "[zju-lecture] 警告: --cookie 会出现在进程列表中；建议改用 --cookie-file 或 ZJU_COOKIE。",
+            file=sys.stderr,
+        )
+        return sanitize_cookie_header(explicit)
+    if cookie_file:
+        return _read_cookie_file(cookie_file)
+    env_cookie = os.environ.get("ZJU_COOKIE", "").strip()
+    if env_cookie:
+        return sanitize_cookie_header(env_cookie)
+    return get_edge_cookie() or ""
 
 
 def _run_mcp_server() -> None:
@@ -74,7 +98,15 @@ def main():
     # Command: slides
     p_slides = subparsers.add_parser("slides", help="抓取课堂 PPT 文字层（需 Cookie）")
     p_slides.add_argument("url", help="回放 URL 或 sub_id")
-    p_slides.add_argument("--cookie", help="Cookie 字符串，留空将尝试从 Edge 自动读取")
+    p_slides.add_argument(
+        "--cookie-file",
+        help="从文件读取 Cookie（推荐；避免出现在进程列表与 shell 历史里）",
+    )
+    p_slides.add_argument(
+        "--cookie",
+        help="直接传 Cookie 字符串（会出现在进程列表，已不推荐；留空则依次尝试 "
+             "--cookie-file / ZJU_COOKIE / 本机 Edge）",
+    )
     p_slides.add_argument("--out", "-o", help="输出 Markdown 路径")
 
     # Command: courseware
@@ -84,6 +116,11 @@ def main():
 
     # Command: cookie
     p_cookie = subparsers.add_parser("cookie", help="从本机 Edge 读取智云课堂 Cookie")
+    p_cookie.add_argument(
+        "--reveal",
+        action="store_true",
+        help="回显 Cookie 明文（默认只显示名称与长度；明文会进入终端历史，谨慎使用）",
+    )
 
     # Command: mcp
     p_mcp = subparsers.add_parser("mcp", help="启动 MCP stdio 服务")
@@ -132,7 +169,7 @@ def main():
             parsed = parse_lecture_url(args.url)
             sub_id = parsed["sub_id"]
             tenant = parsed.get("tenant_code", "112")
-            cookie = args.cookie or get_edge_cookie()
+            cookie = _load_cookie(args.cookie or "", args.cookie_file or "")
             slides = fetch_slides(sub_id, tenant, cookie)
             md = format_slides_as_markdown(slides)
             if args.out:
@@ -143,16 +180,30 @@ def main():
                 print(md or "未获取到 PPT 数据")
 
         elif args.command == "courseware":
-            text = extract_courseware_text(args.file, args.max_chars)
+            try:
+                text = extract_courseware_text(args.file, args.max_chars)
+            except CoursewareError as exc:
+                print(f"提取失败: {exc}", file=sys.stderr)
+                sys.exit(1)
             print(text)
 
         elif args.command == "cookie":
             c = get_edge_cookie()
-            if c:
-                print("读取成功:")
-                print(c)
-            else:
+            if not c:
                 print("未能在本机 Edge 找到 classroom.zju.edu.cn 的 Cookie。")
+                return
+            if args.reveal:
+                print("读取成功（明文回显；注意终端历史）：")
+                print(c)
+                return
+            info = describe_cookie(c)
+            print(
+                "读取成功（默认不显示明文）："
+                f"\n  Cookie 数量: {info['cookie_count']}"
+                f"\n  Cookie 名称: {', '.join(info['cookie_names'])}"
+                f"\n  总长度: {info['total_length']} 字符"
+            )
+            print("  如需明文请加 --reveal（不建议在共享终端使用）。")
 
         elif args.command == "mcp":
             _run_mcp_server()

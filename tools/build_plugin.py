@@ -34,6 +34,13 @@ from typing import Dict, List, Optional, Tuple
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+#: MiniMax Code data directory. Never hard-code a user's home path in the repo:
+#: the installer honours MINIMAX_DATA_DIR and otherwise falls back to the
+#: current user's home directory.
+DEFAULT_DATA_DIR = os.environ.get("MINIMAX_DATA_DIR") or os.path.join(
+    os.path.expanduser("~"), ".minimax"
+)
+
 PLUGIN_NAME = "zju-lecture"
 CATEGORIES = {
     "Office", "Studio", "Design & Sites", "Code", "Business",
@@ -54,6 +61,7 @@ PACKAGE_FILES = [
     "icon-dark.png",
     "LICENSE",
     "ATTRIBUTION.md",
+    "SECURITY.md",
     "README.md",
     "skills/zju-lecture-summarizer/SKILL.md",
 ]
@@ -328,8 +336,8 @@ def main() -> int:
     parser.add_argument("--zip", action="store_true", help="生成 dist/<name>-<version>.zip")
     parser.add_argument(
         "--dest",
-        default=os.path.join(os.environ.get("MINIMAX_DATA_DIR", "C:/Users/me/.minimax"), "plugins", PLUGIN_NAME),
-        help="安装目标目录",
+        default=os.path.join(DEFAULT_DATA_DIR, "plugins", PLUGIN_NAME),
+        help="安装目标目录（默认 $MINIMAX_DATA_DIR/plugins/zju-lecture，或 ~/.minimax/...）",
     )
     args = parser.parse_args()
 

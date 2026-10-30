@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""dsh-zju-lecture-note 插件形态的回归测试。
+
+覆盖：
+* 生成的 dsh 工具定义与 Python 核心的 TOOLS 保持一致（防漂移）
+* Node 侧导出的工具集合与 Python 侧一致
+* 桥接进程能真实拉起 Python 核心并调用一次 zju_parse_url
+* 插件清单 / cordis patch / Skill 的基本结构
+* 隐私约定：工具 schema 中不存在 cookie / reveal / domain 一类敏感入参，
+  Skill 以内存方式注册而不是复制进用户目录
+"""
+
+import json
+import os
+import subprocess
+import sys
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+from mcp_server import TOOLS  # noqa: E402
+from export_dsh_tools import build_tools, to_dsh_parameters  # noqa: E402
+
+SENSITIVE_TOOL_PARAMS = {"cookie", "reveal", "domain", "token", "password"}
+
+
+def run_node(script, *args):
+    return subprocess.run(
+        ["node", script, *args],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+    )
+
+
+def read_text(*parts):
+    with open(os.path.join(ROOT, *parts), encoding="utf-8") as handle:
+        return handle.read()
+
+
+class TestToolDefinitions(unittest.TestCase):
+
+    def test_generated_schema_matches_python_tools(self):
+        """lib/tools.schema.json 必须与当前 Python TOOLS 一致。"""
+        with open(os.path.join(ROOT, "lib", "tools.schema.json"), encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+        self.assertEqual(snapshot, build_tools())
+
+    def test_every_mcp_tool_is_exposed(self):
+        names = {tool["name"] for tool in build_tools()}
+        self.assertEqual(names, {tool["name"] for tool in TOOLS})
+
+    def test_required_flags_are_converted(self):
+        parameters = to_dsh_parameters({
+            "type": "object",
+            "properties": {"a": {"type": "string"}, "b": {"type": "integer"}},
+            "required": ["a"],
+        })
+        self.assertTrue(parameters["a"].get("required"))
+        self.assertNotIn("required", parameters["b"])
+
+    def test_unsupported_json_schema_keywords_are_stripped(self):
+        """dsh defineTool rejects keywords such as `minimum` at registration."""
+        parameters = to_dsh_parameters({
+            "type": "object",
+            "properties": {
+                "n": {"type": "integer", "minimum": 0, "maximum": 10, "default": 3},
+            },
+        })
+        self.assertEqual(parameters["n"], {"type": "integer", "default": 3})
+        for tool in build_tools():
+            for schema in tool["parameters"].values():
+                for unsupported in ("minimum", "maximum", "pattern", "minLength", "maxLength"):
+                    self.assertNotIn(unsupported, schema, tool["name"])
+
+    def test_plugin_apply_smoke_against_real_dsh_packages(self):
+        """apply() must register tools/skill/prompt with the real dsh packages."""
+        result = run_node(os.path.join("tests", "plugin_apply_smoke.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload.get("ok"), payload)
+        if not payload.get("skipped"):
+            self.assertEqual(len(payload["tools"]), len(TOOLS))
+            self.assertEqual(payload["skill"], "zju-lecture-summarizer")
+            self.assertIn("123456", payload["result"])
+
+    def test_node_exports_the_same_tools(self):
+        result = run_node(
+            "-e",
+            "import('./lib/tools.js').then(m => console.log(JSON.stringify(m.ZJU_TOOLS.map(t => t.name))))",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        names = json.loads(result.stdout.strip())
+        self.assertEqual(set(names), {tool["name"] for tool in TOOLS})
+
+
+class TestNoSecretToolInputs(unittest.TestCase):
+    """A login cookie must never be a model-visible tool argument."""
+
+    def test_tool_schemas_expose_no_secret_parameters(self):
+        for tool in TOOLS:
+            properties = tool["inputSchema"].get("properties", {})
+            for forbidden in SENSITIVE_TOOL_PARAMS:
+                self.assertNotIn(
+                    forbidden,
+                    properties,
+                    f"{tool['name']} 暴露了敏感入参 {forbidden}",
+                )
+
+    def test_dsh_tool_definitions_expose_no_secret_parameters(self):
+        for tool in build_tools():
+            for forbidden in SENSITIVE_TOOL_PARAMS:
+                self.assertNotIn(forbidden, tool["parameters"], tool["name"])
+
+    def test_descriptions_do_not_promise_plaintext_cookie_echo(self):
+        for tool in TOOLS:
+            self.assertNotIn("reveal=true", tool["description"])
+            self.assertNotIn("回显 Cookie 明文", tool["description"])
+
+
+class TestBridge(unittest.TestCase):
+
+    def test_bridge_calls_the_python_core(self):
+        result = run_node(os.path.join("tests", "bridge_smoke.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload.get("ok"), payload)
+        self.assertIn("123456", payload["result"])
+        self.assertEqual(payload["tools"], len(TOOLS))
+
+
+class TestPackage(unittest.TestCase):
+
+    def test_manifest_declares_the_dsh_bundle(self):
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
+        self.assertEqual(manifest["version"], "1.3.0")
+        self.assertEqual(manifest["type"], "module")
+        self.assertEqual(manifest["icon"], "icon.png")
+        self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
+        self.assertIn("mcp_server.py", manifest["files"])
+        self.assertIn("zju_lecture/*.py", manifest["files"])
+        # 必须逐文件枚举：files 里写整个 "zju_lecture" 目录会把 __pycache__/*.pyc 打进包
+        # （files 字段的优先级高于 .npmignore）。
+        self.assertNotIn("zju_lecture", manifest["files"])
+        self.assertIn("skills/zju-lecture-summarizer", manifest["files"])
+        self.assertIn("SECURITY.md", manifest["files"])
+        self.assertIn("@deepseek-ai/dsh-tools", manifest["peerDependencies"])
+        # 隐私：不要声明用不到的 peer，减少版本不匹配面。
+        self.assertNotIn("@deepseek-ai/dsh-agent", manifest["peerDependencies"])
+
+    def test_engines_use_a_range_not_a_pinned_runtime(self):
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertIn(">=", manifest["engines"]["dsh"])
+        self.assertIn("<", manifest["engines"]["dsh"])
+
+    def test_server_version_matches_the_package(self):
+        import mcp_server
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(mcp_server.SERVER_VERSION, manifest["version"])
+
+    def test_patch_inserts_the_plugin(self):
+        content = read_text("cordis.patch.yml")
+        self.assertIn("insert:", content)
+        self.assertIn("dsh-zju-lecture-note", content)
+
+    def test_skill_is_shipped(self):
+        content = read_text("skills", "zju-lecture-summarizer", "SKILL.md")
+        self.assertIn("公式书写规范", content)
+        self.assertIn("zju_check_note", content)
+        self.assertIn("不要在回复里回显登录 Cookie 明文", content)
+
+    def test_bridge_points_at_the_python_core(self):
+        content = read_text("lib", "bridge.js")
+        self.assertIn('"mcp_server.py"', content)
+        self.assertNotIn('join(PLUGIN_ROOT, "python"', content)
+
+    def test_bridge_forces_utf8_for_the_python_child(self):
+        content = read_text("lib", "bridge.js")
+        self.assertIn("PYTHONUTF8", content)
+        self.assertIn("PYTHONIOENCODING", content)
+
+
+class TestNoHomeDirectoryWrites(unittest.TestCase):
+    """The plugin registers the bundled Skill in memory; it must not copy it
+    into ``$DSH_HOME`` (or any other user directory)."""
+
+    def test_entrypoint_uses_the_skill_registry(self):
+        content = read_text("lib", "index.js")
+        self.assertIn("ctx.skills.register", content)
+        self.assertIn("registerSkill", content)
+
+    def test_entrypoint_does_not_copy_files_into_the_home_directory(self):
+        content = read_text("lib", "index.js")
+        for forbidden in ("copyFile", "homedir", "readdir", "mkdir", "node:fs/promises"):
+            self.assertNotIn(forbidden, content, f"lib/index.js 仍包含 {forbidden}")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

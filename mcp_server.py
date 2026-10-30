@@ -4,14 +4,19 @@
 ZJU Lecture Summarizer - Model Context Protocol (MCP) Server.
 
 Standard stdio JSON-RPC 2.0 server with ZERO external dependencies.
-Compatible with MiniMax Code, Claude Code, Cursor, Cline, Windsurf, and
-OpenAI/DeepSeek agent harnesses.
+Compatible with DeepSeek Harness (dsh), MiniMax Code, Claude Code, Cursor,
+Cline, Windsurf, and OpenAI-style function-calling harnesses.
 
 Design notes:
 * stdout carries JSON-RPC only; every diagnostic goes to stderr.
 * stdio is forced to UTF-8 so Chinese payloads survive a non-UTF-8 locale.
-* A login cookie read from the browser is cached server-side and never
-  echoed back to the model unless the caller explicitly asks for it.
+* Privacy boundary: a login cookie is read from the local browser (or from the
+  ``ZJU_COOKIE`` / ``ZJU_COOKIE_FILE`` local configuration) into process memory
+  and is *never* a tool argument and *never* a tool result. Every outbound
+  string additionally passes through a redactor, so a cookie cannot leak
+  through an error message, a traceback or a future debug print.
+* Local file tools only accept courseware/notes and refuse credential stores,
+  browser databases and key material.
 """
 
 import json
@@ -41,21 +46,97 @@ from zju_lecture.formatter import (
     format_slides_as_markdown,
     format_timestamp,
 )
+from zju_lecture.security import (
+    NOTE_EXTENSIONS,
+    REDACTOR,
+    LocalFileError,
+    describe_cookie,
+    guard_local_file,
+    sanitize_cookie_header,
+)
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
+
+#: Local, host-controlled cookie sources. Nothing here is model-supplied.
+COOKIE_ENV = "ZJU_COOKIE"
+COOKIE_FILE_ENV = "ZJU_COOKIE_FILE"
+_MAX_COOKIE_FILE_BYTES = 64 * 1024
 
 SERVER_INSTRUCTIONS = (
     "提供浙大智云课堂（classroom.zju.edu.cn）回放的字幕、投影 PPT 与课件文本提取。"
     "字幕接口公开免登录；PPT 与视频直链需要登录态。"
+    "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
     "长课程请使用 view_format=chunked 分批处理。"
 )
 
 # Cookies read from the local browser are kept here instead of being handed
 # back to the model as plaintext.
 _COOKIE_CACHE: Dict[str, str] = {}
+
+
+def _log(message: str) -> None:
+    """Write a diagnostic to stderr with every secret redacted."""
+    sys.stderr.write(f"[zju-lecture] {REDACTOR.redact(message)}\n")
+    sys.stderr.flush()
+
+
+def _remember_cookie(cookie: str) -> str:
+    """Register a cookie with the process redactor and the in-memory cache."""
+    REDACTOR.add_cookie(cookie)
+    _COOKIE_CACHE[DEFAULT_DOMAIN] = cookie
+    return cookie
+
+
+def _read_cookie_file(path: str) -> Optional[str]:
+    """Read a cookie header from a local file explicitly named by the host."""
+    try:
+        real_path = os.path.realpath(os.path.expanduser(path))
+        if not os.path.isfile(real_path) or os.path.getsize(real_path) > _MAX_COOKIE_FILE_BYTES:
+            return None
+        with open(real_path, "r", encoding="utf-8") as handle:
+            raw = handle.readline().strip()
+        return sanitize_cookie_header(raw)
+    except (OSError, ValueError):
+        return None
+
+
+def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Return ``(cookie, error_message, source)``.
+
+    Source order: in-memory cache → ``ZJU_COOKIE`` → ``ZJU_COOKIE_FILE`` →
+    local Edge. The error text is actionable and never contains a cookie
+    value.
+    """
+    cached = _COOKIE_CACHE.get(DEFAULT_DOMAIN)
+    if cached:
+        return cached, None, "cache"
+
+    raw = os.environ.get(COOKIE_ENV, "").strip()
+    if raw:
+        try:
+            return _remember_cookie(sanitize_cookie_header(raw)), None, "env"
+        except ValueError as exc:
+            return None, f"{COOKIE_ENV} 中的登录 Cookie 不可用：{exc}", None
+
+    cookie_file = os.environ.get(COOKIE_FILE_ENV, "").strip()
+    if cookie_file:
+        cookie = _read_cookie_file(cookie_file)
+        if cookie:
+            return _remember_cookie(cookie), None, "file"
+        return None, (
+            f"{COOKIE_FILE_ENV} 指向的文件不可用（需要存在、可读、UTF-8、"
+            "只含一行 name=value 形式的 Cookie）。"
+        ), None
+
+    cookie, error = read_edge_cookies(DEFAULT_DOMAIN)
+    if cookie:
+        return _remember_cookie(cookie), None, "edge"
+    if error is None:
+        return None, f"未能从本机 Microsoft Edge 读取到 {DEFAULT_DOMAIN} 的登录 Cookie。", None
+    return None, str(error), None
 
 
 # ---------------------------------------------------------------- Tool schemas
@@ -130,8 +211,8 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "zju_fetch_slides",
         "description": (
             "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。"
-            "需要登录态：可先调用 zju_read_browser_cookie 让服务端缓存登录态，或直接传入 cookie。"
-            "抓不到时会返回空提示，流水线可降级为纯字幕总结。"
+            "需要登录态：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；"
+            "本工具不接受也不回显 Cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。"
         ),
         "inputSchema": {
             "type": "object",
@@ -140,10 +221,6 @@ TOOLS: List[Dict[str, Any]] = [
                 "url_or_sub_id": {
                     "type": "string",
                     "description": "回放 URL 或 sub_id",
-                },
-                "cookie": {
-                    "type": "string",
-                    "description": "智云课堂登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）",
                 },
                 "tenant_code": {
                     "type": "string",
@@ -159,6 +236,7 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "从本地上传的课件（PPTX, DOCX, TXT, MD, CSV, JSON, PDF）中提取纯文本，"
             "用于注入 Agent 上下文以校准专业术语、公式与章节结构。"
+            "只接受课件格式；出于隐私保护会拒绝凭据文件、浏览器数据与密钥材料。"
         ),
         "inputSchema": {
             "type": "object",
@@ -180,7 +258,10 @@ TOOLS: List[Dict[str, Any]] = [
     },
     {
         "name": "zju_get_video_url",
-        "description": "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态。",
+        "description": (
+            "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态；"
+            "服务端自动使用缓存的登录态 / ZJU_COOKIE / 本机 Edge，本工具不接受也不回显 Cookie。"
+        ),
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
@@ -188,10 +269,6 @@ TOOLS: List[Dict[str, Any]] = [
                 "url_or_sub_id": {
                     "type": "string",
                     "description": "回放 URL 或 sub_id",
-                },
-                "cookie": {
-                    "type": "string",
-                    "description": "登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）",
                 },
                 "course_id": {
                     "type": "string",
@@ -236,61 +313,21 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_read_browser_cookie",
         "description": (
-            "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态。"
-            "默认只返回 Cookie 名称与长度，明文保留在 MCP 服务端缓存中供其他工具使用；"
-            "确实需要明文时传 reveal=true。"
-            "注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用。"
+            "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。"
+            "只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。"
+            "注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用，"
+            "或在宿主配置里设置 ZJU_COOKIE。"
         ),
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
-            "properties": {
-                "domain": {
-                    "type": "string",
-                    "description": "待读取 Cookie 的域名，默认为 classroom.zju.edu.cn",
-                    "default": DEFAULT_DOMAIN,
-                },
-                "reveal": {
-                    "type": "boolean",
-                    "description": "是否回显 Cookie 明文（默认 false）。明文会进入模型上下文，请谨慎使用。",
-                    "default": False,
-                },
-            },
+            "properties": {},
         },
     },
 ]
 
 
-# ---------------------------------------------------------------- Tool helpers
-
-def _cookie_names(cookie_header: str) -> List[str]:
-    names = []
-    for part in cookie_header.split(";"):
-        name = part.split("=", 1)[0].strip()
-        if name:
-            names.append(name)
-    return names
-
-
-def _resolve_cookie(domain: str = DEFAULT_DOMAIN) -> Tuple[Optional[str], Optional[str]]:
-    """Return (cookie, error_message).
-
-    The cookie comes from the explicit argument, the server-side cache, or a
-    fresh read of the local browser. Errors are returned as text so the model
-    sees an actionable reason instead of a generic failure.
-    """
-    cached = _COOKIE_CACHE.get(domain)
-    if cached:
-        return cached, None
-
-    cookie, error = read_edge_cookies(domain)
-    if cookie:
-        _COOKIE_CACHE[domain] = cookie
-        return cookie, None
-    if error is None:
-        return None, f"未能从本机 Microsoft Edge 读取到域名 '{domain}' 的登录 Cookie。"
-    return None, str(error)
-
+# ---------------------------------------------------------------- Tool implementation
 
 def _truncate(text: str, max_chars: Optional[int]) -> str:
     if not max_chars or len(text) <= max_chars:
@@ -298,8 +335,8 @@ def _truncate(text: str, max_chars: Optional[int]) -> str:
     return text[:max_chars] + f"\n\n[... 内容超过 {max_chars} 字符，已截断；请缩小时间区间或改用 view_format=chunked ...]"
 
 
-def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
-    """Execute the tool function and return the response payload."""
+def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
+    """Execute the tool function and return the raw response payload."""
     if name == "zju_parse_url":
         parsed = parse_lecture_url(str(arguments.get("url", "")))
         return json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -353,16 +390,14 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
         sub_id = parsed["sub_id"]
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
 
-        cookie = arguments.get("cookie")
+        cookie, cookie_error, _source = _resolve_cookie()
         if not cookie:
-            cookie, error = _resolve_cookie(DEFAULT_DOMAIN)
-            if not cookie:
-                return (
-                    "未抓取到 PPT 记录。可能原因：\n"
-                    f"{error or '未提供登录 Cookie'}\n"
-                    "2. 老师授课时未通过智云课堂课件系统同步投影\n"
-                    "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
-                )
+            return (
+                "未抓取到 PPT 记录。可能原因：\n"
+                f"{cookie_error or '未提供登录 Cookie'}\n"
+                "2. 老师授课时未通过智云课堂课件系统同步投影\n"
+                "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
+            )
 
         slides_data = fetch_slides(sub_id, tenant, cookie)
         if not slides_data:
@@ -379,7 +414,10 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
     if name == "zju_extract_courseware":
         file_path = str(arguments.get("file_path", ""))
         max_chars = arguments.get("max_chars") or 10000
-        text = extract_courseware_text(file_path, max_chars)
+        try:
+            text = extract_courseware_text(file_path, max_chars)
+        except CoursewareError as exc:
+            return f"错误: {exc}"
         return (
             f"=== 课件文件提取成功 ({os.path.basename(file_path)}) ===\n"
             f"提取字数: {len(text)} 字符\n\n"
@@ -392,14 +430,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
         course_id = arguments.get("course_id") or parsed.get("course_id", "")
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
 
-        cookie = arguments.get("cookie")
+        cookie, cookie_error, _source = _resolve_cookie()
         if not cookie:
-            cookie, error = _resolve_cookie(DEFAULT_DOMAIN)
-            if not cookie:
-                return (
-                    "错误: 获取视频 MP4 直链需要登录 Cookie。\n"
-                    f"{error or '请提供 cookie 参数'}"
-                )
+            return (
+                "错误: 获取视频 MP4 直链需要登录 Cookie。\n"
+                f"{cookie_error or '请退出 Edge 后重试，或在宿主配置里设置 ZJU_COOKIE。'}"
+            )
 
         mp4_url = fetch_video_url(course_id, sub_id, tenant, cookie)
         if not mp4_url:
@@ -415,8 +451,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
         file_path = str(arguments.get("file_path", "")).strip()
         if not file_path:
             raise ValueError("zju_check_note 需要 file_path 参数")
-        if not os.path.isfile(file_path):
+        if not os.path.isfile(os.path.expanduser(file_path)):
             return f"错误: 找不到讲义文件: {file_path}"
+        try:
+            file_path = guard_local_file(file_path, NOTE_EXTENSIONS, kind="讲义文件")
+        except LocalFileError as exc:
+            return f"错误: {exc}"
         try:
             with open(file_path, "r", encoding="utf-8") as handle:
                 note_text = handle.read()
@@ -443,34 +483,21 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
         return report
 
     if name == "zju_read_browser_cookie":
-        domain = str(arguments.get("domain") or DEFAULT_DOMAIN)
-        reveal = bool(arguments.get("reveal", False))
-        cookie, error = _resolve_cookie(domain)
+        cookie, error, source = _resolve_cookie()
         if not cookie:
-            return f"未能读取到域名 '{domain}' 的登录 Cookie。\n{error or ''}"
+            return f"未能读取到 {DEFAULT_DOMAIN} 的登录 Cookie。\n{error or ''}"
 
-        names = _cookie_names(cookie)
-        if reveal:
-            return json.dumps(
-                {
-                    "status": "success",
-                    "domain": domain,
-                    "cookie_count": len(names),
-                    "cookie_names": names,
-                    "cookie": cookie,
-                    "note": "明文已按请求回显，会进入模型上下文。",
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
+        info = describe_cookie(cookie)
         return json.dumps(
             {
                 "status": "success",
-                "domain": domain,
-                "cookie_count": len(names),
-                "cookie_names": names,
-                "total_length": len(cookie),
-                "note": "登录态已缓存在 MCP 服务端，明文未回显；后续 zju_fetch_slides / zju_get_video_url 会自动使用。",
+                "domain": DEFAULT_DOMAIN,
+                "source": source,
+                **info,
+                "note": (
+                    "登录态已缓存在 MCP 服务端内存中，明文未回显；"
+                    "后续 zju_fetch_slides / zju_get_video_url 会自动使用。"
+                ),
             },
             ensure_ascii=False,
             indent=2,
@@ -479,10 +506,16 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
     raise ValueError(f"Unknown tool: {name}")
 
 
+def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
+    """Execute a tool and redact secrets from whatever it returns."""
+    return REDACTOR.redact(_dispatch_tool(name, arguments))
+
+
 # ---------------------------------------------------------------- JSON-RPC layer
 
 def send_response(req_id: Any, result: Any) -> None:
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}, ensure_ascii=False) + "\n")
+    payload = REDACTOR.redact(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}, ensure_ascii=False))
+    sys.stdout.write(payload + "\n")
     sys.stdout.flush()
 
 
@@ -490,16 +523,17 @@ def send_error(req_id: Any, code: int, message: str, data: Any = None) -> None:
     error: Dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": error}, ensure_ascii=False) + "\n")
+    payload = REDACTOR.redact(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": error}, ensure_ascii=False))
+    sys.stdout.write(payload + "\n")
     sys.stdout.flush()
 
 
 def _tool_result(text: str) -> Dict[str, Any]:
-    return {"content": [{"type": "text", "text": text}], "isError": False}
+    return {"content": [{"type": "text", "text": REDACTOR.redact(text)}], "isError": False}
 
 
 def _tool_error(message: str) -> Dict[str, Any]:
-    return {"content": [{"type": "text", "text": message}], "isError": True}
+    return {"content": [{"type": "text", "text": REDACTOR.redact(message)}], "isError": True}
 
 
 def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -540,10 +574,11 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             payload = handle_tool_call(tool_name, tool_args)
         except (ZJUAPIError, CoursewareError, CookieAccessError) as exc:
-            print(f"[zju-lecture] {tool_name}: {exc}", file=sys.stderr)
-            return {"jsonrpc": "2.0", "id": req_id, "result": _tool_error(str(exc))}
+            message_text = REDACTOR.redact(str(exc))
+            _log(f"{tool_name}: {message_text}")
+            return {"jsonrpc": "2.0", "id": req_id, "result": _tool_error(message_text)}
         except Exception as exc:  # noqa: BLE001 - the model must see a usable message
-            print(f"[zju-lecture] {tool_name} failed:\n{traceback.format_exc()}", file=sys.stderr)
+            _log(f"{tool_name} failed:\n{traceback.format_exc()}")
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -601,14 +636,15 @@ def main() -> None:
         try:
             response = handle_request(message)
         except Exception as exc:  # noqa: BLE001
-            print(f"[zju-lecture] handler crashed:\n{traceback.format_exc()}", file=sys.stderr)
+            _log(f"handler crashed:\n{traceback.format_exc()}")
             response = {
                 "jsonrpc": "2.0",
                 "id": message.get("id") if isinstance(message, dict) else None,
                 "error": {"code": -32603, "message": f"Internal error: {exc}"},
             }
         if response is not None:
-            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+            payload = REDACTOR.redact(json.dumps(response, ensure_ascii=False))
+            sys.stdout.write(payload + "\n")
             sys.stdout.flush()
 
 

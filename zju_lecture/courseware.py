@@ -9,6 +9,8 @@ import re
 import zipfile
 from typing import Optional
 
+from .security import COURSEWARE_EXTENSIONS, LocalFileError, guard_local_file
+
 
 class CoursewareError(Exception):
     pass
@@ -16,15 +18,21 @@ class CoursewareError(Exception):
 
 def extract_courseware_text(path: str, max_chars: Optional[int] = None) -> str:
     """Extract plain text from local courseware files.
-    
+
     Supported formats:
     - .pptx: Extracted from XML slide contents
     - .docx: Extracted from XML document contents
     - .txt, .md: Plain text with encoding fallbacks
     - .pdf: Extracted via pypdf or PyPDF2 if installed, or basic regex fallback
+
+    The path is validated first: only courseware extensions are accepted and
+    credential stores / browser databases / key material are refused, so a
+    model cannot turn this tool into a generic local-file reader.
     """
-    if not os.path.isfile(path):
-        raise CoursewareError(f"课件文件不存在: {path}")
+    try:
+        path = guard_local_file(path, COURSEWARE_EXTENSIONS, kind="课件文件")
+    except LocalFileError as exc:
+        raise CoursewareError(str(exc)) from exc
 
     ext = os.path.splitext(path)[1].lower()
 

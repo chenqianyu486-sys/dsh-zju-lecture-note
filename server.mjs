@@ -24,6 +24,11 @@ const CANDIDATES = [
   { command: 'py', args: ['-3'] },
 ];
 
+// An explicit interpreter (same variable the dsh plugin honours) wins.
+if (process.env.ZJU_PYTHON && process.env.ZJU_PYTHON.trim()) {
+  CANDIDATES.unshift({ command: process.env.ZJU_PYTHON.trim(), args: [] });
+}
+
 function parseVersion(text) {
   const match = String(text || '').match(/(\d+)\.(\d+)/);
   if (!match) return null;

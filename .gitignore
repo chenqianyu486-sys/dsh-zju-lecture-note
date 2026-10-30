@@ -10,9 +10,23 @@ venv/
 dist/
 build/
 *.zip
+*.tgz
+*.tar.gz
 
-# Local credentials / data
+# Node (dsh plugin bundle / local verification profile)
+node_modules/
+.pnpm-store/
+.dsh-test/
+
+# Local credentials / personal data — never commit these
 config.json
 output/
 *.log
 .env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+cookie*.txt
+*zju-cookie*
+edge-cookies-*

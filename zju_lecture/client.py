@@ -6,64 +6,79 @@ Pure Python standard library implementation with zero external dependencies.
 
 import json
 import ssl
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
+from .security import sanitize_cookie_header
+
+BASE_URL = "https://classroom.zju.edu.cn"
+BASE_HOST = (urllib.parse.urlparse(BASE_URL).hostname or "classroom.zju.edu.cn").lower()
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 def create_ssl_context() -> ssl.SSLContext:
-    """Create a resilient SSL context.
+    """Create the TLS context used for every request.
 
-    Attempts standard verification, then certifi if available,
-    and falls back to an unverified context if local root certificates are
-    missing. The fallback is announced on stderr because it disables
-    certificate verification for every request made with it.
+    Certificate verification is **never** disabled. The login cookie is sent
+    over this connection, so silently downgrading to an unverified context
+    (as an earlier version did when the local root store was incomplete) would
+    turn a missing CA bundle into a cookie-exfiltration path. ``certifi`` is
+    used when installed; otherwise the system store is the only option, and a
+    handshake failure surfaces as an actionable error.
     """
     try:
-        import certifi
+        import certifi  # type: ignore
         return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         pass
-
-    ctx = ssl.create_default_context()
-    try:
-        import socket
-        with socket.create_connection(("classroom.zju.edu.cn", 443), timeout=5) as sock:
-            with ctx.wrap_socket(sock, server_hostname="classroom.zju.edu.cn"):
-                return ctx
-    except Exception:
-        pass
-
-    print(
-        "[zju-lecture] 本机缺少可用的根证书，SSL 证书校验已关闭（仅回退路径）。",
-        file=sys.stderr,
-    )
-    fallback_ctx = ssl.create_default_context()
-    fallback_ctx.check_hostname = False
-    fallback_ctx.verify_mode = ssl.CERT_NONE
-    return fallback_ctx
+    return ssl.create_default_context()
 
 
 _SSL_CONTEXT: Optional[ssl.SSLContext] = None
 
 
 def get_ssl_context() -> ssl.SSLContext:
-    """Return the shared SSL context, building it on first use.
-
-    Building it lazily keeps MCP server startup fast: the probe opens a
-    socket to the classroom host.
-    """
+    """Return the shared SSL context, building it on first use."""
     global _SSL_CONTEXT
     if _SSL_CONTEXT is None:
         _SSL_CONTEXT = create_ssl_context()
     return _SSL_CONTEXT
-BASE_URL = "https://classroom.zju.edu.cn"
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
+
+
+class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only on the classroom host.
+
+    ``urllib`` re-sends request headers on a redirect, so a compromised or
+    misconfigured endpoint that answers ``302`` to another origin would leak
+    the ``Cookie`` header. Cross-origin redirects are refused instead.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        target = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        if target != BASE_HOST:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                code,
+                f"拒绝跨域重定向到 {target or '(未知主机)'}（保护登录 Cookie）",
+                headers,
+                fp,
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_request(url: str, headers: Dict[str, str], timeout: int):
+    """Open ``url`` with certificate verification and same-host redirects."""
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=get_ssl_context()),
+        _SameHostRedirectHandler(),
+    )
+    request = urllib.request.Request(url, headers=headers)
+    return opener.open(request, timeout=timeout)
 
 
 class ZJUAPIError(Exception):
@@ -131,9 +146,9 @@ def fetch_transcript(
         f"{BASE_URL}/courseapi/v3/web-socket/search-trans-result"
         f"?sub_id={sub_id}&tenant_code={tenant_code}"
     )
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req_headers = {"User-Agent": USER_AGENT}
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as response:
+        with _open_request(url, req_headers, timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise ZJUAPIError(f"字幕接口返回 HTTP 错误: {e.code}")
@@ -171,25 +186,30 @@ def fetch_slides(
     timeout: int = 30
 ) -> Optional[List[Dict[str, Any]]]:
     """Fetch projected slide notes (PPT text layer) from classroom API.
-    Requires user cookie for authentication. Returns None if cookie is absent or request fails.
+
+    Requires a login cookie for authentication. Returns ``None`` when the
+    cookie is absent or the request fails, so the caller can degrade to a
+    transcript-only lecture note.
     """
     if not cookie:
+        return None
+
+    try:
+        cookie = sanitize_cookie_header(cookie)
+    except ValueError:
         return None
 
     url = (
         f"{BASE_URL}/pptnote/v1/schedule/search-ppt"
         f"?sub_id={sub_id}&tenant_code={tenant_code}"
     )
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Cookie": cookie,
-            "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
-        },
-    )
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Cookie": cookie,
+        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
+    }
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as response:
+        with _open_request(url, headers, timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
         if data.get("code") == 0 and data.get("list"):
             return data["list"]
@@ -225,25 +245,28 @@ def fetch_video_url(
     timeout: int = 30
 ) -> Optional[str]:
     """Fetch direct MP4 replay video URL from play template config.
-    Requires user authentication cookie.
+
+    Requires user authentication cookie. Returns ``None`` on any failure.
     """
     if not cookie:
+        return None
+
+    try:
+        cookie = sanitize_cookie_header(cookie)
+    except ValueError:
         return None
 
     url = (
         f"{BASE_URL}/courseapi/v2/play-template/get-config"
         f"?course_id={course_id}&sub_id={sub_id}&tenant_code={tenant_code}"
     )
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Cookie": cookie,
-            "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
-        },
-    )
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Cookie": cookie,
+        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
+    }
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as response:
+        with _open_request(url, headers, timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
         return _find_mp4_in_json(data)
     except Exception:

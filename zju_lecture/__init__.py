@@ -2,6 +2,9 @@
 """
 ZJU Lecture Agent Core Package
 Tools and API client for fetching transcripts, slides, and courseware.
+
+Shared by the DeepSeek Harness (dsh) plugin and the standard MCP server: both
+ship this same implementation, so their tools behave identically.
 """
 
 from .client import (
@@ -22,6 +25,15 @@ from .formatter import (
     format_minute_span,
     format_slides_as_markdown,
     format_timestamp,
+)
+from .security import (
+    REDACTOR,
+    LocalFileError,
+    SecretRedactor,
+    describe_cookie,
+    guard_local_file,
+    mask_cookie_header,
+    sanitize_cookie_header,
 )
 
 __all__ = [
@@ -46,4 +58,11 @@ __all__ = [
     "build_transcript_views",
     "chunk_transcript",
     "format_slides_as_markdown",
+    "REDACTOR",
+    "LocalFileError",
+    "SecretRedactor",
+    "describe_cookie",
+    "guard_local_file",
+    "mask_cookie_header",
+    "sanitize_cookie_header",
 ]

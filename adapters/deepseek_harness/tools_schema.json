@@ -75,7 +75,7 @@
     "type": "function",
     "function": {
       "name": "zju_fetch_slides",
-      "description": "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。需要登录态：可先调用 zju_read_browser_cookie 让服务端缓存登录态，或直接传入 cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。",
+      "description": "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。需要登录态：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -83,10 +83,6 @@
           "url_or_sub_id": {
             "type": "string",
             "description": "回放 URL 或 sub_id"
-          },
-          "cookie": {
-            "type": "string",
-            "description": "智云课堂登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）"
           },
           "tenant_code": {
             "type": "string",
@@ -104,7 +100,7 @@
     "type": "function",
     "function": {
       "name": "zju_extract_courseware",
-      "description": "从本地上传的课件（PPTX, DOCX, TXT, MD, CSV, JSON, PDF）中提取纯文本，用于注入 Agent 上下文以校准专业术语、公式与章节结构。",
+      "description": "从本地上传的课件（PPTX, DOCX, TXT, MD, CSV, JSON, PDF）中提取纯文本，用于注入 Agent 上下文以校准专业术语、公式与章节结构。只接受课件格式；出于隐私保护会拒绝凭据文件、浏览器数据与密钥材料。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -130,7 +126,7 @@
     "type": "function",
     "function": {
       "name": "zju_get_video_url",
-      "description": "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态。",
+      "description": "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态；服务端自动使用缓存的登录态 / ZJU_COOKIE / 本机 Edge，本工具不接受也不回显 Cookie。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -138,10 +134,6 @@
           "url_or_sub_id": {
             "type": "string",
             "description": "回放 URL 或 sub_id"
-          },
-          "cookie": {
-            "type": "string",
-            "description": "登录 Cookie（可选；留空则使用服务端缓存或自动读取本机 Edge）"
           },
           "course_id": {
             "type": "string",
@@ -188,22 +180,11 @@
     "type": "function",
     "function": {
       "name": "zju_read_browser_cookie",
-      "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态。默认只返回 Cookie 名称与长度，明文保留在 MCP 服务端缓存中供其他工具使用；确实需要明文时传 reveal=true。注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用。",
+      "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用，或在宿主配置里设置 ZJU_COOKIE。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-          "domain": {
-            "type": "string",
-            "description": "待读取 Cookie 的域名，默认为 classroom.zju.edu.cn",
-            "default": "classroom.zju.edu.cn"
-          },
-          "reveal": {
-            "type": "boolean",
-            "description": "是否回显 Cookie 明文（默认 false）。明文会进入模型上下文，请谨慎使用。",
-            "default": false
-          }
-        }
+        "properties": {}
       }
     }
   }

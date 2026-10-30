@@ -19,7 +19,9 @@ import sys
 import tempfile
 
 DEFAULT_DIR = os.path.join(
-    os.environ.get("MINIMAX_DATA_DIR", "C:/Users/me/.minimax"), "plugins", "zju-lecture"
+    os.environ.get("MINIMAX_DATA_DIR") or os.path.join(os.path.expanduser("~"), ".minimax"),
+    "plugins",
+    "zju-lecture",
 )
 
 

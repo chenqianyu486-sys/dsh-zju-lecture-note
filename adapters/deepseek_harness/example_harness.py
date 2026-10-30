@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Example Agent Harness for DeepSeek / OpenAI models with ZJU Lecture Tools.
-Shows how to equip an LLM loop with ZJU lecture tools.
+Minimal example that calls the DeepSeek API directly with the ZJU Lecture tools.
+Shows how to equip a plain LLM loop with the same tools.
+
+NOTE: this is NOT the DeepSeek Harness (dsh) native plugin. The dsh plugin is a
+pnpm bundle shipped from the dsh-zju-lecture-note repository; this file only
+demonstrates driving the tools from a plain API loop.
 """
 
 import json
@@ -10,9 +14,10 @@ import os
 import sys
 import urllib.request
 
-# Add parent path to import zju_lecture
+# Add the repository root (two levels up) so `mcp_server` and `zju_lecture`
+# resolve both in the repository and in the installed plugin layout.
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_ROOT = os.path.dirname(CURRENT_DIR)
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 if PLUGIN_ROOT not in sys.path:
     sys.path.insert(0, PLUGIN_ROOT)
 

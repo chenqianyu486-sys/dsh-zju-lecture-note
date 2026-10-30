@@ -17,18 +17,27 @@ import json
 import os
 import shutil
 import sqlite3
+import ssl
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from zju_lecture.client import parse_lecture_url
-from zju_lecture.cookies import _aes128_decrypt_block, _key_expansion, read_edge_cookies
+from zju_lecture.client import _SameHostRedirectHandler, create_ssl_context, parse_lecture_url
+from zju_lecture.cookies import (
+    _aes128_decrypt_block,
+    _DirectReadUnavailable,
+    _host_matches,
+    _key_expansion,
+    read_edge_cookies,
+)
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -36,8 +45,16 @@ from zju_lecture.formatter import (
     format_minute_span,
     format_timestamp,
 )
-from zju_lecture.courseware import extract_courseware_text
+from zju_lecture.courseware import CoursewareError, extract_courseware_text
 from zju_lecture.note_lint import check_markdown, fix_markdown
+from zju_lecture.security import (
+    REDACTOR,
+    REDACTED,
+    SecretRedactor,
+    guard_local_file,
+    mask_cookie_header,
+    sanitize_cookie_header,
+)
 import mcp_server
 from mcp_server import TOOLS, handle_request, handle_tool_call
 
@@ -400,6 +417,8 @@ class TestEdgeCookie(unittest.TestCase):
         root, _db = self._make_profile()
         try:
             with mock.patch("zju_lecture.cookies._edge_root", return_value=root), \
+                 mock.patch("zju_lecture.cookies._query_cookie_rows",
+                            side_effect=_DirectReadUnavailable("locked")), \
                  mock.patch("zju_lecture.cookies.shutil.copyfile",
                             side_effect=PermissionError(13, "Permission denied")):
                 cookie, error = read_edge_cookies("classroom.zju.edu.cn")
@@ -420,6 +439,225 @@ class TestEdgeCookie(unittest.TestCase):
             self.assertEqual(error.reason, "no_rows")
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_host_matching_is_exact_or_subdomain_never_substring(self):
+        self.assertTrue(_host_matches("classroom.zju.edu.cn", "classroom.zju.edu.cn"))
+        self.assertTrue(_host_matches(".classroom.zju.edu.cn", "classroom.zju.edu.cn"))
+        self.assertTrue(_host_matches("a.classroom.zju.edu.cn", "classroom.zju.edu.cn"))
+        # A lookalike must never be treated as the classroom host.
+        self.assertFalse(_host_matches("classroom.zju.edu.cn.evil.example", "classroom.zju.edu.cn"))
+        self.assertFalse(_host_matches("evilclassroom.zju.edu.cn", "classroom.zju.edu.cn"))
+        self.assertFalse(_host_matches("other.zju.edu.cn", "classroom.zju.edu.cn"))
+
+    def test_lookalike_host_cookies_are_ignored(self):
+        root, _db = self._make_profile(rows=[
+            ("classroom.zju.edu.cn.evil.example", "SESSDATA", "lookalike", None),
+            ("classroom.zju.edu.cn", "SESSDATA", "real", None),
+        ])
+        try:
+            with mock.patch("zju_lecture.cookies._edge_root", return_value=root):
+                cookie, error = read_edge_cookies("classroom.zju.edu.cn")
+            self.assertIsNone(error)
+            self.assertEqual(cookie, "SESSDATA=real")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_read_cookies_are_normalised(self):
+        root, _db = self._make_profile(rows=[
+            ("classroom.zju.edu.cn", "SESSION", "token value", None),
+        ])
+        try:
+            with mock.patch("zju_lecture.cookies._edge_root", return_value=root):
+                cookie, error = read_edge_cookies("classroom.zju.edu.cn")
+            self.assertIsNone(error)
+            self.assertEqual(cookie, "SESSION=token value")
+            self.assertEqual(sanitize_cookie_header("Cookie: " + cookie), cookie)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class TestPrivacy(unittest.TestCase):
+    """Cookies and personal files must never cross into model-visible output."""
+
+    def setUp(self):
+        mcp_server._COOKIE_CACHE.clear()
+        REDACTOR.clear()
+        for name in ("ZJU_COOKIE", "ZJU_COOKIE_FILE", "ZJU_ALLOW_SENSITIVE_PATHS"):
+            os.environ.pop(name, None)
+
+    def tearDown(self):
+        mcp_server._COOKIE_CACHE.clear()
+        REDACTOR.clear()
+        for name in ("ZJU_COOKIE", "ZJU_COOKIE_FILE", "ZJU_ALLOW_SENSITIVE_PATHS"):
+            os.environ.pop(name, None)
+
+    def test_redactor_masks_registered_values(self):
+        redactor = SecretRedactor()
+        redactor.add_cookie("SESSDATA=top-secret-value; acw_tc=another-secret")
+        text = redactor.redact("cookie SESSDATA=top-secret-value; acw_tc=another-secret sent")
+        self.assertNotIn("top-secret-value", text)
+        self.assertNotIn("another-secret", text)
+        self.assertIn(REDACTED, text)
+
+    def test_cookie_description_has_no_plaintext(self):
+        info = mcp_server.describe_cookie("SESSDATA=top-secret-value; acw_tc=x")
+        rendered = json.dumps(info, ensure_ascii=False)
+        self.assertNotIn("top-secret-value", rendered)
+        self.assertEqual(info["cookie_names"], ["SESSDATA", "acw_tc"])
+
+    def test_mask_cookie_header_hides_values(self):
+        self.assertEqual(mask_cookie_header("A=1; B=2"), "A=***; B=***")
+        self.assertNotIn("=1", mask_cookie_header("A=1"))
+
+    def test_sanitize_cookie_rejects_header_injection(self):
+        with self.assertRaises(ValueError) as caught:
+            sanitize_cookie_header("A=1\r\nX-Evil: yes")
+        self.assertIn("换行", str(caught.exception))
+
+    def test_env_cookie_is_used_and_registered(self):
+        with mock.patch.dict(os.environ, {"ZJU_COOKIE": "SESSDATA=env-secret-value"}), \
+             mock.patch("mcp_server.read_edge_cookies") as edge:
+            cookie, error, source = mcp_server._resolve_cookie()
+        edge.assert_not_called()
+        self.assertIsNone(error)
+        self.assertEqual(cookie, "SESSDATA=env-secret-value")
+        self.assertEqual(source, "env")
+        self.assertIn(REDACTED, REDACTOR.redact("leak SESSDATA=env-secret-value here"))
+
+    def test_env_cookie_with_newline_is_rejected(self):
+        with mock.patch.dict(os.environ, {"ZJU_COOKIE": "A=1\nX-Evil: yes"}):
+            cookie, error, _source = mcp_server._resolve_cookie()
+        self.assertIsNone(cookie)
+        self.assertIn("换行", error or "")
+        self.assertNotIn("X-Evil", error or "")
+
+    def test_cookie_file_is_used(self):
+        path = os.path.join(tempfile.mkdtemp(prefix="zju-cookie-"), "cookie.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("SESSDATA=file-secret-value\n")
+        try:
+            with mock.patch.dict(os.environ, {"ZJU_COOKIE_FILE": path}):
+                cookie, error, source = mcp_server._resolve_cookie()
+            self.assertIsNone(error)
+            self.assertEqual(cookie, "SESSDATA=file-secret-value")
+            self.assertEqual(source, "file")
+        finally:
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+    def test_read_tool_never_echoes_the_cookie(self):
+        mcp_server._COOKIE_CACHE["classroom.zju.edu.cn"] = "SESSDATA=super-secret-value"
+        output = handle_tool_call("zju_read_browser_cookie", {})
+        self.assertNotIn("super-secret-value", output)
+        info = json.loads(output)
+        self.assertEqual(info["status"], "success")
+        self.assertEqual(info["cookie_names"], ["SESSDATA"])
+        self.assertEqual(info["cookie_count"], 1)
+
+    def test_read_tool_has_no_parameters(self):
+        tool = next(t for t in TOOLS if t["name"] == "zju_read_browser_cookie")
+        self.assertEqual(tool["inputSchema"]["properties"], {})
+        self.assertNotIn("required", tool["inputSchema"])
+
+    def test_tool_schemas_expose_no_secret_parameters(self):
+        for tool in TOOLS:
+            properties = tool["inputSchema"].get("properties", {})
+            for forbidden in ("cookie", "reveal", "domain", "token", "password"):
+                self.assertNotIn(forbidden, properties, tool["name"])
+
+    def test_tool_errors_are_redacted(self):
+        secret = "SESSDATA=super-secret-value"
+        mcp_server._COOKIE_CACHE["classroom.zju.edu.cn"] = secret
+        REDACTOR.add_cookie(secret)
+        with mock.patch(
+            "mcp_server.fetch_slides",
+            side_effect=mcp_server.ZJUAPIError(f"failed while using {secret}"),
+        ):
+            response = handle_request({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "zju_fetch_slides", "arguments": {"url_or_sub_id": "123456"}},
+            })
+        text = response["result"]["content"][0]["text"]
+        self.assertNotIn("super-secret-value", text)
+        self.assertIn(REDACTED, text)
+
+    def test_courseware_rejects_sensitive_names(self):
+        root = tempfile.mkdtemp(prefix="zju-sensitive-")
+        try:
+            for name in (
+                ".env.json",
+                "credentials.md",
+                "config.json",
+                "my-secret-notes.md",
+                "password.txt",
+            ):
+                path = os.path.join(root, name)
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("PRIVATE=1")
+                with self.assertRaises(CoursewareError, msg=name) as caught:
+                    extract_courseware_text(path)
+                self.assertIn("隐私", str(caught.exception), name)
+
+            normal = os.path.join(root, "lecture-notes.md")
+            with open(normal, "w", encoding="utf-8") as handle:
+                handle.write("# 线性代数\n")
+            self.assertIn("线性代数", extract_courseware_text(normal))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_sensitive_path_escape_hatch_is_explicit(self):
+        root = tempfile.mkdtemp(prefix="zju-sensitive-")
+        path = os.path.join(root, "credentials.md")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("courseware text")
+            with mock.patch.dict(os.environ, {"ZJU_ALLOW_SENSITIVE_PATHS": "1"}):
+                self.assertEqual(guard_local_file(path, {".md"}, kind="课件文件"), os.path.realpath(path))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_guard_rejects_unexpected_extensions(self):
+        path = os.path.join(tempfile.mkdtemp(prefix="zju-guard-"), "notes.txt")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("x")
+            with self.assertRaises(Exception):
+                guard_local_file(path, {".md"}, kind="讲义文件")
+        finally:
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+    def test_check_note_rejects_non_markdown(self):
+        path = os.path.join(tempfile.mkdtemp(prefix="zju-note-"), "note.txt")
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("$x$")
+            report = handle_tool_call("zju_check_note", {"file_path": path})
+            self.assertIn("错误", report)
+            self.assertIn("只允许", report)
+        finally:
+            shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+    def test_ssl_context_keeps_certificate_verification(self):
+        context = create_ssl_context()
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    def test_cross_host_redirect_is_refused(self):
+        handler = _SameHostRedirectHandler()
+        request = urllib.request.Request("https://classroom.zju.edu.cn/livingroom")
+        with self.assertRaises(urllib.error.HTTPError):
+            handler.redirect_request(
+                request, None, 302, "Found", {}, "https://evil.example/steal"
+            )
+
+    def test_same_host_redirect_is_allowed(self):
+        handler = _SameHostRedirectHandler()
+        request = urllib.request.Request("https://classroom.zju.edu.cn/livingroom")
+        follow = handler.redirect_request(
+            request, None, 302, "Found", {}, "https://classroom.zju.edu.cn/other"
+        )
+        self.assertIsNotNone(follow)
 
 
 class TestStdioProtocol(unittest.TestCase):

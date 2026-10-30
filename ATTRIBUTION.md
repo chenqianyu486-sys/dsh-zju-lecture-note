@@ -17,11 +17,16 @@
 
 ## 本插件新增的部分
 
-- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 6 个工具定义；
+- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 7 个工具定义；
 - `server.mjs` 启动器：运行时解析 Python 解释器，跨平台统一用 `node` 启动；
 - Skill 化的工作流 SOP；
 - 协议级回归测试、FIPS-197 AES 已知向量测试、Edge Cookie 失败原因分类；
-- MiniMax Code 插件包形态（`.minimax-plugin/plugin.json` + `zju-lecture.mcp.json`）。
+- MiniMax Code（MCode）插件包形态（`.minimax-plugin/plugin.json` + `zju-lecture.mcp.json`）；
+- DeepSeek Harness（dsh）原生插件形态（本仓库根目录的 `package.json` + `cordis.patch.yml` + `lib/`，
+  npm 包名 `dsh-zju-lecture-note`，与 MCP 形态共用同一份 Python 核心）；
+- 隐私加固：Cookie 不进工具参数/返回值、全输出 redaction、Edge 数据库只读优先与安全清理、
+  TLS 校验不降级、同域重定向限制、本地文件敏感路径拒绝、`tools/privacy_scan.py` 发布闸门。
+  设计说明见 [`SECURITY.md`](SECURITY.md)。
 
 ## 声明
 
