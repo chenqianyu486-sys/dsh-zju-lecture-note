@@ -80,19 +80,42 @@ dsh 插件是 **pnpm 包**：`dsh plugin` 会把参数原样转给 profile 目�
 所以来源写法与 pnpm 一致（npm 包名 / `github:` / `file:`）。
 
 ```bash
-# 从 npm registry（包发布后，包名 dsh-zju-lecture-note）
-dsh plugin --profile desktop add dsh-zju-lecture-note
-
-# 从 GitHub 仓库（就是本仓库）
+# 从 GitHub 仓库（就是本仓库）—— 当前可用的安装方式
 dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
+
+# 从 npm registry（包发布到 npm 之后才可用，包名 dsh-zju-lecture-note）
+# dsh plugin --profile desktop add dsh-zju-lecture-note
 
 # 从本地路径（开发 / 验证）
 dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 ```
 
+> **本包目前还没发布到 npm registry**（`dsh-zju-lecture-note` 在 npm 上查无此包），
+> 请用上面的 `github:` 写法安装；等发布后再换回包名写法。
+
 > `desktop` profile 由 DeepSeek Harness 桌面端持有，管理插件时请使用
 > **DeepSeek Harness 自带的 dsh 命令**（`resources/runtime/cli/bin/dsh.cmd`），
 > 而不是 npm 全局安装的 `dsh`；`web` / `headless` 等 profile 用哪个都可以。
+
+**不要只把 GitHub 的 zip 解压出来让 dsh 加载。** 插件是 Node ESM 包，
+`lib/index.js` 里的 `@deepseek-ai/schemastery` 是**普通依赖**（`dependencies`），
+必须由 pnpm 装进 profile 的 `node_modules` 才会被解析到；解压出来的目录里没有
+`node_modules`，启用时会报：
+
+```text
+Cannot find package '@deepseek-ai/schemastery' imported from ...\lib\index.js
+```
+
+若一定要用本地目录，先在目录里装好依赖，再让 dsh 加载：
+
+```bash
+cd /absolute/path/to/zju-lecture-agent-plugin
+npm install --omit=peer        # 只装普通依赖；peer 由 dsh 运行时提供
+dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
+```
+
+`--omit=peer` 是必要的：peer 里的 `@deepseek-ai/dsh-*` 由 dsh 运行时提供，
+让 npm 去 registry 装会因版本范围不匹配而失败。
 
 装完后在 dsh 里直接说：
 
@@ -285,6 +308,11 @@ npm publish               # 发布到 npm registry
 
 ## 已知限制
 
+- **只解压 zip 就启用 → `Cannot find package '@deepseek-ai/schemastery'`**：
+  dsh 插件是 pnpm 包，依赖得由 pnpm 装进 profile 的 `node_modules` 才会被解析到。
+  用 `dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note` 安装，
+  或在本地目录先 `npm install --omit=peer` 再 `dsh plugin ... add file:<路径>`。
+  插件现在会把这类错误翻译成「缺少依赖 + 该怎么装」，不再只抛裸的模块找不到。
 - **Edge 正在运行时读不到登录态**：Chromium 会对 Cookie 数据库加独占锁，
   此时 `zju_read_browser_cookie` 会明确返回"请完全退出 Edge 后重试"，而不是含糊地说"未登录"。
   新版 Edge 的 v20 应用绑定加密在部分系统上仍可能无法本地解密，可改用 `ZJU_COOKIE_FILE`。

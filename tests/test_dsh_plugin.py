@@ -13,6 +13,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -141,7 +142,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.3.0")
+        self.assertEqual(manifest["version"], "1.3.1")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
@@ -188,6 +189,51 @@ class TestPackage(unittest.TestCase):
         content = read_text("lib", "bridge.js")
         self.assertIn("PYTHONUTF8", content)
         self.assertIn("PYTHONIOENCODING", content)
+
+
+class TestDependencyDeclarations(unittest.TestCase):
+    """lib/ 里出现的外部依赖必须在 package.json 里声明。
+
+    包名拼错（把 ``@deepseek-ai/schemastery`` 写成 ``@deepseek-ai/schemamastery``）
+    在 npm 上根本不存在：装不上、import 不到，用户看到的只有一句
+    ``Cannot find package``。这类错误必须在上游就被钉住，而不是等用户踩。
+    """
+
+    def _declared(self):
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        return set(manifest.get("dependencies", {})) | set(manifest.get("peerDependencies", {}))
+
+    def _imported(self):
+        specifiers = set()
+        lib_dir = os.path.join(ROOT, "lib")
+        for name in sorted(os.listdir(lib_dir)):
+            if not name.endswith(".js"):
+                continue
+            content = read_text("lib", name)
+            specifiers.update(re.findall(r"""["'](@deepseek-ai/[^"']+)["']""", content))
+        return specifiers
+
+    def test_every_imported_package_is_declared(self):
+        declared = self._declared()
+        imported = self._imported()
+        self.assertTrue(imported, "没扫到任何 @deepseek-ai 依赖，扫描规则可能已失效")
+        for specifier in sorted(imported):
+            self.assertIn(specifier, declared, f"lib/ 里引用的 {specifier} 未在 package.json 声明")
+
+    def test_import_failure_tells_the_user_how_to_install(self):
+        """缺依赖时要给出可执行的中文处置，而不是裸的 ERR_MODULE_NOT_FOUND。"""
+        content = read_text("lib", "index.js")
+        self.assertIn("importDependency", content)
+        self.assertIn("缺少依赖", content)
+        self.assertIn("dsh plugin --profile desktop add github:", content)
+
+        result = run_node("--input-type=module", "-e", "await import('./lib/index.js')")
+        if result.returncode == 0:
+            self.skipTest("本机已装好依赖，复现不出缺依赖场景")
+        combined = result.stdout + result.stderr
+        self.assertIn("缺少依赖", combined)
+        self.assertIn("dsh plugin --profile desktop add github:", combined)
 
 
 class TestNoHomeDirectoryWrites(unittest.TestCase):
