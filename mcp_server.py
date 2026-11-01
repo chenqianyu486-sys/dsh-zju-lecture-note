@@ -32,6 +32,7 @@ if CURRENT_DIR not in sys.path:
 
 from zju_lecture.client import (
     ZJUAPIError,
+    extract_classroom_token,
     fetch_slides,
     fetch_transcript,
     fetch_video_url,
@@ -47,10 +48,12 @@ from zju_lecture.note_lint import (
     write_with_backup,
 )
 from zju_lecture.paths import (
+    artifact_dir,
     describe_attempts,
     note_target,
     resolve_path,
 )
+from zju_lecture.slides import build_slides_pdf, download_slides
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -70,7 +73,7 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.4.2"
+SERVER_VERSION = "1.5.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -84,8 +87,8 @@ COOKIE_FILE_ENV = "ZJU_COOKIE_FILE"
 _MAX_COOKIE_FILE_BYTES = 64 * 1024
 
 SERVER_INSTRUCTIONS = (
-    "提供浙大智云课堂（classroom.zju.edu.cn）回放的字幕、投影 PPT 与课件文本提取。"
-    "字幕接口公开免登录；PPT 与视频直链需要登录态。"
+    "提供浙大智云课堂（classroom.zju.edu.cn）回放的字幕、投影 PPT 截图与课件文本提取。"
+    "字幕接口公开免登录；投影截图（可下载并合成 PDF）与视频直链需要登录态（Cookie 需含 _token）。"
     "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
     "长课程请使用 view_format=chunked 分批处理。"
     "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
@@ -106,6 +109,11 @@ def _log(message: str) -> None:
 def _remember_cookie(cookie: str) -> str:
     """Register a cookie with the process redactor and the in-memory cache."""
     REDACTOR.add_cookie(cookie)
+    # The Bearer token is a field inside the session cookie value, so the
+    # full-value registration above would not mask it on its own.
+    token = extract_classroom_token(cookie)
+    if token:
+        REDACTOR.add(token)
     _COOKIE_CACHE[DEFAULT_DOMAIN] = cookie
     return cookie
 
@@ -275,9 +283,12 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_slides",
         "description": (
-            "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。"
-            "需要登录态：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；"
-            "本工具不接受也不回显 Cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。"
+            "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是"
+            "投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时"
+            "请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。"
+            "接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、"
+            "ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。"
+            "抓不到时返回具体诊断，流水线可降级为纯字幕总结。"
         ),
         "inputSchema": {
             "type": "object",
@@ -285,12 +296,42 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "url_or_sub_id": {
                     "type": "string",
-                    "description": "回放 URL 或 sub_id",
+                    "description": "回放 URL（通常含 course_id）或 sub_id",
+                },
+                "course_id": {
+                    "type": "string",
+                    "description": (
+                        "课程 ID；从完整回放 URL 自动解析。只输入纯 sub_id 时必须显式提供，"
+                        "否则接口可能返回空列表"
+                    ),
                 },
                 "tenant_code": {
                     "type": "string",
                     "description": "租户代码，默认为 112",
                     "default": DEFAULT_TENANT,
+                },
+                "download": {
+                    "type": "boolean",
+                    "description": (
+                        "是否下载截图到工作区并合成 PDF（默认 false，只返回截图清单）。"
+                        "一节 1 小时的课通常有几十到几百张截图"
+                    ),
+                    "default": False,
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": (
+                        "截图与 PDF 的输出目录，相对当前工作区（默认 ppt-assets/<sub_id>）；"
+                        "必须在工作区内"
+                    ),
+                },
+                "dedup": {
+                    "type": "boolean",
+                    "description": (
+                        "是否折叠连续字节完全相同的截图（默认 true，只影响 PDF 页数，"
+                        "下载的原图都会保留）"
+                    ),
+                    "default": True,
                 },
             },
             "required": ["url_or_sub_id"],
@@ -445,7 +486,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_read_browser_cookie",
         "description": (
-            "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。"
+            "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的域级 Cookie，"
+            "智云的 _token 在那里），并缓存在 MCP 服务端内存中供其他工具使用。"
             "只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。"
             "注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），"
             "退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。"
@@ -642,6 +684,11 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         parsed = parse_lecture_url(str(arguments.get("url_or_sub_id", "")))
         sub_id = parsed["sub_id"]
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
+        course_id = str(arguments.get("course_id") or parsed.get("course_id") or "")
+        download = bool(arguments.get("download"))
+        dedup_arg = arguments.get("dedup")
+        dedup = True if dedup_arg is None else bool(dedup_arg)
+        output_dir = str(arguments.get("output_dir") or "").strip()
 
         cookie, cookie_error, _source, reason = _resolve_cookie()
         if not cookie:
@@ -653,18 +700,67 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             )
 
         diagnostics: List[str] = []
-        slides_data = fetch_slides(sub_id, tenant, cookie, diagnostics=diagnostics)
+        slides_data = fetch_slides(
+            sub_id,
+            tenant,
+            cookie,
+            diagnostics=diagnostics,
+            course_id=course_id,
+        )
         if not slides_data:
             reason_text = "\n".join(f"- {item}" for item in diagnostics) or "- 未获得具体原因"
             return (
                 "未抓取到 PPT 记录（原因: no_slides）。\n"
-                "登录态可用，但这节课没有取到投影记录。\n"
+                "登录态可用，但接口没有返回截图列表。\n"
                 f"诊断:\n{reason_text}\n"
-                "唯一可行动作: 跳过 PPT，仅用语音字幕生成讲义（这是支持的降级路径）。"
+                "可行动作: 跳过 PPT，仅用语音字幕生成讲义；"
+                "或确认回放链接带有 course_id 后重试。"
             )
 
-        md = format_slides_as_markdown(slides_data)
-        return f"=== 课堂投影 PPT 数据 (共 {len(slides_data)} 页) ===\n\n{md}"
+        pdf_path = ""
+        download_note = ""
+        if download:
+            target, target_error = artifact_dir(
+                output_dir,
+                default=os.path.join("ppt-assets", sub_id),
+            )
+            if target_error:
+                diagnostics.append(target_error)
+            else:
+                summary = download_slides(
+                    slides_data,
+                    target,
+                    cookie=cookie,
+                    sub_id=sub_id,
+                    dedup=dedup,
+                    diagnostics=diagnostics,
+                )
+                pages = summary.get("pages") or []
+                if pages:
+                    pdf_target = os.path.join(target, f"PPT-{sub_id}.pdf")
+                    written = build_slides_pdf(pages, pdf_target, diagnostics=diagnostics)
+                    if written:
+                        pdf_path = written
+                download_note = (
+                    f"下载 {summary.get('downloaded', 0)} 张，失败 {summary.get('failed', 0)} 张，"
+                    f"连续重复折叠 {summary.get('duplicates', 0)} 张；"
+                    f"截图目录: {summary.get('images_dir')}"
+                )
+                if pdf_path:
+                    download_note += f"\nPDF: {pdf_path}（{len(pages)} 页）"
+
+        md = format_slides_as_markdown(slides_data, pdf_path=pdf_path)
+        lines = [
+            f"=== 课堂投影 PPT 截图 (sub_id={sub_id}, 共 {len(slides_data)} 页) ===",
+            "说明: 智云接口返回的是投影画面截图，不是文字层；"
+            "未下载或模型不能看图时，请只用字幕与本地课件生成讲义。",
+        ]
+        if download_note:
+            lines.append(download_note)
+        if diagnostics:
+            lines.append("采集提示:")
+            lines.extend(f"- {item}" for item in diagnostics)
+        return "\n".join(lines) + "\n\n" + md
 
     if name == "zju_extract_courseware":
         file_path = str(arguments.get("file_path", ""))

@@ -52,17 +52,35 @@
   },
   {
     "name": "zju_fetch_slides",
-    "description": "抓取智云课堂该节课投影现场的 PPT 文字层与 OCR 记录。需要登录态：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时会返回空提示，流水线可降级为纯字幕总结。",
+    "description": "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时返回具体诊断，流水线可降级为纯字幕总结。",
     "parameters": {
       "url_or_sub_id": {
-        "description": "回放 URL 或 sub_id",
+        "description": "回放 URL（通常含 course_id）或 sub_id",
         "type": "string",
         "required": true
+      },
+      "course_id": {
+        "description": "课程 ID；从完整回放 URL 自动解析。只输入纯 sub_id 时必须显式提供，否则接口可能返回空列表",
+        "type": "string"
       },
       "tenant_code": {
         "description": "租户代码，默认为 112",
         "default": "112",
         "type": "string"
+      },
+      "download": {
+        "description": "是否下载截图到工作区并合成 PDF（默认 false，只返回截图清单）。一节 1 小时的课通常有几十到几百张截图",
+        "default": false,
+        "type": "boolean"
+      },
+      "output_dir": {
+        "description": "截图与 PDF 的输出目录，相对当前工作区（默认 ppt-assets/<sub_id>）；必须在工作区内",
+        "type": "string"
+      },
+      "dedup": {
+        "description": "是否折叠连续字节完全相同的截图（默认 true，只影响 PDF 页数，下载的原图都会保留）",
+        "default": true,
+        "type": "boolean"
       }
     }
   },
@@ -168,7 +186,7 @@
   },
   {
     "name": "zju_read_browser_cookie",
-    "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
+    "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的域级 Cookie，智云的 _token 在那里），并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
     "parameters": {}
   }
 ]

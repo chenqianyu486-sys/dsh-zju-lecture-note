@@ -10,15 +10,26 @@ ship this same implementation, so their tools behave identically.
 from .client import (
     BASE_URL,
     ZJUAPIError,
+    extract_classroom_token,
     fetch_slides,
     fetch_transcript,
     fetch_video_url,
+    is_zju_host,
+    normalize_slide,
     parse_lecture_url,
+    secure_zju_url,
 )
 from .cookies import CookieAccessError, get_edge_cookie, read_edge_cookies
 from .courseware import CoursewareError, extract_courseware_text
 from .note_lint import Issue, check_markdown, fix_markdown, format_report, write_atomic
-from .paths import describe_attempts, note_filename, note_target, resolve_path
+from .paths import (
+    artifact_dir,
+    describe_attempts,
+    note_filename,
+    note_target,
+    resolve_path,
+)
+from .slides import SlideError, build_slides_pdf, download_slides
 from .formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -44,10 +55,17 @@ __all__ = [
     "ZJUAPIError",
     "CookieAccessError",
     "CoursewareError",
+    "SlideError",
     "parse_lecture_url",
     "fetch_transcript",
     "fetch_slides",
     "fetch_video_url",
+    "normalize_slide",
+    "extract_classroom_token",
+    "is_zju_host",
+    "secure_zju_url",
+    "download_slides",
+    "build_slides_pdf",
     "extract_courseware_text",
     "check_markdown",
     "fix_markdown",
@@ -57,6 +75,7 @@ __all__ = [
     "get_edge_cookie",
     "read_edge_cookies",
     "describe_attempts",
+    "artifact_dir",
     "note_filename",
     "note_target",
     "resolve_path",

@@ -14,7 +14,7 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 | :--- | :--- | :--- |
 | `zju_parse_url` | 从回放链接中取出 `sub_id` / `course_id` / `tenant_code` | 公开 |
 | `zju_fetch_transcript` | 抓取语音识别字幕（支持切片、分块、限长） | **公开免登录** |
-| `zju_fetch_slides` | 抓取课堂投影的 PPT 文字层与 OCR | 需登录态（服务端自动读缓存 / `ZJU_COOKIE` / 本机 Edge） |
+| `zju_fetch_slides` | 抓取课堂投影 PPT 截图清单；可选下载截图并合成 PDF（接口返回截图，**不是文字层/OCR**） | 需登录态（Cookie 需含 `_token`；服务端自动读缓存 / `ZJU_COOKIE` / 本机 Edge） |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / PDF 课件文本 | 本地文件（拒绝凭据与浏览器数据） |
 | `zju_check_note` | 检查讲义 Markdown 是否符合公式规范、能否正常渲染 | 本地文件 |
 | `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名、拒绝静默覆盖、写后自动校验 | 本地文件（只写工作区） |
@@ -36,7 +36,7 @@ flowchart TD
     B --> C[调用 zju_fetch_transcript 获取字幕]
     C --> D{是否有本地课件或登录态?}
     D -- 有课件文件 --> E1[调用 zju_extract_courseware 提取课件]
-    D -- 有登录态 --> E2[调用 zju_fetch_slides 获取投影 PPT]
+    D -- 有登录态 --> E2[zju_fetch_slides：需要看画面时 download=true]
     D -- 无额外材料 --> F[进入 Agent 降噪与知识蒸馏]
     E1 --> F
     E2 --> F
@@ -61,10 +61,17 @@ flowchart TD
      可靠度为「低」时按第 4 节 ① 的「ASR 质量与复核」处理——**不要照字面直译**。
 3. **补充课件与术语参考（可选增强）**：
    - 用户提供了课件附件（`.pptx` / `.docx` / `.pdf` / `.txt` / `.md`）→ `zju_extract_courseware(file_path=...)`；
-   - 需要现场投影内容 → `zju_fetch_slides(url_or_sub_id=...)`。
-     登录态由服务端自己处理（内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → 本机 Edge）。
-     若返回"Edge 正在运行，Cookie 数据库被独占锁定"，**请提示用户完全退出 Edge（含后台驻留进程）后重试**，
-     或在宿主配置里设置 `ZJU_COOKIE` / `ZJU_COOKIE_FILE`；**不要让用户把 Cookie 粘贴进对话，也不要把 Cookie 写进讲义或命令参数**。
+   - 需要现场投影画面 → `zju_fetch_slides(url_or_sub_id="<完整回放 URL>", course_id="<course_id>", download=true)`。
+     **智云 `search-ppt` 返回的是投影截图（`pptimgurl`），不是文字层或 OCR**：
+     - `download=true` 会把截图存到工作区 `ppt-assets/<sub_id>/images/`，并合成 `PPT-<sub_id>.pdf`；
+       返回里会给出截图目录与 PDF 绝对路径。整节课的截图下载可能需要数分钟。
+     - 只传纯 `sub_id` 时**必须同时传 `course_id`**（完整回放 URL 会自动解析），否则接口可能返回空列表。
+     - 服务端会自动从 Cookie 的父域 `.zju.edu.cn` 会话中解析 `_token` 并加 `Authorization: Bearer`；
+       登录态来源：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → 本机 Edge。
+     - 若返回"Edge 正在运行，Cookie 数据库被独占锁定"，**请提示用户完全退出 Edge（含后台驻留进程）后重试**，
+       或在宿主配置里设置 `ZJU_COOKIE` / `ZJU_COOKIE_FILE`；**不要让用户把 Cookie 粘贴进对话，也不要把 Cookie 写进讲义或命令参数**。
+   - **不要臆造幻灯片文字**：截图 URL 和页数不包含幻灯片内容。如果宿主/模型不能看图，或没有下载截图，
+     就只用字幕与本地课件生成讲义；需要幻灯片原文时，优先请用户提供原始 `.pptx` 并用 `zju_extract_courseware`。
 
 ### 步骤二：蒸馏与产出
 

@@ -28,6 +28,19 @@
   TLS 校验不降级、同域重定向限制、本地文件敏感路径拒绝、`tools/privacy_scan.py` 发布闸门。
   设计说明见 [`SECURITY.md`](SECURITY.md)。
 
+## 参考实现（未拷贝代码）
+
+v1.5.0 的智云投影 PPT 管线参考了以下 MIT 项目的公开实现思路，代码按本仓库的
+纯标准库与安全边界重新实现：
+
+| 项目 | 参考点 |
+| :--- | :--- |
+| [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli)（MIT） | 从会话 Cookie 的 PHP 序列化值中解析 `_token` 并作为 `Authorization: Bearer`；`search-ppt` 的 `course_id` + `page/per_page` 分页与按 URL 去重；截图合成 PDF；ZJU `http://` 升级 HTTPS。 |
+| [`PeiPei233/zju-learning-assistant`](https://github.com/PeiPei233/zju-learning-assistant)（MIT） | 智云课堂 API 流程的原始来源（本项目最早即改编自其上游移植）。 |
+
+本仓库只实现了**连续字节完全相同**的截图折叠；`zju-learning-cli` 基于 numpy/Pillow 的
+“笔画是否仍存在于后续页面”近似去重没有移植——那会打破本插件零第三方依赖的约束。
+
 ## 第三方数据：随包 CA 证书库
 
 | 文件 | 来源 | 许可 | 说明 |

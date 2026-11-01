@@ -25,7 +25,9 @@ from .formatter import (
     format_slides_as_markdown,
     format_timestamp,
 )
+from .paths import artifact_dir
 from .security import describe_cookie, sanitize_cookie_header
+from .slides import build_slides_pdf, download_slides
 
 
 def _read_cookie_file(path: str) -> str:
@@ -96,8 +98,15 @@ def main():
     p_fetch.add_argument("--out", "-o", help="输出文件路径")
 
     # Command: slides
-    p_slides = subparsers.add_parser("slides", help="抓取课堂 PPT 文字层（需 Cookie）")
+    p_slides = subparsers.add_parser(
+        "slides",
+        help="抓取课堂投影 PPT 截图清单（可下载为 PDF，需 Cookie）",
+    )
     p_slides.add_argument("url", help="回放 URL 或 sub_id")
+    p_slides.add_argument(
+        "--course-id",
+        help="课程 ID；只传纯 sub_id 时必须提供（完整 URL 会自动解析）",
+    )
     p_slides.add_argument(
         "--cookie-file",
         help="从文件读取 Cookie（推荐；避免出现在进程列表与 shell 历史里）",
@@ -106,6 +115,20 @@ def main():
         "--cookie",
         help="直接传 Cookie 字符串（会出现在进程列表，已不推荐；留空则依次尝试 "
              "--cookie-file / ZJU_COOKIE / 本机 Edge）",
+    )
+    p_slides.add_argument(
+        "--download",
+        action="store_true",
+        help="下载截图到工作区并合成 PDF",
+    )
+    p_slides.add_argument(
+        "--out-dir",
+        help="截图与 PDF 的输出目录（相对当前工作区，默认 ppt-assets/<sub_id>）",
+    )
+    p_slides.add_argument(
+        "--no-dedup",
+        action="store_true",
+        help="不折叠连续重复截图（只影响 PDF 页数）",
     )
     p_slides.add_argument("--out", "-o", help="输出 Markdown 路径")
 
@@ -169,15 +192,64 @@ def main():
             parsed = parse_lecture_url(args.url)
             sub_id = parsed["sub_id"]
             tenant = parsed.get("tenant_code", "112")
+            course_id = args.course_id or parsed.get("course_id", "")
             cookie = _load_cookie(args.cookie or "", args.cookie_file or "")
-            slides = fetch_slides(sub_id, tenant, cookie)
-            md = format_slides_as_markdown(slides)
+            diagnostics = []
+            slides = fetch_slides(
+                sub_id,
+                tenant,
+                cookie,
+                diagnostics=diagnostics,
+                course_id=course_id,
+            )
+            if not slides:
+                print("未获取到 PPT 截图：")
+                for item in diagnostics or ["未获得具体原因"]:
+                    print(f"- {item}")
+                sys.exit(1)
+
+            pdf_path = ""
+            if args.download:
+                target, error = artifact_dir(
+                    args.out_dir or "",
+                    default=os.path.join("ppt-assets", sub_id),
+                )
+                if error:
+                    print(f"输出目录不可用: {error}", file=sys.stderr)
+                    sys.exit(1)
+                summary = download_slides(
+                    slides,
+                    target,
+                    cookie=cookie,
+                    sub_id=sub_id,
+                    dedup=not args.no_dedup,
+                    diagnostics=diagnostics,
+                )
+                pages = summary.get("pages") or []
+                if pages:
+                    pdf_path = build_slides_pdf(
+                        pages,
+                        os.path.join(target, f"PPT-{sub_id}.pdf"),
+                        diagnostics=diagnostics,
+                    ) or ""
+                print(
+                    f"截图: 下载 {summary.get('downloaded', 0)} 张，"
+                    f"失败 {summary.get('failed', 0)} 张，"
+                    f"连续重复折叠 {summary.get('duplicates', 0)} 张"
+                )
+                print(f"截图目录: {summary.get('images_dir')}")
+                if pdf_path:
+                    print(f"PDF: {pdf_path}（{len(pages)} 页）")
+
+            md = format_slides_as_markdown(slides, pdf_path=pdf_path)
             if args.out:
                 with open(args.out, "w", encoding="utf-8") as f:
                     f.write(md)
                 print(f"已保存到: {args.out}")
             else:
-                print(md or "未获取到 PPT 数据")
+                print(md)
+            for item in diagnostics:
+                print(f"提示: {item}", file=sys.stderr)
 
         elif args.command == "courseware":
             try:

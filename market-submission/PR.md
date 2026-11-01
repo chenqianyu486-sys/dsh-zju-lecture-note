@@ -16,9 +16,9 @@ Adds one file — `data/plugins/chenqianyu486-sys__dsh-zju-lecture-note.yml` (`c
 [dsh-zju-lecture-note](https://github.com/chenqianyu486-sys/dsh-zju-lecture-note) turns
 Zhejiang University Zhizhi Classroom replays (`classroom.zju.edu.cn`) into Markdown study
 notes: it reads the public speech transcript (per-minute, per-sentence or chunked),
-optionally reads the projected slides or the student's local courseware, writes a note
-named after the class date and section, and checks that note's Markdown so formulas and
-tables render.
+optionally downloads the projected slide screenshots as a PDF or reads the student's local
+courseware, writes a note named after the class date and section, and checks that note's
+Markdown so formulas and tables render.
 
 Not on npm yet, so the install command is the GitHub one:
 

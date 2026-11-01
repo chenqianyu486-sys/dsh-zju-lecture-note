@@ -72,7 +72,7 @@ try {
   apply(ctx, { python: "", timeoutMs: 60000, registerSkill: true });
 
   const names = state.tools.map((tool) => tool.name);
-  if (names.length !== 7) throw new Error(`expected 7 tools, got ${names.length}`);
+  if (names.length !== 8) throw new Error(`expected 8 tools, got ${names.length}`);
 
   for (const tool of state.tools) {
     if (tool.parameters?.type !== "object") throw new Error(`${tool.name}: parameters not an object schema`);

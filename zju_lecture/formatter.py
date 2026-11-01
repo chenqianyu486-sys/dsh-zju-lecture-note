@@ -277,20 +277,40 @@ def format_quality_line(quality: Dict[str, Any]) -> str:
     return line
 
 
-def format_slides_as_markdown(slides_list: Optional[List[Dict[str, Any]]]) -> str:
-    """Format raw slide json list into clean markdown outline."""
+def format_slides_as_markdown(
+    slides_list: Optional[List[Dict[str, Any]]],
+    pdf_path: str = "",
+) -> str:
+    """Format normalized slide records into a compact, truthful outline.
+
+    ``search-ppt`` returns screenshots, not OCR text. A slide therefore shows
+    whatever the API actually provided: text (rare), a remote image URL, and
+    the local file when ``zju_fetch_slides(download=true)`` saved it.
+    """
     if not slides_list:
         return ""
 
-    lines = ["### 课堂投影 PPT 文字记录"]
+    lines = ["### 课堂投影 PPT 截图"]
+    if pdf_path:
+        lines.append(f"完整 PDF: {pdf_path}")
+        lines.append("")
     for idx, slide in enumerate(slides_list, start=1):
-        # Examine slide dict fields
-        content = slide.get("content") or slide.get("text") or slide.get("ocr_content") or ""
+        page = slide.get("page") or idx
         time_point = slide.get("time") or slide.get("time_point") or slide.get("sec")
         ts_str = f" [{format_timestamp(int(time_point))}]" if time_point is not None else ""
-        title = slide.get("title") or f"幻灯片 {idx}"
+        title = slide.get("title") or f"第 {page} 页"
         lines.append(f"#### {title}{ts_str}")
-        if content.strip():
-            lines.append(content.strip())
+
+        text = str(slide.get("text") or slide.get("ocr_content") or "").strip()
+        image_url = str(slide.get("image_url") or "").strip()
+        local_path = str(slide.get("local_path") or "").strip()
+        if text:
+            lines.append(text)
+        if local_path:
+            lines.append(f"截图文件: {local_path}")
+        elif image_url:
+            lines.append(f"截图: {image_url}")
+        if not text and not local_path and not image_url:
+            lines.append("(接口未返回可读内容)")
         lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip() + "\n"

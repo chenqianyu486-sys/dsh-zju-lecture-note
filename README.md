@@ -73,12 +73,18 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | :--- | :--- | :--- | :--- |
 | `zju_parse_url` | 解析回放链接，取 `sub_id` / `course_id` / `tenant_code` | 公开 | 纯字符串解析 |
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** | 无 Cookie |
-| `zju_fetch_slides` | 抓课堂投影的 PPT 文字层与 OCR | 需登录态（服务端本地解析） | 不收/不回显 Cookie |
+| `zju_fetch_slides` | 抓取课堂投影 PPT **截图清单**；可选下载截图并合成 PDF（接口不返回文字层/OCR） | 需登录态（Cookie 需含 `_token`） | 不收/不回显 Cookie |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 | 拒绝敏感路径 |
 | `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题；报告按问题类型聚合） | 本地文件 | 只接受 `.md` / `.markdown` |
 | `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名（如 `知识总结-2026-10-28-复变函数-保角映射.md`）、拒绝静默覆盖、写前修正 + 写后校验 | 本地文件 | 只写工作区内的 `.md` |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 需登录态（服务端本地解析） | 直链可能带签名，勿外传 |
 | `zju_read_browser_cookie` | 读取本机 Edge 登录态并缓存到服务端内存 | 本机读取 | **只返回名称与长度** |
+
+> **智云投影 PPT 是截图，不是文字**：`search-ppt` 返回的是投影画面截图（`pptimgurl`）。
+> `zju_fetch_slides` 默认只给截图清单与页数；传 `download=true` 时会把截图下载到
+> `<工作区>/ppt-assets/<sub_id>/images/`，并合成 `PPT-<sub_id>.pdf`（JPEG 直嵌、PNG 解码，
+> 连续字节相同的截图折叠为一页）。只传纯 `sub_id` 时必须同时给 `course_id`；
+> 鉴权使用 Cookie 父域 `.zju.edu.cn` 中的 `_token`（`Authorization: Bearer`）。
 
 ## 安装
 
@@ -134,7 +140,7 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > 本插件声明 `>=0.2.0-rc.2 <0.3.0-0`，不匹配时需要显式的版本豁免。
 > **Python 探测顺序**：插件配置项 → 环境变量 `ZJU_PYTHON` → DeepSeek Harness 自带 Python → PATH 上的 `python3` / `python` / `py -3`。
 
-**登录态（可选，仅 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
+**登录态（可选，仅投影 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
 且 Edge 127+ 若启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密其 v20 Cookie，这时会直接
 提示改用 `ZJU_COOKIE_FILE`。可在宿主配置里设置环境变量，**不要把 Cookie 粘贴到对话里**：
 
@@ -142,6 +148,10 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 ZJU_COOKIE="name=value; name2=value2"        # 直接给 Cookie 头
 ZJU_COOKIE_FILE="/absolute/path/cookie.txt"  # 或从本机文件读（一行，权限建议 600）
 ```
+
+智云接口用 Cookie 会话中的 `_token` 做 `Authorization: Bearer` 鉴权；这个会话 Cookie 通常设在父域
+`.zju.edu.cn`。插件从 Edge 读课堂域 Cookie 时会一并读取该父域 Cookie；手工配置 `ZJU_COOKIE` /
+`ZJU_COOKIE_FILE` 时请确认里面包含它，否则 PPT 接口可能返回 401/403。
 
 **工作区与备份位置（可选）**：
 
@@ -202,12 +212,15 @@ python tools/build_plugin.py --install --zip    # 同时产出 dist/zju-lecture-
 python -m zju_lecture.cli parse "https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456"
 python -m zju_lecture.cli fetch 123456 --format min -o 字幕.txt
 python -m zju_lecture.cli fetch 123456 --start 20 --end 45
+python -m zju_lecture.cli slides "https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456" --download
 python -m zju_lecture.cli courseware ./课件.pptx
 python -m zju_lecture.cli cookie            # 默认只显示名称与长度
 ```
 
 > CLI 的 `cookie` 子命令默认**不回显明文**；确实需要时加 `--reveal`（会进入终端历史）。
 > `slides` 子命令优先用 `--cookie-file` / `ZJU_COOKIE`；`--cookie` 仍可用，但会出现在进程列表里。
+> `slides --download` 输出到 `<工作区>/ppt-assets/<sub_id>/`（可用 `--out-dir` 改），并生成
+> `PPT-<sub_id>.pdf`；`--no-dedup` 关闭连续重复截图折叠。
 
 ## 目录结构
 
@@ -216,7 +229,7 @@ dsh-zju-lecture-note/
 ├── package.json                   # npm / dsh 插件包清单（包名 dsh-zju-lecture-note）
 ├── cordis.patch.yml               # dsh bundle patch（把插件插进 cordis）
 ├── lib/                           # dsh 插件实现（ESM）
-│   ├── index.js                   # 插件入口：注册 7 个 dsh 工具 + 内存注册随包 Skill
+│   ├── index.js                   # 插件入口：注册 8 个 dsh 工具 + 内存注册随包 Skill
 │   ├── bridge.js                  # 拉起随包 Python 核心（JSON-RPC over stdio）
 │   ├── tools.js                   # 生成物：dsh 工具定义
 │   └── tools.schema.json          # 生成物：工具定义快照（供测试比对）
@@ -356,6 +369,22 @@ npm publish               # 发布到 npm registry
 
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
+
+## 1.5.0 智云投影 PPT 读取修复
+
+- `zju_fetch_slides` 按真实接口修正：从 Cookie 父域 `.zju.edu.cn` 会话中解析 `_token` 并加
+  `Authorization: Bearer`；按 `course_id` + `page/per_page` 分页并按截图 URL 去重；正确解包
+  `content.pptimgurl`（以前把 JSON 字符串当文字输出）。
+- 新增 `download` / `output_dir` / `dedup` 参数与 CLI `slides --download`：截图存到
+  `ppt-assets/<sub_id>/images/`，用纯标准库合成 `PPT-<sub_id>.pdf`（JPEG `DCTDecode`、
+  PNG `FlateDecode`），连续字节完全相同的截图折叠为一页。
+- 明确「接口返回截图，不是文字层/OCR」：Skill 不再暗示能读取幻灯片文字；模型不能看图时只用字幕与本地课件，
+  需要幻灯片原文时让用户提供原始 `.pptx` 走 `zju_extract_courseware`。
+- 安全：截图只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；Cookie 只发给 ZJU 图片主机、
+  不发送 Bearer；跨主机重定向剥离凭据；写盘限制在工作区，最多 2000 张、单张 ≤32 MiB。
+- 参考 [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli) 的公开实现思路（MIT），
+  详见 [`ATTRIBUTION.md`](ATTRIBUTION.md)；其基于 numpy/Pillow 的近似笔画去重未移植，保持零第三方依赖。
+- dsh 单独把 `zju_fetch_slides` 的超时提高到 600s（下载整节课截图用），其他工具仍用配置值。
 
 ## 1.4.2 修正
 

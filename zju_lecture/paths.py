@@ -250,3 +250,36 @@ def note_target(
     if not _is_inside(base, target):
         return None, f"拒绝写入工作区之外的位置: {target}"
     return target, None
+
+
+def artifact_dir(
+    subdir: str = "",
+    default: str = "artifacts",
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve and create a directory for generated artifacts.
+
+    Used for downloaded slide screenshots and PDFs. ``subdir`` is relative to
+    the primary workspace, or an absolute path already inside it; empty input
+    falls back to ``default``. Returns ``(absolute_dir, error)``. Nothing
+    outside the workspace is writable, so a model-chosen ``output_dir`` cannot
+    be turned into an arbitrary file-system write.
+    """
+    roots = workspace_roots()
+    if not roots:
+        return None, "无法确定当前工作目录，请改用绝对路径或设置 ZJU_WORKSPACE 环境变量"
+    base = roots[0]
+    raw = str(subdir or "").strip() or str(default or "").strip() or "artifacts"
+    candidate = (
+        os.path.abspath(os.path.expanduser(raw))
+        if os.path.isabs(raw)
+        else os.path.join(base, raw)
+    )
+    if not _is_inside(base, candidate):
+        return None, f"拒绝写入工作区之外的目录: {raw}"
+    try:
+        os.makedirs(candidate, exist_ok=True)
+    except OSError as exc:
+        return None, f"无法创建输出目录 {candidate}: {exc}"
+    if not _is_inside(base, candidate):
+        return None, f"拒绝写入工作区之外的目录: {raw}"
+    return candidate, None

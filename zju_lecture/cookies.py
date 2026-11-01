@@ -282,11 +282,40 @@ class _DirectReadUnavailable(Exception):
     """The live database could not be opened read-only; copy it first."""
 
 
-def _query_cookie_rows(db_path: str, domain: str) -> List[Tuple[str, str, str, Optional[bytes]]]:
+def _parent_domain(domain: str) -> Optional[str]:
+    """Return the registrable parent domain for a ZJU host.
+
+    ``classroom.zju.edu.cn`` -> ``zju.edu.cn``. The classroom ``_token``
+    lives in a session cookie set on ``.zju.edu.cn`` (the browser sends it to
+    every ZJU subdomain), so reading only the classroom host would silently
+    fetch a cookie jar without the token.
+    """
+    labels = [part for part in (domain or "").strip().lower().lstrip(".").split(".") if part]
+    if len(labels) < 3:
+        return None
+    # Public-suffix aware enough for ZJU: .edu.cn registrable domains have
+    # three labels (zju.edu.cn), unlike .com with two.
+    if labels[-2:] == ["edu", "cn"]:
+        if len(labels) == 3:
+            return None  # already the registrable domain
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _query_cookie_rows(
+    db_path: str,
+    domain: str,
+    parent_domain: Optional[str] = None,
+) -> List[Tuple[str, str, str, Optional[bytes]]]:
     """Query the ``cookies`` table without modifying the database.
 
     The file is opened read-only, so reading a live Edge database does not
     create a temporary copy at all whenever Chromium allows shared reads.
+
+    ``parent_domain`` adds **domain-scoped** cookies of the parent
+    (``host_key = '.zju.edu.cn'``). Host-only cookies of other ZJU
+    subdomains are deliberately excluded: a browser would not send those to
+    the classroom host either.
     """
     try:
         target = pathlib.Path(db_path).as_uri() + "?mode=ro"
@@ -303,7 +332,14 @@ def _query_cookie_rows(db_path: str, domain: str) -> List[Tuple[str, str, str, O
             "SELECT host_key, name, value, encrypted_value FROM cookies WHERE host_key LIKE ?",
             (f"%{domain}%",),
         )
-        return [row for row in cursor.fetchall() if _host_matches(str(row[0]), domain)]
+        rows = [row for row in cursor.fetchall() if _host_matches(str(row[0]), domain)]
+        if parent_domain:
+            cursor.execute(
+                "SELECT host_key, name, value, encrypted_value FROM cookies WHERE host_key = ?",
+                (f".{parent_domain}",),
+            )
+            rows.extend(cursor.fetchall())
+        return rows
     except sqlite3.Error as exc:
         raise _DirectReadUnavailable(str(exc)) from exc
     finally:
@@ -382,17 +418,22 @@ def _copy_cookie_db(db_path: str) -> str:
     return tmp_path
 
 
-def _read_rows_with_copy(db_path: str, domain: str) -> List[Tuple[str, str, str, Optional[bytes]]]:
+def _read_rows_with_copy(
+    db_path: str,
+    domain: str,
+    parent_domain: Optional[str] = None,
+) -> List[Tuple[str, str, str, Optional[bytes]]]:
     """Fallback path: copy the database and WAL, read it, then shred the copy."""
     tmp_path = _copy_cookie_db(db_path)
     try:
-        return _query_cookie_rows(tmp_path, domain)
+        return _query_cookie_rows(tmp_path, domain, parent_domain)
     finally:
         _secure_remove_tree(os.path.dirname(tmp_path))
 
 
 def read_edge_cookies(
-    domain_filter: str = DEFAULT_DOMAIN
+    domain_filter: str = DEFAULT_DOMAIN,
+    include_parent: bool = True,
 ) -> Tuple[Optional[str], Optional[CookieAccessError]]:
     """Read Edge cookies for ``domain_filter``.
 
@@ -403,7 +444,10 @@ def read_edge_cookies(
     swallowed.
 
     Only cookies whose host is exactly ``domain_filter`` or one of its
-    subdomains are returned, and cookie values never appear in error text.
+    subdomains are returned. With ``include_parent`` (default), domain-scoped
+    cookies of the parent (``.zju.edu.cn``) are appended too: the classroom
+    ``_token`` lives there, and a browser sends it to the classroom host.
+    Host-only cookies of unrelated subdomains are never included.
     """
     domain = (domain_filter or "").strip()
     if not domain:
@@ -412,6 +456,8 @@ def read_edge_cookies(
             f"本插件只读取 {DEFAULT_DOMAIN} 的登录态。",
             reason="no_domain",
         )
+    parent = _parent_domain(domain) if include_parent else None
+    parent_note = f" 或其父域 {parent}" if parent else ""
 
     edge_root = _edge_root()
     if not edge_root:
@@ -455,10 +501,10 @@ def read_edge_cookies(
 
     for db_path in candidates:
         try:
-            rows = _query_cookie_rows(db_path, domain)
+            rows = _query_cookie_rows(db_path, domain, parent)
         except _DirectReadUnavailable:
             try:
-                rows = _read_rows_with_copy(db_path, domain)
+                rows = _read_rows_with_copy(db_path, domain, parent)
             except OSError:
                 locked = True
                 continue
@@ -504,16 +550,18 @@ def read_edge_cookies(
                 reason="db_error",
             )
         return None, CookieAccessError(
-            f"Edge 中没有 {domain} 的 Cookie。",
+            f"Edge 中没有 {domain}{parent_note} 的 Cookie。",
             "请先在 Edge 中登录智云课堂，然后再读取登录态。",
             reason="no_rows",
         )
 
     pairs: List[str] = []
-    seen = set()
+    seen_names = set()
     decrypt_failures = 0
     for _host, name, plain_value, encrypted_value in rows:
-        if (name, plain_value) in seen:
+        # Classroom-specific rows come first; keep that one when a parent
+        # domain sets a cookie with the same name.
+        if name in seen_names:
             continue
         value = plain_value or ""
         if not value and encrypted_value:
@@ -525,7 +573,7 @@ def read_edge_cookies(
                 decrypt_failures += 1
         if not value:
             continue
-        seen.add((name, plain_value))
+        seen_names.add(name)
         pairs.append(f"{name}={value}")
 
     if not pairs:
@@ -541,7 +589,7 @@ def read_edge_cookies(
                 "请在宿主配置里设置 ZJU_COOKIE_FILE 或 ZJU_COOKIE 环境变量。"
             )
         return None, CookieAccessError(
-            f"读取到 {len(rows)} 条 {domain} 的 Cookie，但全部解密失败。",
+            f"读取到 {len(rows)} 条 {domain}{parent_note} 的 Cookie，但全部解密失败。",
             hint,
             reason="decrypt_failed",
         )

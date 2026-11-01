@@ -8,6 +8,7 @@ import http.client
 import json
 import os
 import random
+import re
 import socket
 import ssl
 import time
@@ -193,6 +194,8 @@ def _fetch_bytes(
     headers: Dict[str, str],
     timeout: int,
     attempts: int = _RETRY_ATTEMPTS,
+    max_bytes: Optional[int] = None,
+    allow_cross_host_redirect: bool = False,
 ) -> bytes:
     """GET ``url`` and read the **whole** body, retrying transient failures.
 
@@ -203,13 +206,28 @@ def _fetch_bytes(
     只重试建连的话，这类失败仍然一次就穿透到用户面前。
 
     Certification failures are *not* retried: they need a fix, not a rerun.
+    ``max_bytes`` refuses oversized bodies (slide screenshots) before they are
+    materialised in memory.
     """
     total = max(1, attempts)
     last: Optional[BaseException] = None
     for index in range(total):
         try:
-            with _open_request(url, headers, timeout) as response:
-                return response.read()
+            if allow_cross_host_redirect:
+                context = _open_request(
+                    url, headers, timeout, allow_cross_host_redirect=True
+                )
+            else:
+                context = _open_request(url, headers, timeout)
+            with context as response:
+                if max_bytes is None:
+                    return response.read()
+                data = response.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    raise ZJUAPIError(
+                        f"响应超过 {max_bytes // (1024 * 1024)} MiB 上限，已停止读取"
+                    )
+                return data
         except Exception as error:  # noqa: BLE001 - re-raised below unless transient
             if not _is_transient(error):
                 raise
@@ -241,11 +259,42 @@ class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _open_request(url: str, headers: Dict[str, str], timeout: int):
-    """Open ``url`` with certificate verification and same-host redirects."""
+class _StripAuthOnCrossHostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow slide-CDN redirects, but never carry credentials across origins.
+
+    Slide screenshots are static files and may redirect to a media host. The
+    classroom API keeps the stricter same-host rule; this handler is only used
+    for image downloads, and it drops ``Cookie`` / ``Authorization`` whenever
+    the redirect changes the host.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_request is None:
+            return None
+        old_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+        new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        if old_host != new_host:
+            new_request.remove_header("Cookie")
+            new_request.remove_header("Authorization")
+        return new_request
+
+
+def _open_request(
+    url: str,
+    headers: Dict[str, str],
+    timeout: int,
+    allow_cross_host_redirect: bool = False,
+):
+    """Open ``url`` with certificate verification and a redirect policy."""
+    redirect_handler = (
+        _StripAuthOnCrossHostRedirectHandler()
+        if allow_cross_host_redirect
+        else _SameHostRedirectHandler()
+    )
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=get_ssl_context()),
-        _SameHostRedirectHandler(),
+        redirect_handler,
     )
     request = urllib.request.Request(url, headers=headers)
     return opener.open(request, timeout=timeout)
@@ -356,22 +405,163 @@ def _record(diagnostics: Optional[List[str]], message: str) -> None:
         diagnostics.append(message)
 
 
+_CLASSROOM_TOKEN_RE = re.compile(
+    r'\{i:\d+;s:\d+:"_token";i:\d+;s:\d+:"([^"]+)";\}'
+)
+
+
+def is_zju_host(host: Optional[str]) -> bool:
+    """True for ``zju.edu.cn`` and its subdomains (never lookalikes)."""
+    value = (host or "").strip().lower().strip(".")
+    return value == "zju.edu.cn" or value.endswith(".zju.edu.cn")
+
+
+def secure_zju_url(url: str) -> str:
+    """Upgrade ZJU ``http://`` URLs to HTTPS; leave other URLs untouched.
+
+    The classroom SSO cookie has no ``Secure`` flag, so downloading a
+    screenshot over plain HTTP would send the login credential unencrypted.
+    """
+    value = (url or "").strip()
+    if value.startswith("//"):
+        value = "https:" + value
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme.lower() == "http" and is_zju_host(parsed.hostname):
+        return "https" + value[4:]
+    return value
+
+
+def extract_classroom_token(cookie_header: str) -> Optional[str]:
+    """Extract the classroom Bearer token from a Cookie header.
+
+    The token is not a cookie of its own: the classroom session cookie stores
+    a percent-encoded PHP-serialized payload and ``_token`` is a field inside
+    it. Plain ``_token=...`` is accepted as a fallback for hand-written
+    cookie files. Returns ``None`` when no usable token is present.
+    """
+    if not cookie_header:
+        return None
+    decoded = urllib.parse.unquote(cookie_header)
+    match = _CLASSROOM_TOKEN_RE.search(decoded)
+    token = match.group(1) if match else ""
+    if not token:
+        for part in decoded.split(";"):
+            name, separator, value = part.partition("=")
+            if separator and name.strip() == "_token":
+                token = value.strip()
+                break
+    token = token.strip()
+    if not token or len(token) > 4096:
+        return None
+    if any(ord(char) < 0x21 or ord(char) > 0x7E for char in token):
+        return None
+    return token
+
+
+def _classroom_headers(
+    cookie: str,
+    token: Optional[str],
+    sub_id: str,
+) -> Dict[str, str]:
+    """Headers shared by the authenticated classroom endpoints."""
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Cookie": cookie,
+        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _clean_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _first_not_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def normalize_slide(item: Any, index: int) -> Dict[str, Any]:
+    """Flatten one ``search-ppt`` row into a stable slide record.
+
+    ``content`` is a JSON *string* in the real response
+    (``{"pptimgurl": "http://..."}``), not note text. The old formatter
+    rendered that string verbatim, so the model saw JSON instead of slides.
+    """
+    row = item if isinstance(item, dict) else {}
+    content_raw = row.get("content")
+    parsed: Dict[str, Any] = {}
+    text = ""
+
+    if isinstance(content_raw, dict):
+        parsed = content_raw
+    elif isinstance(content_raw, str):
+        stripped = content_raw.strip()
+        if stripped.startswith("{"):
+            try:
+                decoded = json.loads(stripped)
+            except ValueError:
+                decoded = None
+            if isinstance(decoded, dict):
+                parsed = decoded
+            else:
+                text = stripped
+        else:
+            text = stripped
+
+    def pick(*keys: str) -> str:
+        for source in (parsed, row):
+            for key in keys:
+                value = _clean_text(source.get(key))
+                if value:
+                    return value
+        return ""
+
+    image_url = secure_zju_url(
+        pick("pptimgurl", "ppt_img_url", "image_url", "imgurl")
+    )
+    text = text or pick("ocr_content", "ocr_text", "text", "ppttext", "ppt_text")
+    slide: Dict[str, Any] = {
+        "page": index,
+        "image_url": image_url,
+        "text": text,
+    }
+    time_point = _first_not_none(
+        row.get("time"),
+        row.get("time_point"),
+        row.get("sec"),
+        parsed.get("time"),
+        parsed.get("time_point"),
+    )
+    if time_point is not None:
+        slide["time"] = time_point
+    if not image_url and not text:
+        slide["raw"] = json.dumps(item, ensure_ascii=False)[:500]
+    return slide
+
+
 def fetch_slides(
     sub_id: str,
     tenant_code: str = "112",
     cookie: Optional[str] = None,
     timeout: int = 30,
     diagnostics: Optional[List[str]] = None,
+    course_id: str = "",
 ) -> Optional[List[Dict[str, Any]]]:
-    """Fetch projected slide notes (PPT text layer) from classroom API.
+    """Fetch projected-slide screenshots from the classroom API.
 
-    Requires a login cookie for authentication. Returns ``None`` when the
-    cookie is absent or the request fails, so the caller can degrade to a
-    transcript-only lecture note.
+    The endpoint returns **screenshots** (``content.pptimgurl``), not a text
+    layer. Pagination is required because the API returns at most ~100 rows
+    per page; it also sometimes ignores ``per_page`` and repeats the first
+    page, so URLs are de-duplicated in order.
 
-    ``diagnostics``（可选）会被追加一条人类可读的降级原因。以前这里 ``except
-    Exception: pass``，于是 TLS / 代理故障与"老师没开 PPT"在调用方看来一模一样，
-    模型只能猜"是不是没登录"。
+    Requires a login cookie that contains the classroom ``_token`` (found in
+    the parent-domain ``.zju.edu.cn`` session cookie). ``diagnostics`` records
+    one human-readable degradation reason on failure.
     """
     if not cookie:
         _record(diagnostics, "未提供登录 Cookie")
@@ -383,23 +573,100 @@ def fetch_slides(
         _record(diagnostics, f"Cookie 头未通过校验：{error}")
         return None
 
-    url = (
-        f"{BASE_URL}/pptnote/v1/schedule/search-ppt"
-        f"?sub_id={sub_id}&tenant_code={tenant_code}"
-    )
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Cookie": cookie,
-        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
-    }
-    try:
-        data = json.loads(_fetch_bytes(url, headers, timeout).decode("utf-8"))
-        if data.get("code") == 0 and data.get("list"):
-            return data["list"]
-        _record(diagnostics, f"PPT 接口返回 code={data.get('code')}，无 list 数据")
-    except Exception as error:  # noqa: BLE001 - degradation path, reason is recorded
-        _record(diagnostics, "PPT 接口请求失败。" + describe_network_error(error))
-    return None
+    token = extract_classroom_token(cookie)
+    headers = _classroom_headers(cookie, token, sub_id)
+    endpoint = f"{BASE_URL}/pptnote/v1/schedule/search-ppt"
+
+    slides: List[Dict[str, Any]] = []
+    seen: set = set()
+    total = 0
+    page = 1
+    max_pages = 50
+    while page <= max_pages:
+        params = {
+            "sub_id": sub_id,
+            "tenant_code": tenant_code,
+            "page": page,
+            "per_page": 100,
+        }
+        if course_id:
+            params["course_id"] = course_id
+        url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+        try:
+            data = json.loads(_fetch_bytes(url, headers, timeout).decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            hint = ""
+            if error.code in (401, 403):
+                hint = "；登录态无效或 Cookie 缺少 _token，请重新登录智云课堂后重试"
+            _record(diagnostics, f"PPT 接口返回 HTTP {error.code}{hint}")
+            return slides or None
+        except Exception as error:  # noqa: BLE001 - degradation path, reason is recorded
+            _record(diagnostics, "PPT 接口请求失败。" + describe_network_error(error))
+            return slides or None
+
+        if not isinstance(data, dict):
+            _record(diagnostics, "PPT 接口返回了非对象 JSON，可能改版了")
+            return slides or None
+
+        code = data.get("code")
+        if code != 0:
+            message = data.get("msg") or f"未知错误 (code={code})"
+            hint = (
+                ""
+                if token
+                else "；Cookie 中未解析到 _token，请确认包含父域 .zju.edu.cn 的会话 Cookie"
+            )
+            _record(diagnostics, f"PPT 接口返回 code={code}: {message}{hint}")
+            return slides or None
+
+        items = data.get("list") or []
+        try:
+            page_total = int(data.get("total") or 0)
+        except (TypeError, ValueError):
+            page_total = 0
+        if page_total:
+            total = page_total
+
+        added = 0
+        for item in items:
+            slide = normalize_slide(item, len(slides) + 1)
+            key = (
+                slide.get("image_url")
+                or slide.get("text")
+                or json.dumps(item, sort_keys=True, ensure_ascii=False)
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            slides.append(slide)
+            added += 1
+
+        # The API may return the whole deck on page 1 and repeat it on page 2.
+        if not items or added == 0:
+            break
+        if total and len(slides) >= total:
+            break
+        page += 1
+
+    if not slides:
+        if not course_id:
+            _record(
+                diagnostics,
+                "PPT 列表为空；如果输入的是纯 sub_id，请补上 course_id"
+                "（完整回放 URL 通常带有 course_id=...）后重试",
+            )
+        else:
+            _record(diagnostics, "PPT 列表为空：老师可能没有使用智云投屏，或截图尚未生成")
+        return None
+
+    if total and len(slides) < total:
+        _record(
+            diagnostics,
+            f"PPT 接口标记共 {total} 张，去重后取到 {len(slides)} 张（后续分页无新数据）",
+        )
+    if page > max_pages and (not total or len(slides) < total):
+        _record(diagnostics, f"PPT 分页达到上限 {max_pages} 页，已停止")
+    return slides
 
 
 def _find_mp4_in_json(obj: Any) -> Optional[str]:
@@ -449,11 +716,11 @@ def fetch_video_url(
         f"{BASE_URL}/courseapi/v2/play-template/get-config"
         f"?course_id={course_id}&sub_id={sub_id}&tenant_code={tenant_code}"
     )
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Cookie": cookie,
-        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
-    }
+    headers = _classroom_headers(
+        cookie,
+        extract_classroom_token(cookie),
+        sub_id,
+    )
     try:
         data = json.loads(_fetch_bytes(url, headers, timeout).decode("utf-8"))
         found = _find_mp4_in_json(data)
