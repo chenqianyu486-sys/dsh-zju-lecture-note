@@ -86,6 +86,26 @@ COOKIE_ENV = "ZJU_COOKIE"
 COOKIE_FILE_ENV = "ZJU_COOKIE_FILE"
 _MAX_COOKIE_FILE_BYTES = 64 * 1024
 
+#: Opt-in: download projected-slide screenshots and reference them in the
+#: note. Off by default because it adds download time and vision tokens.
+EMBED_SLIDES_ENV = "ZJU_EMBED_SLIDES"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def embed_slides_enabled() -> bool:
+    """Whether the host asked for projected-slide images in the note."""
+    return str(os.environ.get(EMBED_SLIDES_ENV, "")).strip().lower() in _TRUE_VALUES
+
+
+SLIDE_IMAGE_MODE_TEXT = (
+    "讲义插图模式：开启。需要投影画面时调用 zju_fetch_slides(download=true)，"
+    "从返回的截图里挑 3–8 张关键页，按讲义所在目录的相对路径插入 Markdown；"
+    "模型不能查看本地图片时，只在文末列截图索引，不要臆造截图内容。"
+    if embed_slides_enabled()
+    else "讲义插图模式：关闭（默认，节省下载时间与 token）。"
+    "用户明确要求插图时再调用 zju_fetch_slides(download=true)。"
+)
+
 SERVER_INSTRUCTIONS = (
     "提供浙大智云课堂（classroom.zju.edu.cn）回放的字幕、投影 PPT 截图与课件文本提取。"
     "字幕接口公开免登录；投影截图（可下载并合成 PDF）与视频直链需要登录态（Cookie 需含 _token）。"
@@ -93,6 +113,7 @@ SERVER_INSTRUCTIONS = (
     "长课程请使用 view_format=chunked 分批处理。"
     "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
     "相对路径按当前工作区（ZJU_WORKSPACE）解析。"
+    + SLIDE_IMAGE_MODE_TEXT
 )
 
 # Cookies read from the local browser are kept here instead of being handed
@@ -286,6 +307,8 @@ TOOLS: List[Dict[str, Any]] = [
             "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是"
             "投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时"
             "请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。"
+            "是否把截图引用进讲义由插件设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES 控制"
+            "（默认关闭，节省下载时间与 token）。"
             "接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、"
             "ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。"
             "抓不到时返回具体诊断，流水线可降级为纯字幕总结。"
@@ -313,10 +336,10 @@ TOOLS: List[Dict[str, Any]] = [
                 "download": {
                     "type": "boolean",
                     "description": (
-                        "是否下载截图到工作区并合成 PDF（默认 false，只返回截图清单）。"
-                        "一节 1 小时的课通常有几十到几百张截图"
+                        "是否下载截图到工作区并合成 PDF。省略时跟随插件设置"
+                        "（dsh 的 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES，默认关闭）；"
+                        "显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图"
                     ),
-                    "default": False,
                 },
                 "output_dir": {
                     "type": "string",
@@ -685,7 +708,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         sub_id = parsed["sub_id"]
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
         course_id = str(arguments.get("course_id") or parsed.get("course_id") or "")
-        download = bool(arguments.get("download"))
+        download_arg = arguments.get("download")
+        slide_images_enabled = embed_slides_enabled()
+        download = slide_images_enabled if download_arg is None else bool(download_arg)
         dedup_arg = arguments.get("dedup")
         dedup = True if dedup_arg is None else bool(dedup_arg)
         output_dir = str(arguments.get("output_dir") or "").strip()
@@ -719,6 +744,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
 
         pdf_path = ""
         download_note = ""
+        note_example = ""
         if download:
             target, target_error = artifact_dir(
                 output_dir,
@@ -735,6 +761,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     dedup=dedup,
                     diagnostics=diagnostics,
                 )
+                note_example = str(summary.get("note_example") or "")
                 pages = summary.get("pages") or []
                 if pages:
                     pdf_target = os.path.join(target, f"PPT-{sub_id}.pdf")
@@ -750,13 +777,34 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     download_note += f"\nPDF: {pdf_path}（{len(pages)} 页）"
 
         md = format_slides_as_markdown(slides_data, pdf_path=pdf_path)
+        mode_text = "开启" if slide_images_enabled else "关闭（默认）"
         lines = [
             f"=== 课堂投影 PPT 截图 (sub_id={sub_id}, 共 {len(slides_data)} 页) ===",
+            f"讲义插图模式: {mode_text}"
+            "（dsh 设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES）",
             "说明: 智云接口返回的是投影画面截图，不是文字层；"
             "未下载或模型不能看图时，请只用字幕与本地课件生成讲义。",
         ]
+        if download and not slide_images_enabled:
+            lines.append("本次按显式 download=true 执行。")
+        elif slide_images_enabled and not download:
+            lines.append("本次 download=false，未下载截图。")
         if download_note:
             lines.append(download_note)
+        if note_example:
+            lines.append(f"引用示例: {note_example}（讲义在子目录时按层级补 ../）")
+        else:
+            example_slide = next(
+                (slide for slide in slides_data if slide.get("workspace_rel")),
+                None,
+            )
+            if example_slide:
+                page = example_slide.get("page") or 1
+                relative = example_slide["workspace_rel"]
+                lines.append(
+                    f"引用示例: ![第 {page} 页]({relative})"
+                    "（讲义在子目录时按层级补 ../）"
+                )
         if diagnostics:
             lines.append("采集提示:")
             lines.extend(f"- {item}" for item in diagnostics)

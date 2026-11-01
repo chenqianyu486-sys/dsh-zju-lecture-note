@@ -387,6 +387,27 @@ class TestDownloadAndPdf(unittest.TestCase):
         self.assertIn(b"/DCTDecode", data)
         self.assertIn(b"/FlateDecode", data)
 
+    def test_download_records_workspace_relative_path(self):
+        workspace = tempfile.mkdtemp(prefix="zju-workspace-")
+        self.addCleanup(shutil.rmtree, workspace, True)
+        target = os.path.join(workspace, "ppt-assets", "123456", "images")
+        slides = [{
+            "page": 1,
+            "image_url": "https://media.cmc.zju.edu.cn/1.jpg",
+            "text": "",
+        }]
+        with mock.patch.dict(os.environ, {"ZJU_WORKSPACE": workspace, "PWD": workspace}), \
+                mock.patch.object(slides_module, "_fetch_bytes", lambda *args, **kwargs: TINY_JPEG):
+            summary = slides_module.download_slides(slides, target)
+        self.assertEqual(
+            slides[0]["workspace_rel"],
+            "ppt-assets/123456/images/slide-0001.jpg",
+        )
+        self.assertEqual(
+            summary["note_example"],
+            "![第 1 页](ppt-assets/123456/images/slide-0001.jpg)",
+        )
+
     def test_png_filters_are_reversed(self):
         rows = [
             [10, 20, 30],
@@ -476,6 +497,40 @@ class TestSlideFormatter(unittest.TestCase):
         self.assertIn("截图: https://media.cmc.zju.edu.cn/2.jpg", text)
         self.assertNotIn("OCR", text)
 
+    def test_workspace_relative_path_is_shown(self):
+        text = format_slides_as_markdown([{
+            "page": 3,
+            "local_path": "/tmp/workspace/ppt-assets/123/images/slide-0003.jpg",
+            "workspace_rel": "ppt-assets/123/images/slide-0003.jpg",
+        }])
+        self.assertIn(
+            "工作区相对路径: ppt-assets/123/images/slide-0003.jpg",
+            text,
+        )
+
+
+class TestEmbedSlideSetting(unittest.TestCase):
+    def test_truthy_env_values(self):
+        import mcp_server
+
+        for value in ("1", "true", "YES", "on"):
+            with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": value}):
+                self.assertTrue(mcp_server.embed_slides_enabled())
+        for value in ("", "0", "false", "off"):
+            with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": value}):
+                self.assertFalse(mcp_server.embed_slides_enabled())
+
+    def test_dsh_and_mcp_expose_the_switch(self):
+        with open(os.path.join(ROOT, "lib", "index.js"), encoding="utf-8") as handle:
+            index_source = handle.read()
+        with open(os.path.join(ROOT, "lib", "bridge.js"), encoding="utf-8") as handle:
+            bridge_source = handle.read()
+        with open(os.path.join(ROOT, "zju-lecture.mcp.json"), encoding="utf-8") as handle:
+            mcp_source = handle.read()
+        self.assertIn("embedSlideImages", index_source)
+        self.assertIn("ZJU_EMBED_SLIDES", bridge_source)
+        self.assertIn("ZJU_EMBED_SLIDES", mcp_source)
+
 
 class TestToolSchema(unittest.TestCase):
     def test_slide_tool_exposes_download_controls(self):
@@ -486,6 +541,7 @@ class TestToolSchema(unittest.TestCase):
         for name in ("course_id", "download", "output_dir", "dedup"):
             self.assertIn(name, properties)
         self.assertNotIn("文字层与 OCR", tool["description"])
+        self.assertIn("ZJU_EMBED_SLIDES", tool["description"])
 
 
 class TestMcpHandler(unittest.TestCase):
@@ -543,6 +599,72 @@ class TestMcpHandler(unittest.TestCase):
             })
         self.assertIn("截图: https://media.cmc.zju.edu.cn/2.jpg", output)
         self.assertNotIn("PDF:", output)
+
+    def test_setting_on_downloads_when_download_is_omitted(self):
+        import mcp_server
+
+        slides = [{
+            "page": 1,
+            "image_url": "https://media.cmc.zju.edu.cn/1.jpg",
+            "text": "",
+            "local_path": "/tmp/slide-0001.jpg",
+            "workspace_rel": "ppt-assets/123/images/slide-0001.jpg",
+        }]
+        summary = {
+            "downloaded": 1,
+            "failed": 0,
+            "skipped": 0,
+            "duplicates": 0,
+            "images_dir": "/tmp/images",
+            "pages": slides,
+            "total_bytes": 10,
+            "note_example": "![第 1 页](ppt-assets/123/images/slide-0001.jpg)",
+        }
+        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "1"}), \
+                mock.patch.object(
+                    mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
+                ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
+                mock.patch.object(mcp_server, "artifact_dir", return_value=("/tmp/ppt", None)), \
+                mock.patch.object(
+                    mcp_server, "download_slides", return_value=summary
+                ) as download_mock, \
+                mock.patch.object(
+                    mcp_server, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
+                ):
+            output = mcp_server.handle_tool_call("zju_fetch_slides", {
+                "url_or_sub_id": (
+                    "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
+                ),
+            })
+        download_mock.assert_called_once()
+        self.assertIn("讲义插图模式: 开启", output)
+        self.assertIn(
+            "引用示例: ![第 1 页](ppt-assets/123/images/slide-0001.jpg)",
+            output,
+        )
+
+    def test_setting_off_does_not_download_by_default(self):
+        import mcp_server
+
+        slides = [{
+            "page": 1,
+            "image_url": "https://media.cmc.zju.edu.cn/1.jpg",
+            "text": "",
+        }]
+        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "0"}), \
+                mock.patch.object(
+                    mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
+                ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
+                mock.patch.object(
+                    mcp_server, "download_slides"
+                ) as download_mock:
+            output = mcp_server.handle_tool_call("zju_fetch_slides", {
+                "url_or_sub_id": (
+                    "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
+                ),
+            })
+        download_mock.assert_not_called()
+        self.assertIn("讲义插图模式: 关闭（默认）", output)
 
 
 if __name__ == "__main__":

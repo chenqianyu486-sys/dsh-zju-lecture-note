@@ -75,7 +75,7 @@
     "type": "function",
     "function": {
       "name": "zju_fetch_slides",
-      "description": "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时返回具体诊断，流水线可降级为纯字幕总结。",
+      "description": "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。是否把截图引用进讲义由插件设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES 控制（默认关闭，节省下载时间与 token）。接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时返回具体诊断，流水线可降级为纯字幕总结。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -95,8 +95,7 @@
           },
           "download": {
             "type": "boolean",
-            "description": "是否下载截图到工作区并合成 PDF（默认 false，只返回截图清单）。一节 1 小时的课通常有几十到几百张截图",
-            "default": false
+            "description": "是否下载截图到工作区并合成 PDF。省略时跟随插件设置（dsh 的 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES，默认关闭）；显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图"
           },
           "output_dir": {
             "type": "string",

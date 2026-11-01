@@ -14,7 +14,7 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 | :--- | :--- | :--- |
 | `zju_parse_url` | 从回放链接中取出 `sub_id` / `course_id` / `tenant_code` | 公开 |
 | `zju_fetch_transcript` | 抓取语音识别字幕（支持切片、分块、限长） | **公开免登录** |
-| `zju_fetch_slides` | 抓取课堂投影 PPT 截图清单；可选下载截图并合成 PDF（接口返回截图，**不是文字层/OCR**） | 需登录态（Cookie 需含 `_token`；服务端自动读缓存 / `ZJU_COOKIE` / 本机 Edge） |
+| `zju_fetch_slides` | 抓取课堂投影 PPT 截图清单；可选下载截图并合成 PDF（接口返回截图，**不是文字层/OCR**）；是否自动下载/入讲义由 `embedSlideImages` / `ZJU_EMBED_SLIDES` 控制 | 需登录态（Cookie 需含 `_token`；服务端自动读缓存 / `ZJU_COOKIE` / 本机 Edge） |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / PDF 课件文本 | 本地文件（拒绝凭据与浏览器数据） |
 | `zju_check_note` | 检查讲义 Markdown 是否符合公式规范、能否正常渲染 | 本地文件 |
 | `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名、拒绝静默覆盖、写后自动校验 | 本地文件（只写工作区） |
@@ -36,8 +36,8 @@ flowchart TD
     B --> C[调用 zju_fetch_transcript 获取字幕]
     C --> D{是否有本地课件或登录态?}
     D -- 有课件文件 --> E1[调用 zju_extract_courseware 提取课件]
-    D -- 有登录态 --> E2[zju_fetch_slides：需要看画面时 download=true]
-    D -- 无额外材料 --> F[进入 Agent 降噪与知识蒸馏]
+    D -- 有登录态且插图模式开启 --> E2[zju_fetch_slides download=true]
+    D -- 无额外材料或插图模式关闭 --> F[进入 Agent 降噪与知识蒸馏]
     E1 --> F
     E2 --> F
     F --> G{课程时长 / 字幕规模}
@@ -62,9 +62,11 @@ flowchart TD
 3. **补充课件与术语参考（可选增强）**：
    - 用户提供了课件附件（`.pptx` / `.docx` / `.pdf` / `.txt` / `.md`）→ `zju_extract_courseware(file_path=...)`；
    - 需要现场投影画面 → `zju_fetch_slides(url_or_sub_id="<完整回放 URL>", course_id="<course_id>", download=true)`。
+     **是否自动下载/引用截图由插件设置控制**：dsh 设置 `embedSlideImages`，MCP 环境变量
+     `ZJU_EMBED_SLIDES=1`；默认关闭（节省下载时间与 token）。开启后按下面的「投影截图入讲义」执行。
      **智云 `search-ppt` 返回的是投影截图（`pptimgurl`），不是文字层或 OCR**：
      - `download=true` 会把截图存到工作区 `ppt-assets/<sub_id>/images/`，并合成 `PPT-<sub_id>.pdf`；
-       返回里会给出截图目录与 PDF 绝对路径。整节课的截图下载可能需要数分钟。
+       返回里会给出截图目录、PDF 绝对路径与每页的工作区相对路径。整节课的截图下载可能需要数分钟。
      - 只传纯 `sub_id` 时**必须同时传 `course_id`**（完整回放 URL 会自动解析），否则接口可能返回空列表。
      - 服务端会自动从 Cookie 的父域 `.zju.edu.cn` 会话中解析 `_token` 并加 `Authorization: Bearer`；
        登录态来源：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → 本机 Edge。
@@ -72,6 +74,27 @@ flowchart TD
        或在宿主配置里设置 `ZJU_COOKIE` / `ZJU_COOKIE_FILE`；**不要让用户把 Cookie 粘贴进对话，也不要把 Cookie 写进讲义或命令参数**。
    - **不要臆造幻灯片文字**：截图 URL 和页数不包含幻灯片内容。如果宿主/模型不能看图，或没有下载截图，
      就只用字幕与本地课件生成讲义；需要幻灯片原文时，优先请用户提供原始 `.pptx` 并用 `zju_extract_courseware`。
+
+### 投影截图入讲义（可选，受插件设置控制）
+
+**开关**：dsh 插件设置 `embedSlideImages`（默认 `false`）；MCP 宿主在 server env 里设
+`ZJU_EMBED_SLIDES=1`（仓库 `zju-lecture.mcp.json` 默认 `0`）。关闭时不要主动下载或插入截图；
+用户明确要求插图时，可以临时调用 `download=true`。
+
+**开启后的做法**：
+
+1. 解析出 `course_id` 后调用 `zju_fetch_slides(...download=true)`。工具会下载到
+   `ppt-assets/<sub_id>/images/`，合成 `PPT-<sub_id>.pdf`，并在每页给出绝对路径与工作区相对路径。
+2. 如果宿主/模型能查看本地图片：挑 **3–8 张**最有讲解价值的页（定义、示意图、公式推导、例题），
+   在对应小节插入 Markdown 图片。路径按**讲义所在目录**写：
+   - 讲义在工作区根目录：`![第 12 页](ppt-assets/1988057/images/slide-0012.jpg)`
+   - 讲义在 `notes/`：`![第 12 页](../ppt-assets/1988057/images/slide-0012.jpg)`
+3. 如果模型不能查看图片：**不要臆造截图内容**；在讲义末尾加「课堂投影截图索引」，
+   列出页码与相对路径，正文仍以字幕与本地课件为准。
+4. 成本控制：整节课只下载一次；只嵌入 3–8 张；不要把全部截图的二进制或整份 PDF 塞进上下文。
+5. 图片必须有正文解释（图注或一句话说明），不能只堆图；`zju_check_note` 不检查图片路径是否存在，
+   写完后自己确认引用的文件确实在 `ppt-assets/` 下。相对路径只在工作区内有效；要离线分享或换机器，
+   直接发 `PPT-<sub_id>.pdf`。
 
 ### 步骤二：蒸馏与产出
 
@@ -88,6 +111,8 @@ zju_write_note(
 
 - **命名模板**：`知识总结-2026-10-28-复变函数-保角映射与拉普拉斯变换.md`。
   日期写上，讲义就会按时间自然排序；主题写具体（「第 7 章」「上」这类含糊的词不要用）。
+- **插图模式下**：按上一节的相对路径规则插入 3–8 张关键页截图；不要把整份 PDF 或图片二进制
+  塞进 `content`，也不要把所有截图都堆进讲义。
 - **上课日期从哪来**（按优先级，都不要就省略日期段）：
   用户明确给出的日期 > 课件首页/回放页面上的日期 > 老师在课堂上提到"我们 10 月 28 日这节课…"。
   **拿不到日期就省略**，不要用今天的日期顶替——那会让文件名说谎。

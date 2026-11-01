@@ -7,8 +7,10 @@
       "args": [
         "./server.mjs"
       ],
-      "env": {},
-      "description": "提供浙大智云课堂回放的字幕、投影 PPT、课件文本与视频直链提取工具。",
+      "env": {
+        "ZJU_EMBED_SLIDES": "0"
+      },
+      "description": "提供浙大智云课堂回放的字幕、投影 PPT、课件文本与视频直链提取工具。设置 ZJU_EMBED_SLIDES=1 可让 Agent 在讲义中引用投影截图（默认关闭，节省 token）。",
       "timeout": 120000
     }
   }

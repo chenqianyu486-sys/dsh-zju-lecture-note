@@ -304,10 +304,13 @@ def format_slides_as_markdown(
         text = str(slide.get("text") or slide.get("ocr_content") or "").strip()
         image_url = str(slide.get("image_url") or "").strip()
         local_path = str(slide.get("local_path") or "").strip()
+        workspace_rel = str(slide.get("workspace_rel") or "").strip()
         if text:
             lines.append(text)
         if local_path:
             lines.append(f"截图文件: {local_path}")
+            if workspace_rel:
+                lines.append(f"工作区相对路径: {workspace_rel}")
         elif image_url:
             lines.append(f"截图: {image_url}")
         if not text and not local_path and not image_url:

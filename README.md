@@ -73,7 +73,7 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | :--- | :--- | :--- | :--- |
 | `zju_parse_url` | 解析回放链接，取 `sub_id` / `course_id` / `tenant_code` | 公开 | 纯字符串解析 |
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** | 无 Cookie |
-| `zju_fetch_slides` | 抓取课堂投影 PPT **截图清单**；可选下载截图并合成 PDF（接口不返回文字层/OCR） | 需登录态（Cookie 需含 `_token`） | 不收/不回显 Cookie |
+| `zju_fetch_slides` | 抓取课堂投影 PPT **截图清单**；可选下载截图并合成 PDF（接口不返回文字层/OCR）；可开关是否把截图引用进讲义 | 需登录态（Cookie 需含 `_token`） | 不收/不回显 Cookie |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 | 拒绝敏感路径 |
 | `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题；报告按问题类型聚合） | 本地文件 | 只接受 `.md` / `.markdown` |
 | `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名（如 `知识总结-2026-10-28-复变函数-保角映射.md`）、拒绝静默覆盖、写前修正 + 写后校验 | 本地文件 | 只写工作区内的 `.md` |
@@ -85,6 +85,30 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 > `<工作区>/ppt-assets/<sub_id>/images/`，并合成 `PPT-<sub_id>.pdf`（JPEG 直嵌、PNG 解码，
 > 连续字节相同的截图折叠为一页）。只传纯 `sub_id` 时必须同时给 `course_id`；
 > 鉴权使用 Cookie 父域 `.zju.edu.cn` 中的 `_token`（`Authorization: Bearer`）。
+
+### 讲义中引用投影截图（可选，默认关闭）
+
+打开这个开关后，Agent 会把截图下载到 `ppt-assets/<sub_id>/images/`，并从中挑 **3–8 张**关键页，
+以 Markdown 相对路径插进讲义对应的小节，复习时不用来回切回放。默认关闭：整节课的截图下载较慢，
+让视觉模型看截图也会明显增加 token；不需要插图时只走字幕，成本最低。
+
+- **dsh**：插件设置 `embedSlideImages: true`。
+- **MCP / MiniMax Code**：在 server env 中设 `ZJU_EMBED_SLIDES=1`（仓库自带的
+  `zju-lecture.mcp.json` 默认是 `0`）：
+
+  ```json
+  "env": { "ZJU_EMBED_SLIDES": "1" }
+  ```
+- **CLI**：`python -m zju_lecture.cli slides <url> --download` 只负责下载截图与 PDF；
+  是否把图片写进讲义由 Agent 按上面的开关决定。
+
+开启后如果宿主模型不能查看本地图片，Agent 只会在讲义末尾列「课堂投影截图索引」（页码 + 相对路径），
+不会编造截图内容。图片路径按讲义所在目录调整：讲义在工作区根目录用 `ppt-assets/...`，
+在 `notes/` 里用 `../ppt-assets/...`。这些相对路径只在工作区内有效；要离线分享或换机器，
+直接发 `PPT-<sub_id>.pdf` 更稳妥。
+
+> 插件本身只负责下载、索引与相对路径，不提供 OCR；模型能否「看懂」截图取决于宿主是否支持本地图片输入。
+> 不支持时，Agent 会退化为截图索引 + 字幕/课件总结，不会把截图当成已识别的文字。
 
 ## 安装
 
@@ -139,6 +163,8 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > **版本要求**：dsh 会按 `peerDependencies` 中的 `@deepseek-ai/dsh-*` 范围校验运行时版本；
 > 本插件声明 `>=0.2.0-rc.2 <0.3.0-0`，不匹配时需要显式的版本豁免。
 > **Python 探测顺序**：插件配置项 → 环境变量 `ZJU_PYTHON` → DeepSeek Harness 自带 Python → PATH 上的 `python3` / `python` / `py -3`。
+> **讲义插图开关**：dsh 设置项 `embedSlideImages`（默认 `false`）；MCP 宿主用环境变量 `ZJU_EMBED_SLIDES=1`。
+> 开启后 Agent 会下载截图并挑 3–8 张关键页插进讲义；关闭时只走字幕，省时间与 token。
 
 **登录态（可选，仅投影 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
 且 Edge 127+ 若启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密其 v20 Cookie，这时会直接
@@ -370,7 +396,7 @@ npm publish               # 发布到 npm registry
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
-## 1.5.0 智云投影 PPT 读取修复
+## 1.5.0 智云投影 PPT 读取与讲义插图
 
 - `zju_fetch_slides` 按真实接口修正：从 Cookie 父域 `.zju.edu.cn` 会话中解析 `_token` 并加
   `Authorization: Bearer`；按 `course_id` + `page/per_page` 分页并按截图 URL 去重；正确解包
@@ -382,9 +408,19 @@ npm publish               # 发布到 npm registry
   需要幻灯片原文时让用户提供原始 `.pptx` 走 `zju_extract_courseware`。
 - 安全：截图只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；Cookie 只发给 ZJU 图片主机、
   不发送 Bearer；跨主机重定向剥离凭据；写盘限制在工作区，最多 2000 张、单张 ≤32 MiB。
+- 新增 dsh 设置 `embedSlideImages`（默认 `false`）与 MCP 环境变量 `ZJU_EMBED_SLIDES=1`：
+  开启后 Agent 会下载投影截图，并挑 **3–8 张**关键页以 Markdown 相对路径插进讲义；
+  关闭时只走字幕，避免额外下载与视觉 token。
+- `zju_fetch_slides`：省略 `download` 时跟随上述开关；输出新增「讲义插图模式」、每页工作区相对路径
+  与可直接粘贴的 Markdown 引用示例；下载结果带 `workspace_rel` / `note_example`。
+- Skill 新增「投影截图入讲义」工作流：模型能看图时挑关键页内联，不能看图时只在文末列截图索引，
+  不臆造内容；图片路径按讲义所在目录调整。
 - 参考 [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli) 的公开实现思路（MIT），
   详见 [`ATTRIBUTION.md`](ATTRIBUTION.md)；其基于 numpy/Pillow 的近似笔画去重未移植，保持零第三方依赖。
+- 完善致谢：补充 `PeiPei233/zju-learning-assistant`、`8eoyw/zju-learning-cli` 及其上游参考项目的逐项说明。
 - dsh 单独把 `zju_fetch_slides` 的超时提高到 600s（下载整节课截图用），其他工具仍用配置值。
+- 新增 `tests/test_slides_v150.py`，覆盖 token / 分页 / 父域 Cookie / 截图下载 / PDF / 工作区边界 /
+  插图开关与相对路径引用。
 
 ## 1.4.2 修正
 
@@ -460,7 +496,26 @@ npm publish               # 发布到 npm registry
 
 ## 许可与致谢
 
-本插件改编自 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-)（MIT），
-版权声明保留在 [`LICENSE`](LICENSE)。逐文件来源见 [`ATTRIBUTION.md`](ATTRIBUTION.md)。
+本插件以 MIT 许可证发布，改编自 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-)（MIT），
+原项目的版权声明保留在 [`LICENSE`](LICENSE)。
+
+**特别感谢这些项目与同学：**
+
+- [`PeiPei233/zju-learning-assistant`](https://github.com/PeiPei233/zju-learning-assistant)（ZLA，MIT）：
+  智云课堂 / 学在浙大 API 流程的原始实现，本插件与参考 CLI 的共同上游；它的桌面端经验让很多边界问题有据可查。
+- [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli)（MIT）：v1.5.0 投影 PPT 管线的直接参考——
+  `_token` → `Authorization: Bearer`、`search-ppt` 分页去重、截图合成 PDF、ZJU `http://` 升级 HTTPS。
+  本仓库按零第三方依赖和更严格的下载边界重新实现，没有拷贝其代码；详见 [`ATTRIBUTION.md`](ATTRIBUTION.md)。
+- [`certifi`](https://github.com/certifi/python-certifi) 与
+  [Mozilla CA Certificate Program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/)：
+  随包 `cacert.pem` 的来源，保证 dsh 自带的无 certifi 解释器也能正常 TLS 握手。
+- `8eoyw/zju-learning-cli` 自身致谢的 [`eWloYW8/ZJU-course-material-download`](https://github.com/eWloYW8/ZJU-course-material-download)、
+  [`Kcalb35/Tronclass-pdf-downloaderforChrome`](https://github.com/Kcalb35/Tronclass-pdf-downloaderforChrome)、
+  [`fish-can/TronClass-PDF-Downloader`](https://github.com/fish-can/TronClass-PDF-Downloader)、
+  [`xzzd-pro/xzzd-pro`](https://github.com/xzzd-pro/xzzd-pro)：课件/PDF 下载思路的上游参考。
+  本插件目前没有使用这些下载端点，列出它们是为了保持致谢链完整。
+- 以及为本插件提交 issue、做实地运行反馈、审查代码与文档的同学——你们的复现步骤和原始输出是这些修复的起点。
+
+逐文件来源、第三方许可证与「参考但未拷贝」的边界见 [`ATTRIBUTION.md`](ATTRIBUTION.md)。
 
 仅供个人学习使用：只抓取本人有权限访问的回放，Cookie 属个人凭证，不要外传。

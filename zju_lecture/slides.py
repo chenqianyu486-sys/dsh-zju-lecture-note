@@ -32,6 +32,7 @@ from .client import (
     is_zju_host,
     secure_zju_url,
 )
+from .paths import primary_workspace
 from .security import sanitize_cookie_header
 
 MAX_SLIDES = 2000
@@ -208,6 +209,7 @@ def download_slides(
     failures: List[str] = []
     downloaded = 0
     total_bytes = 0
+    workspace = primary_workspace()
     for index, info, error in results:
         slide = slides[index]
         if error:
@@ -218,6 +220,12 @@ def download_slides(
         slide["local_path"] = info["path"]
         slide["local_bytes"] = info["bytes"]
         slide["sha256"] = info["sha256"]
+        try:
+            relative = os.path.relpath(info["path"], workspace).replace(os.sep, "/")
+        except ValueError:
+            relative = ""
+        if relative and relative != ".." and not relative.startswith("../"):
+            slide["workspace_rel"] = relative
         downloaded += 1
         total_bytes += int(info["bytes"])
 
@@ -250,6 +258,13 @@ def download_slides(
     if downloaded == 0:
         _record(diagnostics, "没有成功下载任何截图")
 
+    note_example = ""
+    for slide in kept:
+        relative = slide.get("workspace_rel")
+        if relative:
+            note_example = f"![第 {slide.get('page') or 1} 页]({relative})"
+            break
+
     return {
         "downloaded": downloaded,
         "failed": len(failures),
@@ -258,6 +273,7 @@ def download_slides(
         "images_dir": target_dir,
         "pages": kept,
         "total_bytes": total_bytes,
+        "note_example": note_example,
     }
 
 

@@ -53,6 +53,9 @@
 - **截图/PDF 写入范围**：`zju_fetch_slides(download=true)` 只写工作区内的 `ppt-assets/<sub_id>/`
   （或 `output_dir` 指定的工作区内目录）；最多 2000 张、单张 ≤32 MiB，只落盘通过魔数校验的 JPEG/PNG。
   非浙大主机或非 HTTPS 的截图地址会被拒绝，不会变成任意 URL 下载器。
+- **插图模式不搬运图片字节**：开启 `embedSlideImages` / `ZJU_EMBED_SLIDES` 后，工具结果只给页码、
+  本地绝对路径、工作区相对路径与 Markdown 引用示例；图片二进制不进入工具参数或模型上下文。
+  模型是否真的读取图片由宿主能力决定，插件不提供 OCR。
 
 - **扩展名白名单**：课件 `.pptx/.docx/.pdf/.txt/.md/.markdown/.csv/.json`；讲义 `.md/.markdown`。
 - **大小上限** 16 MiB。
