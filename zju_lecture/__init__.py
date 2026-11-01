@@ -17,14 +17,17 @@ from .client import (
 )
 from .cookies import CookieAccessError, get_edge_cookie, read_edge_cookies
 from .courseware import CoursewareError, extract_courseware_text
-from .note_lint import Issue, check_markdown, fix_markdown, format_report
+from .note_lint import Issue, check_markdown, fix_markdown, format_report, write_atomic
+from .paths import describe_attempts, note_filename, note_target, resolve_path
 from .formatter import (
     build_transcript_views,
     chunk_transcript,
     filter_segments,
     format_minute_span,
+    format_quality_line,
     format_slides_as_markdown,
     format_timestamp,
+    transcript_quality,
 )
 from .security import (
     REDACTOR,
@@ -49,15 +52,22 @@ __all__ = [
     "check_markdown",
     "fix_markdown",
     "format_report",
+    "write_atomic",
     "Issue",
     "get_edge_cookie",
     "read_edge_cookies",
+    "describe_attempts",
+    "note_filename",
+    "note_target",
+    "resolve_path",
     "format_timestamp",
     "format_minute_span",
     "filter_segments",
     "build_transcript_views",
     "chunk_transcript",
     "format_slides_as_markdown",
+    "format_quality_line",
+    "transcript_quality",
     "REDACTOR",
     "LocalFileError",
     "SecretRedactor",

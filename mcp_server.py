@@ -22,6 +22,7 @@ Design notes:
 import json
 import os
 import sys
+import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,14 +43,22 @@ from zju_lecture.note_lint import (
     check_markdown,
     fix_markdown,
     format_report,
+    write_atomic,
     write_with_backup,
+)
+from zju_lecture.paths import (
+    describe_attempts,
+    note_target,
+    resolve_path,
 )
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
     filter_segments,
+    format_quality_line,
     format_slides_as_markdown,
     format_timestamp,
+    transcript_quality,
 )
 from zju_lecture.security import (
     NOTE_EXTENSIONS,
@@ -61,9 +70,13 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.4.0"
+SERVER_VERSION = "1.4.1"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
+
+#: Upper bound for one note passed to ``zju_write_note`` (bytes are larger for
+#: Chinese, but a lecture note never legitimately exceeds this).
+MAX_NOTE_CHARS = 2 * 1024 * 1024
 
 #: Local, host-controlled cookie sources. Nothing here is model-supplied.
 COOKIE_ENV = "ZJU_COOKIE"
@@ -75,6 +88,8 @@ SERVER_INSTRUCTIONS = (
     "字幕接口公开免登录；PPT 与视频直链需要登录态。"
     "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
     "长课程请使用 view_format=chunked 分批处理。"
+    "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
+    "相对路径按当前工作区（ZJU_WORKSPACE）解析。"
 )
 
 # Cookies read from the local browser are kept here instead of being handed
@@ -108,40 +123,85 @@ def _read_cookie_file(path: str) -> Optional[str]:
         return None
 
 
-def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Return ``(cookie, error_message, source)``.
+def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Return ``(cookie, error_message, source, reason)``.
 
     Source order: in-memory cache → ``ZJU_COOKIE`` → ``ZJU_COOKIE_FILE`` →
     local Edge. The error text is actionable and never contains a cookie
-    value.
+    value. ``reason`` is a machine-readable code (``abe`` / ``locked`` /
+    ``no_rows`` / ``env_invalid`` …) so a caller can print exactly one
+    conclusion instead of a list of maybes.
     """
     cached = _COOKIE_CACHE.get(DEFAULT_DOMAIN)
     if cached:
-        return cached, None, "cache"
+        return cached, None, "cache", None
 
     raw = os.environ.get(COOKIE_ENV, "").strip()
     if raw:
         try:
-            return _remember_cookie(sanitize_cookie_header(raw)), None, "env"
+            return _remember_cookie(sanitize_cookie_header(raw)), None, "env", None
         except ValueError as exc:
-            return None, f"{COOKIE_ENV} 中的登录 Cookie 不可用：{exc}", None
+            return None, f"{COOKIE_ENV} 中的登录 Cookie 不可用：{exc}", None, "env_invalid"
 
     cookie_file = os.environ.get(COOKIE_FILE_ENV, "").strip()
     if cookie_file:
         cookie = _read_cookie_file(cookie_file)
         if cookie:
-            return _remember_cookie(cookie), None, "file"
+            return _remember_cookie(cookie), None, "file", None
         return None, (
             f"{COOKIE_FILE_ENV} 指向的文件不可用（需要存在、可读、UTF-8、"
             "只含一行 name=value 形式的 Cookie）。"
-        ), None
+        ), None, "file_unreadable"
 
     cookie, error = read_edge_cookies(DEFAULT_DOMAIN)
     if cookie:
-        return _remember_cookie(cookie), None, "edge"
+        return _remember_cookie(cookie), None, "edge", None
     if error is None:
-        return None, f"未能从本机 Microsoft Edge 读取到 {DEFAULT_DOMAIN} 的登录 Cookie。", None
-    return None, str(error), None
+        return None, f"未能从本机 Microsoft Edge 读取到 {DEFAULT_DOMAIN} 的登录 Cookie。", None, "no_credentials"
+    return None, str(error), None, error.reason
+
+
+#: One concrete next step per cookie-failure reason.
+#:
+#: The old code pasted every possibility into one paragraph, which produced
+#: messages like "请完全退出 Edge 后重试；本机已启用 ABE，退出 Edge 也无法解密"
+#: — advice that contradicts itself and tells the agent nothing about which
+#: path to take. Each reason now maps to exactly one action.
+COOKIE_FAILURE_ACTIONS: Dict[str, str] = {
+    "abe": "退出 Edge 无效（ABE 的密钥与浏览器进程绑定）：请在宿主配置里设置 ZJU_COOKIE_FILE"
+    " 环境变量（文件内只放一行 Cookie 头，不要粘贴到对话里），然后重试。",
+    "locked": "完全退出 Edge（含后台驻留进程）后重试；或在宿主配置里设置 ZJU_COOKIE_FILE。",
+    "no_rows": "先在 Edge 里登录智云课堂，或在宿主配置里设置 ZJU_COOKIE_FILE，然后重试。",
+    "decrypt_failed": "Edge 的新版 Cookie 无法在浏览器外解密：改用 ZJU_COOKIE_FILE 环境变量。",
+    "not_found": "确认本机 Edge 至少登录过一次智云课堂，或改用 ZJU_COOKIE_FILE。",
+    "db_error": "完全退出 Edge 后重试，或改用 ZJU_COOKIE_FILE。",
+    "unsupported_platform": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量。",
+    "keychain_denied": "在弹出的钥匙串授权框选择『始终允许』，或改用 ZJU_COOKIE_FILE。",
+    "no_credentials": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
+    "env_invalid": "检查 ZJU_COOKIE：需要一行合法的 name=value Cookie 头。",
+    "file_unreadable": "检查 ZJU_COOKIE_FILE：需要存在、可读、UTF-8，且只含一行 Cookie 头。",
+    "unknown": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量后重试。",
+}
+
+
+def _cookie_failure_text(
+    subject: str,
+    reason: Optional[str],
+    detail: Optional[str],
+    degrade_hint: str = "",
+    verb: str = "抓取到",
+) -> str:
+    """Render exactly one conclusion plus exactly one action."""
+    code = reason or "unknown"
+    action = COOKIE_FAILURE_ACTIONS.get(code) or COOKIE_FAILURE_ACTIONS["unknown"]
+    lines = [
+        f"未{verb} {subject}（原因: {code}）。",
+        f"说明: {detail or '未提供可用的登录 Cookie。'}",
+        f"唯一可行动作: {action}",
+    ]
+    if degrade_hint:
+        lines.append(degrade_hint)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- Tool schemas
@@ -294,10 +354,11 @@ TOOLS: List[Dict[str, Any]] = [
             "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。"
             "静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、"
             "块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。"
-            "传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、"
-            "表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。"
-            "回写前会先把原文件备份成 <文件名>.bak（原子写，代码块内的示例不会被改写）。"
-            "建议在写完讲义后、交付给用户前调用一次。"
+            "报告按问题类型聚合（同类问题只打印一次，附行号与示例），长讲义也不会刷屏。"
+            "传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、块级公式前后缺空行、"
+            "\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。"
+            "回写前会先把原文件备份到备份目录（ZJU_BACKUP_DIR，默认系统临时目录），报告里给出备份绝对路径。"
+            "相对路径按当前工作区解析。建议在写完讲义后、交付给用户前调用一次。"
         ),
         "inputSchema": {
             "type": "object",
@@ -305,15 +366,80 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "讲义 Markdown 文件的绝对路径或相对路径",
+                    "description": "讲义 Markdown 文件的绝对路径，或相对当前工作区的路径",
                 },
                 "fix": {
                     "type": "boolean",
                     "description": "是否自动修正可机械修复的问题并回写文件（默认 false，只检查）",
                     "default": False,
                 },
+                "max_samples": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "每类问题最多列出几个行号示例（默认 3，0 表示只报数量）",
+                    "default": 3,
+                },
             },
             "required": ["file_path"],
+        },
+    },
+    {
+        "name": "zju_write_note",
+        "description": (
+            "写入讲义 Markdown。文件名由你依据「上课时间 + 本节课内容」起名（如 "
+            "知识总结-2026-10-28-复变函数-保角映射），不同讲次不会互相覆盖；"
+            "不传 name 时才回退到 知识总结-<sub_id>[-<课程简称>].md。"
+            "默认拒绝覆盖同名文件（返回 exists，让人决定改名还是覆盖），覆盖前自动备份。"
+            "写入前自动修正可机械修复的公式问题，写入后立即返回渲染规范检查报告——"
+            "也就是把「写文件」和「zju_check_note」两步合成一次调用。"
+            "只写工作区（当前工作区或 ZJU_WORKSPACE）内的 .md 文件。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "sub_id": {
+                    "type": "string",
+                    "description": "课程回放的 sub_id，用于追溯（不传 name 时也参与文件名）",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "讲义 Markdown 全文",
+                },
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "讲义文件名（可省略 .md），由你按上课时间与本节内容命名，"
+                        "推荐 知识总结-<上课日期 YYYY-MM-DD>-<课程简称>-<本节主题>；"
+                        "拿不到上课日期时省略日期段，不要用当天日期顶替"
+                    ),
+                },
+                "slug": {
+                    "type": "string",
+                    "description": "课程简称（可选，仅在不传 name 时用于文件名）",
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "工作区内的子目录（可选，例如 notes；不允许跳出工作区）",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "同名文件已存在时是否覆盖（默认 false，返回 exists 让人决定）",
+                    "default": False,
+                },
+                "fix": {
+                    "type": "boolean",
+                    "description": "写入前是否自动修正可机械修复的问题（默认 true）",
+                    "default": True,
+                },
+                "max_samples": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "检查报告中每类问题最多列出几个行号示例（默认 3）",
+                    "default": 3,
+                },
+            },
+            "required": ["sub_id", "content"],
         },
     },
     {
@@ -334,6 +460,15 @@ TOOLS: List[Dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------- Tool implementation
+
+def _clamped_max_samples(value: Any, default: int = 3) -> int:
+    """Bound how many example lines a lint report prints per problem class."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(number, 50))
+
 
 def _truncate(text: str, max_chars: Optional[int]) -> str:
     if not max_chars or len(text) <= max_chars:
@@ -364,7 +499,12 @@ def _fit_prefix(items: List[Any], build, max_chars: int) -> int:
     return low
 
 
-def _chunked_payload(sub_id: str, minutes_map: Dict[int, List[str]], max_chars: int) -> str:
+def _chunked_payload(
+    sub_id: str,
+    minutes_map: Dict[int, List[str]],
+    max_chars: int,
+    quality: Optional[Dict[str, Any]] = None,
+) -> str:
     """Serialize transcript chunks within ``max_chars``.
 
     ``chunked`` exists for long lectures, so returning every chunk regardless
@@ -377,7 +517,7 @@ def _chunked_payload(sub_id: str, minutes_map: Dict[int, List[str]], max_chars: 
 
     def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
         returned = len(subset)
-        return {
+        payload = {
             "sub_id": sub_id,
             "total_chunks": len(chunks),
             "returned_chunks": returned,
@@ -385,6 +525,11 @@ def _chunked_payload(sub_id: str, minutes_map: Dict[int, List[str]], max_chars: 
             "next_start_minute": chunks[returned]["start_min"] if returned < len(chunks) else None,
             "chunks": subset,
         }
+        if quality:
+            # One small object, so the agent knows how far to trust the text
+            # before it starts distilling.
+            payload["quality"] = quality
+        return payload
 
     keep = _fit_prefix(chunks, build, max_chars)
     if keep == 0 and chunks:
@@ -414,12 +559,13 @@ def _segments_payload(
     segments: List[Dict[str, Any]],
     duration: str,
     max_chars: int,
+    quality: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Serialize raw segments within ``max_chars``, reporting the cut point."""
 
     def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
         returned = len(subset)
-        return {
+        payload = {
             "sub_id": sub_id,
             "duration": duration,
             "total_segments": len(segments),
@@ -430,6 +576,9 @@ def _segments_payload(
             ),
             "segments": subset,
         }
+        if quality:
+            payload["quality"] = quality
+        return payload
 
     keep = _fit_prefix(segments, build, max_chars)
     payload = json.dumps(build(segments[:keep]), ensure_ascii=False, indent=2)
@@ -472,19 +621,21 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             return f"未能获取到指定时间区间内的字幕（sub_id={sub_id}）。请确认课程已生成转写，或调整时间区间。"
 
         per_seg, per_min, minutes_map = build_transcript_views(raw_segments)
+        quality = transcript_quality(raw_segments)
         duration_str = full_duration
 
         header = (
             f"=== 浙大智云课堂语音字幕 (sub_id={sub_id}) ===\n"
             f"总句数: {len(raw_segments)} | 课程总时长: ~{duration_str}{slice_note}\n"
+            f"{format_quality_line(quality)}\n"
         )
 
         if view_format == "per_segment":
             return _truncate(header + "\n" + per_seg, max_chars)
         if view_format == "chunked":
-            return _chunked_payload(sub_id, minutes_map, max_chars)
+            return _chunked_payload(sub_id, minutes_map, max_chars, quality)
         if view_format == "json":
-            return _segments_payload(sub_id, raw_segments, duration_str, max_chars)
+            return _segments_payload(sub_id, raw_segments, duration_str, max_chars, quality)
         return _truncate(header + "\n" + per_min, max_chars)
 
     if name == "zju_fetch_slides":
@@ -492,26 +643,24 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         sub_id = parsed["sub_id"]
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
 
-        cookie, cookie_error, _source = _resolve_cookie()
+        cookie, cookie_error, _source, reason = _resolve_cookie()
         if not cookie:
-            return (
-                "未抓取到 PPT 记录。可能原因：\n"
-                f"{cookie_error or '未提供登录 Cookie'}\n"
-                "2. 老师授课时未通过智云课堂课件系统同步投影\n"
-                "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
+            return _cookie_failure_text(
+                "PPT 记录",
+                reason,
+                cookie_error,
+                degrade_hint="（流水线可平滑降级：没有 PPT 也能仅凭语音字幕生成讲义。）",
             )
 
         diagnostics: List[str] = []
         slides_data = fetch_slides(sub_id, tenant, cookie, diagnostics=diagnostics)
         if not slides_data:
-            reason = "\n".join(f"- {item}" for item in diagnostics) or "- 未获得具体原因"
+            reason_text = "\n".join(f"- {item}" for item in diagnostics) or "- 未获得具体原因"
             return (
-                "未抓取到 PPT 记录。\n"
-                f"诊断：\n{reason}\n"
-                "其余可能原因：\n"
-                "1. 登录 Cookie 无效或已过期\n"
-                "2. 老师授课时未通过智云课堂课件系统同步投影\n"
-                "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
+                "未抓取到 PPT 记录（原因: no_slides）。\n"
+                "登录态可用，但这节课没有取到投影记录。\n"
+                f"诊断:\n{reason_text}\n"
+                "唯一可行动作: 跳过 PPT，仅用语音字幕生成讲义（这是支持的降级路径）。"
             )
 
         md = format_slides_as_markdown(slides_data)
@@ -520,12 +669,15 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     if name == "zju_extract_courseware":
         file_path = str(arguments.get("file_path", ""))
         max_chars = arguments.get("max_chars") or 10000
+        resolved, tried = resolve_path(file_path)
+        if resolved is None:
+            return f"错误: 找不到课件文件: {file_path}{describe_attempts(tried)}"
         try:
-            text = extract_courseware_text(file_path, max_chars)
+            text = extract_courseware_text(resolved, max_chars)
         except CoursewareError as exc:
             return f"错误: {exc}"
         return (
-            f"=== 课件文件提取成功 ({os.path.basename(file_path)}) ===\n"
+            f"=== 课件文件提取成功 ({os.path.basename(resolved)}) ===\n"
             f"提取字数: {len(text)} 字符\n\n"
             f"{text}"
         )
@@ -536,12 +688,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         course_id = arguments.get("course_id") or parsed.get("course_id", "")
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
 
-        cookie, cookie_error, _source = _resolve_cookie()
+        cookie, cookie_error, _source, reason = _resolve_cookie()
         if not cookie:
-            return (
-                "错误: 获取视频 MP4 直链需要登录 Cookie。\n"
-                f"{cookie_error or '请退出 Edge 后重试，或在宿主配置里设置 ZJU_COOKIE。'}"
-            )
+            return _cookie_failure_text("视频 MP4 直链", reason, cookie_error)
 
         video_diagnostics: List[str] = []
         mp4_url = fetch_video_url(
@@ -564,8 +713,10 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         file_path = str(arguments.get("file_path", "")).strip()
         if not file_path:
             raise ValueError("zju_check_note 需要 file_path 参数")
-        if not os.path.isfile(os.path.expanduser(file_path)):
-            return f"错误: 找不到讲义文件: {file_path}"
+        resolved, tried = resolve_path(file_path)
+        if resolved is None:
+            return f"错误: 找不到讲义文件: {file_path}{describe_attempts(tried)}"
+        file_path = resolved
         try:
             file_path = guard_local_file(file_path, NOTE_EXTENSIONS, kind="讲义文件")
         except LocalFileError as exc:
@@ -578,24 +729,26 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         except OSError as exc:
             return f"错误: 读取讲义文件失败: {exc}"
 
+        max_samples = _clamped_max_samples(arguments.get("max_samples"), 3)
         applied = []
         backup_path = ""
         if arguments.get("fix"):
             fixed_text, applied = fix_markdown(note_text)
             if fixed_text != note_text:
-                backup_path = file_path + ".bak"
                 try:
-                    write_with_backup(file_path, fixed_text)
+                    backup_path = write_with_backup(file_path, fixed_text)
                 except OSError as exc:
                     hint = (
                         f"备份在 {backup_path}"
-                        if os.path.exists(backup_path)
+                        if backup_path and os.path.exists(backup_path)
                         else "备份未生成"
                     )
                     return f"错误: 回写讲义文件失败（原文件未改动，{hint}）: {exc}"
                 note_text = fixed_text
 
-        report = format_report(os.path.basename(file_path), check_markdown(note_text))
+        report = format_report(
+            os.path.basename(file_path), check_markdown(note_text), max_samples
+        )
         if applied:
             applied_block = "\n".join(f"- {item}" for item in applied)
             if backup_path:
@@ -603,10 +756,82 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             report = f"=== 已自动修复 ===\n{applied_block}\n\n{report}"
         return report
 
+    if name == "zju_write_note":
+        sub_id = str(arguments.get("sub_id", "")).strip()
+        content = arguments.get("content")
+        if not sub_id:
+            raise ValueError("zju_write_note 需要 sub_id 参数")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("zju_write_note 需要非空的 content 参数（讲义 Markdown 全文）")
+        if len(content) > MAX_NOTE_CHARS:
+            return (
+                f"错误: 讲义内容 {len(content)} 字符，超过 {MAX_NOTE_CHARS} 字符上限；"
+                "请分批写入或检查是否误传了别的内容。"
+            )
+
+        target, target_error = note_target(
+            sub_id,
+            str(arguments.get("slug") or ""),
+            arguments.get("directory"),
+            str(arguments.get("name") or ""),
+        )
+        if target_error:
+            return f"错误: {target_error}"
+
+        overwrite = bool(arguments.get("overwrite"))
+        already = os.path.exists(target)
+        if already and not overwrite:
+            # Silent overwrite is how one lecture's note ate the previous one's:
+            # hand the decision back to the caller instead of guessing.
+            stat = os.stat(target)
+            stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime))
+            return (
+                "=== 未写入：同名讲义已存在 ===\n"
+                f"路径: {target}\n"
+                f"大小: {stat.st_size} 字节 | 修改时间: {stamp}\n"
+                "为避免静默覆盖历史讲义，本次没有写入。请二选一：\n"
+                "- 换一个名字：传不同的 name（上课日期 + 本节主题），文件名会随之变化；\n"
+                "- 确认覆盖：再次调用并传 overwrite=true（原文件会先备份到备份目录）。"
+            )
+
+        fixed_text = content
+        applied: List[str] = []
+        if arguments.get("fix", True):
+            fixed_text, applied = fix_markdown(content)
+        try:
+            if already:
+                backup_path = write_with_backup(target, fixed_text)
+            else:
+                backup_path = ""
+                write_atomic(target, fixed_text)
+        except OSError as exc:
+            return f"错误: 写入讲义文件失败: {target}（{exc}）"
+
+        max_samples = _clamped_max_samples(arguments.get("max_samples"), 3)
+        report = format_report(
+            os.path.basename(target), check_markdown(fixed_text), max_samples
+        )
+        header = [
+            "=== 已写入讲义 ===",
+            f"路径: {target}",
+            f"字数: {len(fixed_text)} 字符",
+        ]
+        if not str(arguments.get("name") or "").strip():
+            header.append(
+                "提示: 本次用的是回退文件名。建议下次传 name=知识总结-<上课日期>-<课程简称>-<本节主题>，"
+                "文件名带日期与内容更利于区分不同讲次。"
+            )
+        if applied:
+            header.append("自动修复:")
+            header.extend(f"- {item}" for item in applied)
+        if backup_path:
+            header.append(f"原文件已备份到 {backup_path}")
+        return "\n".join(header) + "\n\n" + report
+
     if name == "zju_read_browser_cookie":
-        cookie, error, source = _resolve_cookie()
+        cookie, error, source, reason = _resolve_cookie()
         if not cookie:
-            return f"未能读取到 {DEFAULT_DOMAIN} 的登录 Cookie。\n{error or ''}"
+            return _cookie_failure_text("登录 Cookie", reason, error, verb="能读取到")
 
         info = describe_cookie(cookie)
         return json.dumps(

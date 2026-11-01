@@ -104,10 +104,10 @@
   },
   {
     "name": "zju_check_note",
-    "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。回写前会先把原文件备份成 <文件名>.bak（原子写，代码块内的示例不会被改写）。建议在写完讲义后、交付给用户前调用一次。",
+    "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。报告按问题类型聚合（同类问题只打印一次，附行号与示例），长讲义也不会刷屏。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、块级公式前后缺空行、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。回写前会先把原文件备份到备份目录（ZJU_BACKUP_DIR，默认系统临时目录），报告里给出备份绝对路径。相对路径按当前工作区解析。建议在写完讲义后、交付给用户前调用一次。",
     "parameters": {
       "file_path": {
-        "description": "讲义 Markdown 文件的绝对路径或相对路径",
+        "description": "讲义 Markdown 文件的绝对路径，或相对当前工作区的路径",
         "type": "string",
         "required": true
       },
@@ -115,6 +115,54 @@
         "description": "是否自动修正可机械修复的问题并回写文件（默认 false，只检查）",
         "default": false,
         "type": "boolean"
+      },
+      "max_samples": {
+        "description": "每类问题最多列出几个行号示例（默认 3，0 表示只报数量）",
+        "default": 3,
+        "type": "integer"
+      }
+    }
+  },
+  {
+    "name": "zju_write_note",
+    "description": "写入讲义 Markdown。文件名由你依据「上课时间 + 本节课内容」起名（如 知识总结-2026-10-28-复变函数-保角映射），不同讲次不会互相覆盖；不传 name 时才回退到 知识总结-<sub_id>[-<课程简称>].md。默认拒绝覆盖同名文件（返回 exists，让人决定改名还是覆盖），覆盖前自动备份。写入前自动修正可机械修复的公式问题，写入后立即返回渲染规范检查报告——也就是把「写文件」和「zju_check_note」两步合成一次调用。只写工作区（当前工作区或 ZJU_WORKSPACE）内的 .md 文件。",
+    "parameters": {
+      "sub_id": {
+        "description": "课程回放的 sub_id，用于追溯（不传 name 时也参与文件名）",
+        "type": "string",
+        "required": true
+      },
+      "content": {
+        "description": "讲义 Markdown 全文",
+        "type": "string",
+        "required": true
+      },
+      "name": {
+        "description": "讲义文件名（可省略 .md），由你按上课时间与本节内容命名，推荐 知识总结-<上课日期 YYYY-MM-DD>-<课程简称>-<本节主题>；拿不到上课日期时省略日期段，不要用当天日期顶替",
+        "type": "string"
+      },
+      "slug": {
+        "description": "课程简称（可选，仅在不传 name 时用于文件名）",
+        "type": "string"
+      },
+      "directory": {
+        "description": "工作区内的子目录（可选，例如 notes；不允许跳出工作区）",
+        "type": "string"
+      },
+      "overwrite": {
+        "description": "同名文件已存在时是否覆盖（默认 false，返回 exists 让人决定）",
+        "default": false,
+        "type": "boolean"
+      },
+      "fix": {
+        "description": "写入前是否自动修正可机械修复的问题（默认 true）",
+        "default": true,
+        "type": "boolean"
+      },
+      "max_samples": {
+        "description": "检查报告中每类问题最多列出几个行号示例（默认 3）",
+        "default": 3,
+        "type": "integer"
       }
     }
   },

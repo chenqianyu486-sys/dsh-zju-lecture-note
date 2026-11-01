@@ -39,7 +39,11 @@
 
 ## 3. 本地文件边界
 
-`zju_extract_courseware` 与 `zju_check_note` 是唯一读本地文件的工具：
+`zju_extract_courseware` 与 `zju_check_note` 是唯一读本地文件的工具，`zju_write_note` 是唯一写本地文件的工具：
+
+- **写入范围**：`zju_write_note` 只能写当前工作区（`ZJU_WORKSPACE` / cwd）内的 `.md`，
+  文件名由 `sub_id` + 清洗过的课程简称生成；`directory` 参数跳出工作区会被拒绝；单次内容上限 2 MiB；
+  同名文件默认**不覆盖**，覆盖必须显式 `overwrite=true` 且先备份。写入走临时文件 + 原子重命名。
 
 - **扩展名白名单**：课件 `.pptx/.docx/.pdf/.txt/.md/.markdown/.csv/.json`；讲义 `.md/.markdown`。
 - **大小上限** 16 MiB。
@@ -68,6 +72,8 @@
 - **模型配置**：`ZJU_COOKIE` / `ZJU_COOKIE_FILE` 属于本机配置，请按宿主推荐方式保存（例如仅本机可读的配置文件），
   不要提交进仓库或同步到公开位置。
 - **输出目录**：讲义会写到工作区；`output/`、`dist/`、`*.tgz` 已被 `.gitignore` 忽略。
+  自动修复的备份默认写到系统临时目录下的 `zju-lecture-backups/`（可用 `ZJU_BACKUP_DIR` 指定），
+  备份是讲义原文的副本——**不要把备份目录指向公开同步目录**。
 
 ## 6. 已知边界
 

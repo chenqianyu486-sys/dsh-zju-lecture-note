@@ -97,14 +97,21 @@ class TestCheckNoteWriteback(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_fix_creates_a_backup_before_overwriting(self):
-        report = mcp_server._dispatch_tool(
-            "zju_check_note", {"file_path": self.note, "fix": True}
-        )
-        backup = self.note + ".bak"
-        self.assertTrue(os.path.isfile(backup), "缺少 .bak 备份")
+        backup_dir = scratch("check-note-backups")
+        self.addCleanup(shutil.rmtree, backup_dir, ignore_errors=True)
+        with mock.patch.dict(os.environ, {"ZJU_BACKUP_DIR": backup_dir}):
+            report = mcp_server._dispatch_tool(
+                "zju_check_note", {"file_path": self.note, "fix": True}
+            )
+        backups = os.listdir(backup_dir)
+        self.assertEqual(len(backups), 1, "缺少备份文件")
+        backup = os.path.join(backup_dir, backups[0])
         with io.open(backup, encoding="utf-8") as handle:
             self.assertIn("$$\\frac12$$", handle.read())
-        self.assertIn("备份", report)
+        # P3-1: the backup no longer lands next to the note, so `git status`
+        # stays clean.
+        self.assertFalse(os.path.exists(self.note + ".bak"), "备份不应落在讲义旁边")
+        self.assertIn(backup, report)
         with io.open(self.note, encoding="utf-8") as handle:
             self.assertIn("\\frac{1}{2}", handle.read())
 
@@ -112,8 +119,12 @@ class TestCheckNoteWriteback(unittest.TestCase):
         clean = os.path.join(self.dir, "clean.md")
         with io.open(clean, "w", encoding="utf-8") as handle:
             handle.write("# 干净讲义\n")
-        mcp_server._dispatch_tool("zju_check_note", {"file_path": clean, "fix": True})
+        backup_dir = scratch("check-note-backups-none")
+        self.addCleanup(shutil.rmtree, backup_dir, ignore_errors=True)
+        with mock.patch.dict(os.environ, {"ZJU_BACKUP_DIR": backup_dir}):
+            mcp_server._dispatch_tool("zju_check_note", {"file_path": clean, "fix": True})
         self.assertFalse(os.path.exists(clean + ".bak"))
+        self.assertEqual(os.listdir(backup_dir), [])
 
 
 class TestDocxExtraction(unittest.TestCase):

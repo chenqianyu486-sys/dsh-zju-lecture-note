@@ -55,9 +55,16 @@ def package_version() -> str:
 
 def main() -> int:
     files = collect()
+    # A SKILL.md front matter carries only name/description — there is no
+    # version field to compare, so an installed copy can silently drift from
+    # the plugin (and an old copy can still advise users to hand over a
+    # cookie). The content hash is the only reliable drift signal, so publish
+    # it explicitly instead of burying it in files[].sha256.
+    skill_hash = next((item["sha256"] for item in files if item["path"] == "SKILL.md"), "")
     manifest = {
         "name": SKILL_NAME,
         "version": package_version(),
+        "contentHash": f"sha256:{skill_hash}",
         "fileCount": len(files),
         "files": files,
     }
@@ -65,6 +72,7 @@ def main() -> int:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
     print(f"已生成 Skill 清单: {len(files)} 个文件 -> {MANIFEST}")
+    print(f"SKILL.md contentHash: sha256:{skill_hash[:12]}…")
     return 0
 
 

@@ -517,19 +517,21 @@ class TestPrivacy(unittest.TestCase):
     def test_env_cookie_is_used_and_registered(self):
         with mock.patch.dict(os.environ, {"ZJU_COOKIE": "SESSDATA=env-secret-value"}), \
              mock.patch("mcp_server.read_edge_cookies") as edge:
-            cookie, error, source = mcp_server._resolve_cookie()
+            cookie, error, source, reason = mcp_server._resolve_cookie()
         edge.assert_not_called()
         self.assertIsNone(error)
+        self.assertIsNone(reason)
         self.assertEqual(cookie, "SESSDATA=env-secret-value")
         self.assertEqual(source, "env")
         self.assertIn(REDACTED, REDACTOR.redact("leak SESSDATA=env-secret-value here"))
 
     def test_env_cookie_with_newline_is_rejected(self):
         with mock.patch.dict(os.environ, {"ZJU_COOKIE": "A=1\nX-Evil: yes"}):
-            cookie, error, _source = mcp_server._resolve_cookie()
+            cookie, error, _source, reason = mcp_server._resolve_cookie()
         self.assertIsNone(cookie)
         self.assertIn("换行", error or "")
         self.assertNotIn("X-Evil", error or "")
+        self.assertEqual(reason, "env_invalid")
 
     def test_cookie_file_is_used(self):
         path = os.path.join(tempfile.mkdtemp(prefix="zju-cookie-"), "cookie.txt")
@@ -537,8 +539,9 @@ class TestPrivacy(unittest.TestCase):
             handle.write("SESSDATA=file-secret-value\n")
         try:
             with mock.patch.dict(os.environ, {"ZJU_COOKIE_FILE": path}):
-                cookie, error, source = mcp_server._resolve_cookie()
+                cookie, error, source, reason = mcp_server._resolve_cookie()
             self.assertIsNone(error)
+            self.assertIsNone(reason)
             self.assertEqual(cookie, "SESSDATA=file-secret-value")
             self.assertEqual(source, "file")
         finally:

@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from typing import List, NamedTuple
 
 ERROR = "error"
@@ -221,14 +222,55 @@ def check_markdown(text: str) -> List[Issue]:
     return issues
 
 
-def format_report(path: str, issues: List[Issue]) -> str:
-    """Render the findings as the text the agent reads back."""
+def _group_by_code(issues: List[Issue]) -> List[List[Issue]]:
+    """Group findings by ``code``, errors first, each group in line order."""
+    groups = {}
+    for issue in issues:
+        groups.setdefault(issue.code, []).append(issue)
+    ordered = sorted(
+        groups.values(),
+        key=lambda group: (0 if group[0].level == ERROR else 1, group[0].line),
+    )
+    return ordered
+
+
+def _format_line_numbers(lines: List[int], limit: int) -> str:
+    """``L108, L112, L119（共 59 处，其余 56 处已省略）`` — bounded line list."""
+    if limit <= 0:
+        return f"共 {len(lines)} 处"
+    shown = lines[:limit]
+    text = ", ".join(f"L{line}" for line in shown)
+    if len(lines) > len(shown):
+        text += f"（共 {len(lines)} 处，其余 {len(lines) - len(shown)} 处已省略）"
+    else:
+        text += f"（共 {len(lines)} 处）"
+    return text
+
+
+def format_report(path: str, issues: List[Issue], max_samples: int = 3) -> str:
+    """Render the findings as the text the agent reads back.
+
+    Findings are grouped by ``code``: a long note with 59 un-isolated ``$$``
+    blocks used to repeat the same 问题 / 修法 / 原文 triple 59 times, which
+    burned a large slice of the agent's context on pure noise. One block per
+    code, with a bounded list of line numbers, carries the same information —
+    and ``fix=true`` can still repair every one of them.
+
+    ``max_samples`` bounds how many line numbers are listed per group
+    (``0`` = count only). :func:`check_markdown` still returns the full list,
+    so programmatic callers lose nothing.
+    """
     errors = [i for i in issues if i.level == ERROR]
     warns = [i for i in issues if i.level == WARN]
+    groups = _group_by_code(issues)
+
+    header = f"错误 {len(errors)} | 警告 {len(warns)}"
+    if issues:
+        header += f" | 涉及 {len(groups)} 类问题"
 
     lines = [
         f"=== 讲义渲染规范检查 ({path}) ===",
-        f"错误 {len(errors)} | 警告 {len(warns)}",
+        header,
         "",
     ]
 
@@ -236,17 +278,24 @@ def format_report(path: str, issues: List[Issue]) -> str:
         lines.append("结论: 通过 —— 未发现问题。")
         return "\n".join(lines)
 
-    for issue in issues:
-        tag = "错误" if issue.level == ERROR else "警告"
-        lines.append(f"[{tag}] L{issue.line} · {issue.code}")
-        lines.append(f"  问题: {issue.message}")
-        lines.append(f"  修法: {issue.hint}")
-        if issue.excerpt:
-            lines.append(f"  原文: {issue.excerpt}")
+    for group in groups:
+        first = group[0]
+        tag = "错误" if first.level == ERROR else "警告"
+        count = f" × {len(group)}" if len(group) > 1 else ""
+        lines.append(f"[{tag}] {first.code}{count}")
+        lines.append(f"  问题: {first.message}")
+        lines.append(f"  修法: {first.hint}")
+        lines.append(f"  位置: {_format_line_numbers([i.line for i in group], max_samples)}")
+        samples = [i for i in group if i.excerpt][:max_samples]
+        for sample in samples:
+            lines.append(f"  示例: L{sample.line} · {sample.excerpt}")
         lines.append("")
 
     if errors:
         lines.append("结论: 不通过 —— 存在会破坏渲染的错误，请修正后重新检查。")
+        lines.append(
+            "提示: 若多项错误属于可机械修复的类型，可直接用 fix=true 回写后重新检查。"
+        )
     else:
         lines.append("结论: 通过渲染检查（仅有规范性警告）。")
     return "\n".join(lines)
@@ -341,16 +390,47 @@ def _apply_outside_code(line: str, func) -> tuple:
     return "".join(out), changes
 
 
-def write_with_backup(path: str, text: str) -> str:
-    """Back ``path`` up to ``path + '.bak'``, then atomically replace it.
+#: Host-configurable backup directory. Empty = the default below.
+BACKUP_DIR_ENV = "ZJU_BACKUP_DIR"
 
-    Returns the backup path. The backup is written first, so a failed replace
-    never leaves the user without their original note. Raises ``OSError`` on
-    failure; at that point the original file is still intact.
+#: Default backup root, under the system temp directory.
+_BACKUP_DIRNAME = "zju-lecture-backups"
+
+
+def backup_directory() -> str:
+    """Directory that receives pre-autofix backups.
+
+    Backups used to land next to the note as ``<note>.md.bak``. Lectures live
+    in the workspace root, so every ``fix=true`` added an untracked file to
+    ``git status`` — noise the user never asked for. The default is now the
+    system temp directory (returned as an absolute path in the report), and
+    ``ZJU_BACKUP_DIR`` lets a host point it at a directory of its own.
     """
-    backup = path + ".bak"
-    shutil.copyfile(path, backup)
+    override = os.environ.get(BACKUP_DIR_ENV, "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.join(tempfile.gettempdir(), _BACKUP_DIRNAME)
+
+
+def _unique_backup_path(directory: str, source: str) -> str:
+    stem = os.path.splitext(os.path.basename(source))[0] or "note"
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    candidate = os.path.join(directory, f"{stem}.{stamp}.bak")
+    counter = 1
+    while os.path.exists(candidate):
+        counter += 1
+        candidate = os.path.join(directory, f"{stem}.{stamp}-{counter}.bak")
+    return candidate
+
+
+def write_atomic(path: str, text: str) -> None:
+    """Atomically replace ``path`` with ``text`` (UTF-8, LF newlines).
+
+    The bytes go to a temporary file in the same directory and are renamed
+    over the target, so a crash mid-write can never leave a half-written note.
+    """
     directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(prefix=".zju-note-", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
@@ -362,7 +442,97 @@ def write_with_backup(path: str, text: str) -> str:
         except OSError:
             pass
         raise
+
+
+def write_with_backup(path: str, text: str, backup_dir: str = None) -> str:
+    """Back ``path`` up, then atomically replace it. Returns the backup path.
+
+    The backup is written before the replace, so a failed write never leaves
+    the user without their original note. Raises ``OSError`` on failure; at
+    that point the original file is still intact.
+
+    ``backup_dir`` (or ``ZJU_BACKUP_DIR``) selects the destination; when it
+    cannot be created the backup falls back to ``<path>.bak`` so the data is
+    never silently unprotected.
+    """
+    directory = os.path.abspath(os.path.expanduser(backup_dir)) if backup_dir else backup_directory()
+    try:
+        os.makedirs(directory, exist_ok=True)
+        backup = _unique_backup_path(directory, path)
+    except OSError:
+        backup = path + ".bak"
+    shutil.copyfile(path, backup)
+    write_atomic(path, text)
     return backup
+
+
+def _isolate_display_blocks(lines: List[str]) -> tuple:
+    """Give every multi-line ``$$`` block a blank line before and after it.
+
+    ``check_markdown`` flags a ``$$`` block glued to prose, but the autofix
+    could not repair it — a long note that missed the blank lines produced
+    dozens of errors that were reported and never fixed. The rewrite is purely
+    mechanical: insert one blank line, change no formula.
+
+    Three details make it safe:
+
+    * the open and the close marker are told apart by ``inside``: putting a
+      blank line around *every* ``$$`` line would punch holes into the formula
+      body;
+    * fenced code blocks are skipped, so a document that *demonstrates* the
+      rule keeps its example intact;
+    * the indentation of the ``$$`` lines is left exactly as written, so a
+      display block inside a list item stays inside that list.
+
+    Returns ``(new_lines, number_of_inserted_blank_lines)``.
+    """
+    out: List[str] = []
+    in_fence = False
+    inside = False
+    pending_blank = False
+    fixed = 0
+
+    def settle() -> None:
+        nonlocal pending_blank
+        if pending_blank:
+            out.append("")
+            pending_blank = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            if pending_blank:
+                pending_blank = False
+                out.append("")
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+
+        if stripped == "$$":
+            if not inside:
+                if out and out[-1].strip() != "":
+                    out.append("")
+                    fixed += 1
+                out.append(line)
+                inside = True
+            else:
+                out.append(line)
+                inside = False
+                pending_blank = True
+            continue
+
+        if stripped == "":
+            pending_blank = False
+            out.append(line)
+            continue
+
+        settle()
+        out.append(line)
+
+    return out, fixed
 
 
 def fix_markdown(text: str) -> tuple:
@@ -433,10 +603,13 @@ def fix_markdown(text: str) -> tuple:
 
         out.append(line)
 
+    out, isolated_fixed = _isolate_display_blocks(out)
     new_text = "\n".join(out)
 
     if display_fixed:
         applied.append(f"拆分 {display_fixed} 处单行 $$ 公式块为独占三行")
+    if isolated_fixed:
+        applied.append(f"为 {isolated_fixed} 处块级公式补全前后空行")
     if math_fixed:
         applied.append(f"统一 {math_fixed} 处分式写法（\\dfrac -> \\frac、\\frac 补花括号）")
     if pipe_fixed:

@@ -35,3 +35,7 @@ edge-cookies-*
 /AGENTS.md
 /知识总结*.md
 
+# zju_check_note 旧版本的就地备份。v1.5.0 起备份默认写到系统临时目录
+# （可用 ZJU_BACKUP_DIR 指定），这一条只用于兜住历史版本或手工修复留下的文件。
+*.md.bak
+

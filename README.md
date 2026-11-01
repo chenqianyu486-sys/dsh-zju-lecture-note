@@ -75,7 +75,8 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** | 无 Cookie |
 | `zju_fetch_slides` | 抓课堂投影的 PPT 文字层与 OCR | 需登录态（服务端本地解析） | 不收/不回显 Cookie |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 | 拒绝敏感路径 |
-| `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题，改前自动备份 `.bak`） | 本地文件 | 只接受 `.md` / `.markdown` |
+| `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题；报告按问题类型聚合） | 本地文件 | 只接受 `.md` / `.markdown` |
+| `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名（如 `知识总结-2026-10-28-复变函数-保角映射.md`）、拒绝静默覆盖、写前修正 + 写后校验 | 本地文件 | 只写工作区内的 `.md` |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 需登录态（服务端本地解析） | 直链可能带签名，勿外传 |
 | `zju_read_browser_cookie` | 读取本机 Edge 登录态并缓存到服务端内存 | 本机读取 | **只返回名称与长度** |
 
@@ -140,6 +141,16 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 ZJU_COOKIE="name=value; name2=value2"        # 直接给 Cookie 头
 ZJU_COOKIE_FILE="/absolute/path/cookie.txt"  # 或从本机文件读（一行，权限建议 600）
 ```
+
+**工作区与备份位置（可选）**：
+
+```bash
+ZJU_WORKSPACE="/absolute/path/to/workspace"  # 相对路径（如 知识总结.md）按它解析；dsh 插件会自动传入
+ZJU_BACKUP_DIR="/absolute/path/to/backups"   # zju_check_note / zju_write_note 的备份目录，默认系统临时目录
+```
+
+相对路径的解析顺序是：绝对路径 → `ZJU_WORKSPACE` → `PWD` → 服务进程自己的 cwd；都找不到时，
+错误信息会列出**尝试过的绝对路径**，而不是只回一句"找不到"。
 
 ### 2. 任意 MCP 宿主（MiniMax Code / Claude Code / Cursor …）
 
@@ -269,13 +280,17 @@ dsh-zju-lecture-note/
 
 ```bash
 python tools/check_note.py 讲义.md            # 只检查
-python tools/check_note.py --fix 讲义.md       # 自动修正机械问题（单行 $$ 块、\dfrac、
-                                              # \frac 补花括号、表格裸竖线、单行 <details>）
+python tools/check_note.py --fix 讲义.md       # 自动修正机械问题（单行 $$ 块、$$ 前后缺空行、
+                                              # \dfrac、\frac 补花括号、表格裸竖线、单行 <details>）
 ```
 
 自动修复只做**语义无歧义**的改写，且只作用于围栏代码块与行内代码之外（讲义里"这样写是错的"示例
-不会被改坏）；回写前会把原文件备份成 `<文件名>.bak`，再原子替换。需要判断的（未闭合的 `$`、
-`\text{}` 里的中文、裸虚数单位）保持原样并继续报出来。
+不会被改坏）；回写前会把原文件备份到备份目录（`ZJU_BACKUP_DIR`，默认系统临时目录下的
+`zju-lecture-backups/`，报告里给出备份的绝对路径），再原子替换——备份不会再落在讲义同目录污染
+`git status`。需要判断的（未闭合的 `$`、`\text{}` 里的中文、裸虚数单位）保持原样并继续报出来。
+
+检查报告**按问题类型聚合**：59 处同类错误只打印一次 `[错误] display_not_isolated × 59`，附行号列表与
+少量示例（`max_samples` 可调），长讲义不会再把工具返回刷成一屏。
 
 ## 开发与测试
 
@@ -290,6 +305,7 @@ python tools/export_dsh_tools.py            # 改动 TOOLS 后重新生成 dsh �
 python tools/build_skill_manifest.py        # 改动 Skill 后重新生成 sha256 清单
 node tests/bridge_smoke.mjs                 # 端到端：拉起 Python 核心并调用一次工具
 node tests/bridge_error_smoke.mjs           # 端到端：确认 MCP 的 isError 会冒泡成异常
+node tests/bridge_workspace_smoke.mjs       # 端到端：相对路径按 session workspace 解析
 python tools/refresh_ca_bundle.py --check   # 检查随包 CA 是否完整（≥50 张根证书）
 python tools/smoke_test.py --sub-id <真实 sub_id>               # 对已安装包跑端到端冒烟（--dir 可指定包目录）
 ```
@@ -323,6 +339,21 @@ npm publish               # 发布到 npm registry
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
+## 1.4.1 修复了哪些问题
+
+针对 [实地运行反馈](docs/issue-1.4.0-实地运行反馈.md) 的 8 项问题（真实一节课 `sub_id=1988057` 跑下来）：
+
+| # | 修复 |
+| :-: | :--- |
+| P1-1 | 相对路径按**会话工作区**解析（`ZJU_WORKSPACE` → `PWD` → 进程 cwd）；找不到时回显**已尝试的绝对路径**。dsh 插件把 session workspace 传给 Python 子进程（同时作为子进程 cwd）。 |
+| P1-2 | `fix=true` 新增**块级 `$$` 前后补空行**修复器：区分开块/闭块（不往公式体里插空行）、跳过代码块、保留列表缩进。 |
+| P2-1 | 检查报告**按 `code` 聚合**：`[错误] display_not_isolated × 59` + 有界行号列表 + 少量示例，新增 `max_samples`（默认 3）。 |
+| P2-2 | PPT / 视频直链失败分支改为**单一结论 + 单一动作**（`reason` 枚举 `abe` / `locked` / `no_rows` …），去掉错乱的编号与"退出 Edge 后重试；但 ABE 退出也无效"的自相矛盾。 |
+| P2-3 | 新增 `zju_write_note`：文件名由 Agent 按「上课日期 + 本节内容」起名（`name` 参数，如 `知识总结-2026-10-28-复变函数-保角映射.md`），缺省才回退 `知识总结-<sub_id>-<课程简称>.md`；**同名拒绝静默覆盖**（返回 `exists`，要覆盖须显式 `overwrite=true`）。 |
+| P3-1 | 备份改写到备份目录（`ZJU_BACKUP_DIR`，默认系统临时目录），报告给出绝对路径；不再污染 `git status`。 |
+| P3-2 | Skill 清单新增 `contentHash`；插件启动告警打印两边的 sha256；Skill 增加「版本与副本核对」章节；新增防回归测试禁止"让用户提供 cookie"这类过期文案。 |
+| P3-3 | 字幕返回 **`ASR 可靠度`**（噪声比 / 碎句比 / 平均句长 / 高频口头禅 + 处置建议），`chunked` / `json` 视图给 `quality` 对象；Skill 要求可靠度低时复算校核并在讲义顶部写明复核点。 |
+
 ## 1.4.0 修复了哪些问题
 
 针对 [issue #1](https://github.com/chenqianyu486-sys/dsh-zju-lecture-note/issues/1) 的 11 项审查：
@@ -330,7 +361,7 @@ npm publish               # 发布到 npm registry
 | # | 修复 |
 | :-: | :--- |
 | 1 | `fix=true` 不再改写行内代码/围栏代码里的示例（讲义里"这样写是错的"不会被改坏） |
-| 2 | 回写前先备份 `<文件名>.bak`，再原子替换；工具卡类型从 `read` 改为 `edit` |
+| 2 | 回写前先备份 `<文件名>.bak`，再原子替换；工具卡类型从 `read` 改为 `edit`（1.4.1 起备份写到 `ZJU_BACKUP_DIR`，默认系统临时目录） |
 | 3 | DOCX 按 token 流解析，恢复段落、制表符、`<w:br/>` 与 XML 实体 |
 | 4 | `chunked` / `json` 遵守 `max_chars`，超限时给 `truncated` / `next_start_minute` |
 | 5 | 切片时同时报告"课程总时长"和"本次区间"，不再把片段时长当整课 |
@@ -358,8 +389,12 @@ npm publish               # 发布到 npm registry
   信任库、CA 张数、代理环境变量与具体修法（把 `classroom.zju.edu.cn` 设为直连或放进 `NO_PROXY`）。
   插件**不会**为了"能跑"而关闭证书校验。瞬时抖动（截断读包、握手 EOF、超时、5xx）已内置 3 次退避重试。
 - **同名 Skill 的磁盘副本会抢名字**：若 `$DSH_HOME/skills/zju-lecture-summarizer/` 下还留着一份旧副本，
-  一个名字只保留一份、重复的仅打 warning，Agent 可能一直读那份过期 SOP。插件启动时会在 stderr
-  明确告警并给出删除路径。
+  一个名字只保留一份、重复的仅打 warning，Agent 可能一直读那份过期 SOP。SKILL.md 的 front matter 里
+  **没有版本字段**，所以只能比内容：清单里的 `contentHash`（`sha256:...`）是权威值，插件启动时会在
+  stderr 打印插件内置版与磁盘副本的 sha256，并给出删除路径。
+- **讲义文件名不再固定**：1.4.1 起用 `zju_write_note`，文件名由 Agent 按「上课日期 + 本节内容」起名
+  （`知识总结-2026-10-28-复变函数-保角映射.md`），缺省才回退 `知识总结-<sub_id>-<课程简称>.md`。
+  固定的 `知识总结.md` 会让下一节课**静默覆盖**上一节，而讲义通常被 `.gitignore` 忽略、覆盖后无法恢复。
 - **git 历史**：历史中已有的个人路径/密钥不会因为当前文件干净而消失；
   用 `python tools/privacy_scan.py --history` 检查，必要时重写历史并轮换凭证。
 - **形态别选错**：`tools/build_plugin.py` 产出的是 **MCode 插件包**；装进 dsh 用的是本仓库根目录的

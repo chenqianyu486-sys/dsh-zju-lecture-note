@@ -471,32 +471,36 @@ def read_edge_cookies(
     if not rows:
         abe = _edge_app_bound_enabled()
         if locked:
-            hint = "请完全退出 Edge（包括后台驻留进程）后重试；"
             if abe:
-                hint += (
-                    "本机 Edge 已启用应用绑定加密（ABE），退出 Edge 也无法在本地解密，"
-                    "请改用 ZJU_COOKIE_FILE 环境变量（文件内只放一行 Cookie 头）。"
-                )
-            else:
-                hint += (
-                    "或在宿主配置里设置 ZJU_COOKIE / ZJU_COOKIE_FILE 环境变量"
-                    "（不要把 Cookie 粘贴到对话里）。"
+                # ABE makes "quit Edge and retry" dead advice: the v20 key is
+                # wrapped to the browser process, so quitting Edge removes the
+                # lock but never makes the cookie readable outside Edge. Say
+                # the one action that actually works, and only that one.
+                return None, CookieAccessError(
+                    "Edge 正在运行且启用了应用绑定加密（ABE），Cookie 无法在浏览器外部解密。",
+                    "退出 Edge 对 ABE 无效：请在宿主配置里设置 ZJU_COOKIE_FILE 环境变量"
+                    "（文件内只放一行 Cookie 头，不要粘贴到对话里）。",
+                    reason="abe",
                 )
             return None, CookieAccessError(
                 "Edge 正在运行，Cookie 数据库被独占锁定，无法读取。",
-                hint,
+                "请完全退出 Edge（包括后台驻留进程）后重试；"
+                "或在宿主配置里设置 ZJU_COOKIE / ZJU_COOKIE_FILE 环境变量"
+                "（不要把 Cookie 粘贴到对话里）。",
                 reason="locked",
             )
         if db_error is not None:
-            hint = "请完全退出 Edge 后重试。"
             if abe:
-                hint += (
-                    "本机 Edge 已启用应用绑定加密（ABE），即使退出 Edge 也无法在本地解密，"
-                    "请改用 ZJU_COOKIE_FILE 环境变量。"
+                return None, CookieAccessError(
+                    f"读取 Edge Cookie 数据库失败：{db_error}",
+                    "本机 Edge 启用了应用绑定加密（ABE），即使退出 Edge 也无法在浏览器外解密；"
+                    "请改用 ZJU_COOKIE_FILE 环境变量（文件内只放一行 Cookie 头）。",
+                    reason="abe",
                 )
             return None, CookieAccessError(
                 f"读取 Edge Cookie 数据库失败：{db_error}",
-                hint,
+                "请完全退出 Edge 后重试，或在宿主配置里设置 ZJU_COOKIE_FILE 环境变量"
+                "（不要把 Cookie 粘贴到对话里）。",
                 reason="db_error",
             )
         return None, CookieAccessError(

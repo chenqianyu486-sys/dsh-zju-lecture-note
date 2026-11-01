@@ -143,6 +143,19 @@ class TestBridge(unittest.TestCase):
         self.assertTrue(payload.get("ok"), payload)
         self.assertIn("sub_id", payload["message"])
 
+    def test_bridge_forwards_the_session_workspace(self):
+        """P1-1：相对路径必须能在会话工作区里解析到（而不是子进程 cwd）。"""
+        result = run_node(os.path.join("tests", "bridge_workspace_smoke.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload.get("ok"), payload)
+        self.assertEqual(
+            os.path.normcase(payload["spawnedWorkspace"]),
+            os.path.normcase(payload["workspace"]),
+            "Python 子进程没有在 session workspace 里启动",
+        )
+        self.assertTrue(payload["errorListsCandidates"], payload)
+
 
 class TestPackage(unittest.TestCase):
 
@@ -150,7 +163,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.4.0")
+        self.assertEqual(manifest["version"], "1.4.1")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
