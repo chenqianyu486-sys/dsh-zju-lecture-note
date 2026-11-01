@@ -150,7 +150,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.3.3")
+        self.assertEqual(manifest["version"], "1.4.0")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")

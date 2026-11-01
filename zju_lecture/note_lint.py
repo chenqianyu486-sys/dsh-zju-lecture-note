@@ -13,7 +13,10 @@ Two severity levels:
 * ``warn``  — the note renders, but breaks the agreed notation convention.
 """
 
+import os
 import re
+import shutil
+import tempfile
 from typing import List, NamedTuple
 
 ERROR = "error"
@@ -267,7 +270,7 @@ def _fix_fracs(text: str) -> tuple:
     return text, n1 + n2 + n3
 
 
-def _fix_table_pipes(line: str) -> tuple:
+def _fix_table_pipes_segment(line: str) -> tuple:
     """Turn ``|x|`` into ``\\lvert x\\rvert`` inside table-cell formulas."""
     changed = False
 
@@ -284,7 +287,12 @@ def _fix_table_pipes(line: str) -> tuple:
         return "$" + new_body + "$"
 
     new_line = _INLINE_MATH_RE.sub(replace, line)
-    return new_line, changed
+    return new_line, 1 if changed else 0
+
+
+def _fix_table_pipes(line: str) -> tuple:
+    """Fix table-cell pipes, skipping inline-code spans."""
+    return _apply_outside_code(line, _fix_table_pipes_segment)
 
 
 def _normalize_math(text: str) -> tuple:
@@ -295,6 +303,66 @@ def _normalize_math(text: str) -> tuple:
         text = text.replace("\\dfrac", "\\frac")
     text, frac_count = _fix_fracs(text)
     return text, count + frac_count
+
+
+def _apply_outside_code(line: str, func) -> tuple:
+    """Apply ``func`` to the parts of *line* outside inline-code spans.
+
+    Backtick code spans are documentation about the rules, not formulas that
+    obey them: a note saying ``frac12`` is wrong must keep saying so after an
+    autofix. Returns ``(new_line, number_of_changes)``.
+    """
+    out = []
+    changes = 0
+    pos = 0
+    in_code = False
+    open_at = 0
+    for idx, ch in enumerate(line):
+        if ch != "`":
+            continue
+        if not in_code:
+            piece, count = func(line[pos:idx])
+            out.append(piece)
+            changes += count
+            in_code = True
+            open_at = idx
+            pos = idx
+        else:
+            out.append(line[open_at:idx + 1])
+            pos = idx + 1
+            in_code = False
+    if in_code:
+        # Unclosed backtick: the rest is code, never rewrite it.
+        out.append(line[pos:])
+    else:
+        piece, count = func(line[pos:])
+        out.append(piece)
+        changes += count
+    return "".join(out), changes
+
+
+def write_with_backup(path: str, text: str) -> str:
+    """Back ``path`` up to ``path + '.bak'``, then atomically replace it.
+
+    Returns the backup path. The backup is written first, so a failed replace
+    never leaves the user without their original note. Raises ``OSError`` on
+    failure; at that point the original file is still intact.
+    """
+    backup = path + ".bak"
+    shutil.copyfile(path, backup)
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".zju-note-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return backup
 
 
 def fix_markdown(text: str) -> tuple:
@@ -341,7 +409,7 @@ def fix_markdown(text: str) -> tuple:
 
         # Single-line ``$$ ... $$`` -> an isolated three-line block.
         display_match = re.match(r"^(\s*)\$\$(.+)\$\$\s*$", line)
-        if display_match:
+        if display_match and "`" not in line:
             indent = display_match.group(1)
             body, count = _normalize_math(display_match.group(2).strip())
             math_fixed += count
@@ -352,7 +420,9 @@ def fix_markdown(text: str) -> tuple:
             continue
 
         # ``\dfrac`` -> ``\frac``; ``\frac12`` -> ``\frac{1}{2}``.
-        line, count = _normalize_math(line)
+        # Inline-code spans are left alone: they document the rule, they do not
+        # violate it.
+        line, count = _apply_outside_code(line, _normalize_math)
         math_fixed += count
 
         # Bare pipes inside table-cell formulas.

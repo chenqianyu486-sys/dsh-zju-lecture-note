@@ -34,7 +34,8 @@
 4. **缓存**：仅存于 Python 子进程内存（`_COOKIE_CACHE`），进程退出即消失。
 5. **回显**：没有。`zju_read_browser_cookie` 只返回 `cookie_count` / `cookie_names` / `total_length` / 来源类别。
 6. **日志**：所有输出经过 `SecretRedactor`；`ZJU_COOKIE` 的值与 Cookie 各字段值都注册为敏感串。
-7. **临时文件**：直接只读打开失败时才复制数据库；复制文件权限 0600，读完覆写 0 并删除；进程被强杀时理论上可能残留，建议把 `%TEMP%` 视为本机敏感目录。
+7. **临时文件**：直接只读打开失败时才复制数据库；复制时连同 `-wal` / `-shm` 边车一起复制（否则刚登录的行可能还在 WAL 里），
+   副本权限 0600，读完覆写 0 并删除；进程被强杀时理论上可能残留，建议把 `%TEMP%` 视为本机敏感目录。
 
 ## 3. 本地文件边界
 
@@ -44,6 +45,8 @@
 - **大小上限** 16 MiB。
 - **拒绝**（无论扩展名）：
   - 凭据/密钥类文件名：`.env*`、`*credential*`、`*secret*`、`*password*`、`*token*`、`*.pem/.key/.p12/.pfx/.kdbx`、`id_rsa*` 等；
+    凭据词按分隔符**整词匹配**：`my-secret.txt`、`client_secret.json` 会被拒，而
+    `secret sharing 第5章.md` 这类学术文件名放行；通用名 `config.json` 不再被拒；
   - 浏览器状态：`Cookies`、`Login Data`、`Web Data`、`History`、`*.db/.sqlite`；
   - 目录：`.ssh`、`.gnupg`、`.aws`、`.azure`、`.kube`、`.docker`、`.dsh`、`.minimax`、`.config`、`.pki`。
 - **符号链接**会先 `realpath` 再判定，不能用链接绕过。
@@ -69,7 +72,9 @@
 ## 6. 已知边界
 
 - Edge 正在运行时会锁住 Cookie 数据库，`zju_read_browser_cookie` 会返回可执行提示；退出 Edge 或配置 `ZJU_COOKIE` 即可。
-- 新版 Edge 的 v20 应用绑定加密在部分系统上无法本地解密，此时会明确报"全部解密失败"。
+- 新版 Edge 的应用绑定加密（ABE）：插件读取 `Local State` 里的 `app_bound_encrypted_key` 判定，
+  命中时错误信息直接指向 `ZJU_COOKIE_FILE`（此时退出 Edge 也无法解密，不再给无效建议）；
+  未命中但 v20 Cookie 仍解不开时，报告"全部解密失败"并给出文件方案。
 - Windows 下进程被强杀时，已复制的临时 Cookie 数据库可能残留在临时目录；正常路径会覆写并删除。
 - 证书校验不提供"降级"开关：信任库按 `certifi` → 随包 `zju_lecture/cacert.pem`（Mozilla 根证书快照，
   见 [`ATTRIBUTION.md`](ATTRIBUTION.md)）→ 系统根证书 顺序回落；三级都不足以验证时才失败，

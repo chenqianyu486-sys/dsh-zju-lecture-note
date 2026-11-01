@@ -59,7 +59,8 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
   共 3 次、指数退避 + 抖动）；证书校验失败**不重试**——那需要修，不需要重跑。
 - **跨域重定向被拒绝**：避免 `urllib` 在 302 时把 `Cookie` 头重发到第三方域。
 - **本地文件有边界**：`zju_extract_courseware` / `zju_check_note` 只接受课件与讲义扩展名，
-  并拒绝 `.env`、凭据、私钥、浏览器 Cookie/Login Data 等敏感文件与目录。
+  并拒绝 `.env`、凭据、私钥、浏览器 Cookie/Login Data 等敏感文件与目录；凭据词按分隔符**整词匹配**
+  （`client_secret.json` 仍拒绝，`secret sharing 第5章.md` 放行），通用文件名 `config.json` 不再误伤。
 - **不写用户目录**：插件把随包 Skill 注册到 dsh 技能表，而不是复制进 `$DSH_HOME`；无遥测、无后台服务。
 - **可机器验证**：`python tools/privacy_scan.py` 扫描工作区，`--history` 扫描 git 历史，
   `--tarball` 扫描 npm 发布产物。
@@ -74,7 +75,7 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** | 无 Cookie |
 | `zju_fetch_slides` | 抓课堂投影的 PPT 文字层与 OCR | 需登录态（服务端本地解析） | 不收/不回显 Cookie |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 | 拒绝敏感路径 |
-| `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（可一键修复机械问题） | 本地文件 | 只接受 `.md` / `.markdown` |
+| `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题，改前自动备份 `.bak`） | 本地文件 | 只接受 `.md` / `.markdown` |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 需登录态（服务端本地解析） | 直链可能带签名，勿外传 |
 | `zju_read_browser_cookie` | 读取本机 Edge 登录态并缓存到服务端内存 | 本机读取 | **只返回名称与长度** |
 
@@ -132,7 +133,8 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > **Python 探测顺序**：插件配置项 → 环境变量 `ZJU_PYTHON` → DeepSeek Harness 自带 Python → PATH 上的 `python3` / `python` / `py -3`。
 
 **登录态（可选，仅 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
-可在宿主配置里设置环境变量，**不要把 Cookie 粘贴到对话里**：
+且 Edge 127+ 若启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密其 v20 Cookie，这时会直接
+提示改用 `ZJU_COOKIE_FILE`。可在宿主配置里设置环境变量，**不要把 Cookie 粘贴到对话里**：
 
 ```bash
 ZJU_COOKIE="name=value; name2=value2"        # 直接给 Cookie 头
@@ -239,13 +241,16 @@ dsh-zju-lecture-note/
 4. 缓存：仅 Python 子进程内存；
 5. 回显：没有；工具 schema 中没有 cookie / reveal / domain 参数；
 6. 日志：所有输出经过 `SecretRedactor`；
-7. 临时文件：只读打开优先；复制时 0600，读完覆写并删除。
+7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
+   权限 0600，读完覆写并删除。
 
 ### 本地文件
 
 `zju_extract_courseware` 和 `zju_check_note` 只接受指定扩展名，并拒绝敏感文件名/目录
 （`.env*`、`*credential*`、`*.pem`、`Cookies`、`Login Data`、`.ssh`、`.dsh` 等）。
-符号链接会先解析真实路径再判定。确有必要时可用 `ZJU_ALLOW_SENSITIVE_PATHS=1` 显式关闭保护。
+凭据类单词按分隔符整词匹配（`my-secret.txt` 拒绝、`secret sharing 第5章.md` 放行），
+`config.json` 这类通用名不再被拒。符号链接会先解析真实路径再判定。
+确有必要时可用 `ZJU_ALLOW_SENSITIVE_PATHS=1` 显式关闭保护。
 
 ### 数据会离开本机的部分
 
@@ -268,8 +273,9 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题（�
                                               # \frac 补花括号、表格裸竖线、单行 <details>）
 ```
 
-自动修复只做**语义无歧义**的改写；需要判断的（未闭合的 `$`、`\text{}` 里的中文、裸虚数单位）
-保持原样并继续报出来。
+自动修复只做**语义无歧义**的改写，且只作用于围栏代码块与行内代码之外（讲义里"这样写是错的"示例
+不会被改坏）；回写前会把原文件备份成 `<文件名>.bak`，再原子替换。需要判断的（未闭合的 `$`、
+`\text{}` 里的中文、裸虚数单位）保持原样并继续报出来。
 
 ## 开发与测试
 
@@ -292,7 +298,9 @@ python tools/smoke_test.py --sub-id <真实 sub_id>               # 对已安装
 MCP 协议往返（`initialize` / `tools/list` / `tools/call` / 通知不响应）、
 FIPS-197 AES-128 已知向量、Edge Cookie 失败原因分类、Cookie 主机精确匹配、Cookie 不回显与错误 redaction、
 敏感本地文件拒绝、TLS 不降级与三级信任库回落、瞬时故障重试与证书失败不重试、`isError` 冒泡、
-跨域重定向拒绝、讲义公式规范检查与自动修复、隐私扫描器自测。
+跨域重定向拒绝、讲义公式规范检查与自动修复、隐私扫描器自测、review 批次回归
+（行内代码不被改写、修复前 `.bak` 备份、DOCX 段落保留、`chunked`/`json` 截断、切片时长、
+Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语义、系统提示适用范围）。
 
 > 测试中的 `subprocess` / 管道 / 临时文件在受限沙箱里可能被拒绝；这是环境限制，不是插件缺陷。
 > 在普通终端或给予足够的文件/进程权限后运行即可。
@@ -315,6 +323,24 @@ npm publish               # 发布到 npm registry
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
+## 1.4.0 修复了哪些问题
+
+针对 [issue #1](https://github.com/chenqianyu486-sys/dsh-zju-lecture-note/issues/1) 的 11 项审查：
+
+| # | 修复 |
+| :-: | :--- |
+| 1 | `fix=true` 不再改写行内代码/围栏代码里的示例（讲义里"这样写是错的"不会被改坏） |
+| 2 | 回写前先备份 `<文件名>.bak`，再原子替换；工具卡类型从 `read` 改为 `edit` |
+| 3 | DOCX 按 token 流解析，恢复段落、制表符、`<w:br/>` 与 XML 实体 |
+| 4 | `chunked` / `json` 遵守 `max_chars`，超限时给 `truncated` / `next_start_minute` |
+| 5 | 切片时同时报告"课程总时长"和"本次区间"，不再把片段时长当整课 |
+| 6 | 检测 `app_bound_encrypted_key`（ABE），命中时直接引导 `ZJU_COOKIE_FILE` |
+| 7 | Cookie 兜底复制带上 `-wal` / `-shm` 并回放 WAL，不再误报"未登录" |
+| 8 | `config.json` 移出敏感名单；凭据词改整词匹配，学术文件名不再误伤 |
+| 9 | PDF 解析失败时汇总每种库的失败原因，并给出当前解释器的绝对路径 |
+| 10 | `isError` 已能冒泡（1.3.3）；超时仅在无其他在途调用时才回收 Python 子进程 |
+| 11 | 系统提示段落声明适用范围，只对智云课堂相关任务生效 |
+
 ## 已知限制
 
 - **只解压 zip 就启用 → `Cannot find package '@deepseek-ai/schemastery'`**：
@@ -322,9 +348,10 @@ npm publish               # 发布到 npm registry
   用 `dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note` 安装，
   或在本地目录先 `npm install --omit=peer` 再 `dsh plugin ... add file:<路径>`。
   插件现在会把这类错误翻译成「缺少依赖 + 该怎么装」，不再只抛裸的模块找不到。
-- **Edge 正在运行时读不到登录态**：Chromium 会对 Cookie 数据库加独占锁，
-  此时 `zju_read_browser_cookie` 会明确返回"请完全退出 Edge 后重试"，而不是含糊地说"未登录"。
-  新版 Edge 的 v20 应用绑定加密在部分系统上仍可能无法本地解密，可改用 `ZJU_COOKIE_FILE`。
+- **Edge 登录态的两条死路**：Chromium 会对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
+  v20 Cookie 连 DPAPI 也解不开。插件会读 `Local State` 里的 `app_bound_encrypted_key` 判定 ABE，
+  并在错误信息里直接指向 `ZJU_COOKIE_FILE`（而不是反复让你退出 Edge）；读库兜底复制会带上
+  `-wal` / `-shm` 并让 SQLite 回放 WAL，避免"刚登录却被判未登录"。
 - **PDF 课件**需要可选依赖 `pypdf`（`pip install pypdf`）；其余格式零依赖。
 - **SSL / 代理**：信任库按 `certifi` → 随包 `cacert.pem` → 系统根证书 回落，所以 dsh 自带的无 certifi
   解释器也能正常握手；真正会失败的是**代理做了 HTTPS 解密**或**系统时间偏差过大**。错误消息会给出当前

@@ -185,10 +185,14 @@ _SENSITIVE_DIRS = frozenset({
 # state. Matched against the lower-cased basename.
 _SENSITIVE_NAME_PATTERNS = tuple(re.compile(pattern) for pattern in (
     r"^\.env($|\.)",
-    r"credential", r"secret", r"password", r"passwd", r"apikey", r"api[_-]key",
-    r"private", r"token", r"cookie", r"login data", r"web data",
+    # Credential-ish words match as separator-delimited tokens, not as
+    # arbitrary substrings: "secret sharing 第 5 章.md" is courseware, while
+    # "my-secret.txt" / "client_secret.json" is credential material.
+    r"(?:^|[-_.])(?:credential|credentials|secret|secrets|password|passwd|"
+    r"passphrase|apikey|api[_-]key|private|token|tokens)(?:$|[-_.])",
+    r"(?:^|[-_.])cookies?(?:$|[-_.])", r"^login data$", r"^web data$",
     r"^history$", r"^history\.(txt|db)$",
-    r"^config\.json$", r"^\.netrc$", r"^\.npmrc$", r"^\.pypirc$",
+    r"^\.netrc$", r"^\.npmrc$", r"^\.pypirc$",
     r"^\.git-credentials$", r"^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$",
     r"^known_hosts$",
     r"\.(pem|key|p12|pfx|kdbx|db|sqlite|sqlite3|ovpn|ppk|crt|der|jks|keystore)$",

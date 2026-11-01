@@ -7,6 +7,7 @@ Also supports cookie string formatting and manual token injection.
 
 import glob
 import hashlib
+import json
 import os
 import pathlib
 import shutil
@@ -236,6 +237,25 @@ def _edge_root() -> Optional[str]:
     return None
 
 
+def _edge_app_bound_enabled() -> bool:
+    """Whether Edge uses app-bound encryption for new cookies.
+
+    Edge 127+ can encrypt cookies with a key bound to the application
+    (``app_bound_encrypted_key`` in ``Local State``). Such values cannot be
+    decrypted by an external process even with DPAPI, so "quit Edge and retry"
+    can never work; the user has to supply ``ZJU_COOKIE_FILE`` instead.
+    """
+    root = _edge_root()
+    if not root:
+        return False
+    try:
+        with open(os.path.join(root, "Local State"), "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        return bool(state.get("os_crypt", {}).get("app_bound_encrypted_key"))
+    except (OSError, ValueError):
+        return False
+
+
 def _cookie_db_candidates(edge_root: str) -> List[str]:
     """Every Edge profile cookie database, newest layout first."""
     return (
@@ -308,13 +328,29 @@ def _secure_remove(path: str) -> None:
         pass
 
 
-def _copy_cookie_db(db_path: str) -> str:
-    """Copy the live Edge cookie DB into a private 0600 temp file.
+def _secure_remove_tree(tmp_dir: str) -> None:
+    """Shred every file copied into a private temp dir, then remove the dir."""
+    try:
+        names = os.listdir(tmp_dir)
+    except OSError:
+        return
+    for name in names:
+        _secure_remove(os.path.join(tmp_dir, name))
+    try:
+        os.rmdir(tmp_dir)
+    except OSError:
+        pass
 
-    Used only when a read-only connection is refused (Chromium holds an
-    exclusive lock). The file is truncated and removed by the caller with
-    :func:`_secure_remove`, so an abrupt exit does not leave readable browser
-    credentials behind in the temp directory.
+
+def _copy_cookie_db(db_path: str) -> str:
+    """Copy the live Edge cookie DB and its WAL sidecars into a private dir.
+
+    Chromium keeps the cookie database in WAL mode, so a login issued moments
+    ago may still live in ``Cookies-wal`` instead of ``Cookies``. Copying only
+    the main file yields an empty table and a misleading "not logged in"
+    error. The sidecars are copied too and the copy is opened read-write once,
+    which lets SQLite replay and checkpoint the WAL in *our* private copy; the
+    browser's own files are never touched.
     """
     tmp_dir = tempfile.mkdtemp(prefix="zju-lecture-cookie-")
     try:
@@ -324,31 +360,35 @@ def _copy_cookie_db(db_path: str) -> str:
     tmp_path = os.path.join(tmp_dir, "Cookies")
     try:
         shutil.copyfile(db_path, tmp_path)
+        for suffix in ("-wal", "-shm"):
+            source = db_path + suffix
+            if os.path.exists(source):
+                shutil.copyfile(source, tmp_path + suffix)
+        for path in (tmp_path, tmp_path + "-wal", tmp_path + "-shm"):
+            if os.path.exists(path):
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    pass
+        # Read-write open: SQLite replays the copied WAL and checkpoints it.
+        conn = sqlite3.connect(tmp_path, timeout=2.0)
         try:
-            os.chmod(tmp_path, 0o600)
-        except OSError:
-            pass
-    except OSError:
-        _secure_remove(tmp_path)
-        try:
-            os.rmdir(tmp_dir)
-        except OSError:
-            pass
-        raise
+            conn.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as exc:
+        _secure_remove_tree(tmp_dir)
+        raise OSError(f"copying the cookie database failed: {exc}") from exc
     return tmp_path
 
 
 def _read_rows_with_copy(db_path: str, domain: str) -> List[Tuple[str, str, str, Optional[bytes]]]:
-    """Fallback path: copy the database, read it, then shred the copy."""
+    """Fallback path: copy the database and WAL, read it, then shred the copy."""
     tmp_path = _copy_cookie_db(db_path)
     try:
         return _query_cookie_rows(tmp_path, domain)
     finally:
-        _secure_remove(tmp_path)
-        try:
-            os.rmdir(os.path.dirname(tmp_path))
-        except OSError:
-            pass
+        _secure_remove_tree(os.path.dirname(tmp_path))
 
 
 def read_edge_cookies(
@@ -429,17 +469,34 @@ def read_edge_cookies(
             break
 
     if not rows:
+        abe = _edge_app_bound_enabled()
         if locked:
+            hint = "请完全退出 Edge（包括后台驻留进程）后重试；"
+            if abe:
+                hint += (
+                    "本机 Edge 已启用应用绑定加密（ABE），退出 Edge 也无法在本地解密，"
+                    "请改用 ZJU_COOKIE_FILE 环境变量（文件内只放一行 Cookie 头）。"
+                )
+            else:
+                hint += (
+                    "或在宿主配置里设置 ZJU_COOKIE / ZJU_COOKIE_FILE 环境变量"
+                    "（不要把 Cookie 粘贴到对话里）。"
+                )
             return None, CookieAccessError(
                 "Edge 正在运行，Cookie 数据库被独占锁定，无法读取。",
-                "请完全退出 Edge（包括后台驻留进程）后重试；"
-                "或在宿主配置里设置 ZJU_COOKIE 环境变量（不要把 Cookie 粘贴到对话里）。",
+                hint,
                 reason="locked",
             )
         if db_error is not None:
+            hint = "请完全退出 Edge 后重试。"
+            if abe:
+                hint += (
+                    "本机 Edge 已启用应用绑定加密（ABE），即使退出 Edge 也无法在本地解密，"
+                    "请改用 ZJU_COOKIE_FILE 环境变量。"
+                )
             return None, CookieAccessError(
                 f"读取 Edge Cookie 数据库失败：{db_error}",
-                "请完全退出 Edge 后重试。",
+                hint,
                 reason="db_error",
             )
         return None, CookieAccessError(
@@ -468,10 +525,20 @@ def read_edge_cookies(
         pairs.append(f"{name}={value}")
 
     if not pairs:
+        if _edge_app_bound_enabled():
+            hint = (
+                "本机 Edge 启用了应用绑定加密（ABE）：新版 v20 Cookie 无法被外部进程解密。"
+                "请改用 ZJU_COOKIE_FILE 环境变量（文件内只放一行 Cookie 头），"
+                "或在宿主配置里设置 ZJU_COOKIE。"
+            )
+        else:
+            hint = (
+                "Cookie 可能是新版 v20 加密格式，无法用本地权限解密；"
+                "请在宿主配置里设置 ZJU_COOKIE_FILE 或 ZJU_COOKIE 环境变量。"
+            )
         return None, CookieAccessError(
             f"读取到 {len(rows)} 条 {domain} 的 Cookie，但全部解密失败。",
-            "新版 Edge（v20 应用绑定加密）可能无法用本地权限解密；"
-            "请在宿主配置里设置 ZJU_COOKIE 环境变量。",
+            hint,
             reason="decrypt_failed",
         )
 

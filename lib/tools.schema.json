@@ -104,7 +104,7 @@
   },
   {
     "name": "zju_check_note",
-    "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。建议在写完讲义后、交付给用户前调用一次。",
+    "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。回写前会先把原文件备份成 <文件名>.bak（原子写，代码块内的示例不会被改写）。建议在写完讲义后、交付给用户前调用一次。",
     "parameters": {
       "file_path": {
         "description": "讲义 Markdown 文件的绝对路径或相对路径",
@@ -120,7 +120,7 @@
   },
   {
     "name": "zju_read_browser_cookie",
-    "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用，或在宿主配置里设置 ZJU_COOKIE。",
+    "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
     "parameters": {}
   }
 ]

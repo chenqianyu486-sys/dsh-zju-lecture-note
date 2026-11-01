@@ -38,7 +38,12 @@ from zju_lecture.client import (
 )
 from zju_lecture.cookies import CookieAccessError, read_edge_cookies
 from zju_lecture.courseware import CoursewareError, extract_courseware_text
-from zju_lecture.note_lint import check_markdown, fix_markdown, format_report
+from zju_lecture.note_lint import (
+    check_markdown,
+    fix_markdown,
+    format_report,
+    write_with_backup,
+)
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -56,7 +61,7 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.3.3"
+SERVER_VERSION = "1.4.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -291,6 +296,7 @@ TOOLS: List[Dict[str, Any]] = [
             "块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。"
             "传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、\\dfrac、\\frac 缺花括号、"
             "表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。"
+            "回写前会先把原文件备份成 <文件名>.bak（原子写，代码块内的示例不会被改写）。"
             "建议在写完讲义后、交付给用户前调用一次。"
         ),
         "inputSchema": {
@@ -315,8 +321,8 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态，并缓存在 MCP 服务端内存中供其他工具使用。"
             "只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。"
-            "注意：Edge 正在运行时会锁住 Cookie 数据库，需要完全退出 Edge 后再调用，"
-            "或在宿主配置里设置 ZJU_COOKIE。"
+            "注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），"
+            "退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。"
         ),
         "inputSchema": {
             "type": "object",
@@ -333,6 +339,101 @@ def _truncate(text: str, max_chars: Optional[int]) -> str:
     if not max_chars or len(text) <= max_chars:
         return text
     return text[:max_chars] + f"\n\n[... 内容超过 {max_chars} 字符，已截断；请缩小时间区间或改用 view_format=chunked ...]"
+
+
+def _hard_truncate(text: str, max_chars: Optional[int]) -> str:
+    """Cut ``text`` to the hard budget, without appending a suffix."""
+    if not max_chars or len(text) <= max_chars:
+        return text
+    return text[:max_chars]
+
+
+def _payload_len(payload: Any) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _fit_prefix(items: List[Any], build, max_chars: int) -> int:
+    """Largest prefix length whose JSON payload still fits in ``max_chars``."""
+    low, high = 0, len(items)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if _payload_len(build(items[:mid])) <= max_chars:
+            low = mid
+        else:
+            high = mid - 1
+    return low
+
+
+def _chunked_payload(sub_id: str, minutes_map: Dict[int, List[str]], max_chars: int) -> str:
+    """Serialize transcript chunks within ``max_chars``.
+
+    ``chunked`` exists for long lectures, so returning every chunk regardless
+    of the budget would defeat its purpose. Chunks are built against half the
+    budget, then the largest fitting prefix is returned together with
+    ``truncated`` / ``next_start_minute`` so the agent can fetch the rest.
+    """
+    budget = max(1200, max_chars // 2)
+    chunks = chunk_transcript(minutes_map, max_chars=budget)
+
+    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+        returned = len(subset)
+        return {
+            "sub_id": sub_id,
+            "total_chunks": len(chunks),
+            "returned_chunks": returned,
+            "truncated": returned < len(chunks),
+            "next_start_minute": chunks[returned]["start_min"] if returned < len(chunks) else None,
+            "chunks": subset,
+        }
+
+    keep = _fit_prefix(chunks, build, max_chars)
+    if keep == 0 and chunks:
+        first = dict(chunks[0])
+        text = str(first.get("text", ""))
+        low, high = 0, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            first["text"] = text[:mid]
+            first["char_count"] = mid
+            if _payload_len(build([first])) <= max_chars:
+                low = mid
+            else:
+                high = mid - 1
+        first["text"] = text[:low]
+        first["char_count"] = low
+        first["text_truncated"] = True
+        payload = json.dumps(build([first]), ensure_ascii=False, indent=2)
+        if len(payload) <= max_chars:
+            return payload
+        return _hard_truncate(json.dumps(build([]), ensure_ascii=False, indent=2), max_chars)
+    return json.dumps(build(chunks[:keep]), ensure_ascii=False, indent=2)
+
+
+def _segments_payload(
+    sub_id: str,
+    segments: List[Dict[str, Any]],
+    duration: str,
+    max_chars: int,
+) -> str:
+    """Serialize raw segments within ``max_chars``, reporting the cut point."""
+
+    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+        returned = len(subset)
+        return {
+            "sub_id": sub_id,
+            "duration": duration,
+            "total_segments": len(segments),
+            "returned_segments": returned,
+            "truncated": returned < len(segments),
+            "next_start_minute": (
+                segments[returned]["begin_sec"] // 60 if returned < len(segments) else None
+            ),
+            "segments": subset,
+        }
+
+    keep = _fit_prefix(segments, build, max_chars)
+    payload = json.dumps(build(segments[:keep]), ensure_ascii=False, indent=2)
+    return payload if len(payload) <= max_chars else _hard_truncate(payload, max_chars)
 
 
 def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
@@ -354,35 +455,36 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         end_sec = (end_min * 60 + 59) if end_min is not None else None
 
         raw_segments = fetch_transcript(sub_id, tenant)
+        full_duration = (
+            format_timestamp(raw_segments[-1]["begin_sec"]) if raw_segments else "00:00:00"
+        )
+        slice_note = ""
         if start_sec is not None or end_sec is not None:
-            raw_segments = filter_segments(raw_segments, start_sec, end_sec)
+            sliced = filter_segments(raw_segments, start_sec, end_sec)
+            if sliced:
+                slice_note = (
+                    f" | 本次区间: {format_timestamp(sliced[0]['begin_sec'])}"
+                    f"-{format_timestamp(sliced[-1]['begin_sec'])} | 本次句数: {len(sliced)}"
+                )
+            raw_segments = sliced
 
         if not raw_segments:
             return f"未能获取到指定时间区间内的字幕（sub_id={sub_id}）。请确认课程已生成转写，或调整时间区间。"
 
         per_seg, per_min, minutes_map = build_transcript_views(raw_segments)
-        duration_str = format_timestamp(raw_segments[-1]["begin_sec"])
+        duration_str = full_duration
 
         header = (
             f"=== 浙大智云课堂语音字幕 (sub_id={sub_id}) ===\n"
-            f"总句数: {len(raw_segments)} | 课程时间点: ~{duration_str}\n"
+            f"总句数: {len(raw_segments)} | 课程总时长: ~{duration_str}{slice_note}\n"
         )
 
         if view_format == "per_segment":
             return _truncate(header + "\n" + per_seg, max_chars)
         if view_format == "chunked":
-            chunks = chunk_transcript(minutes_map)
-            return json.dumps(
-                {"sub_id": sub_id, "total_chunks": len(chunks), "chunks": chunks},
-                ensure_ascii=False,
-                indent=2,
-            )
+            return _chunked_payload(sub_id, minutes_map, max_chars)
         if view_format == "json":
-            return json.dumps(
-                {"sub_id": sub_id, "duration": duration_str, "segments": raw_segments},
-                ensure_ascii=False,
-                indent=2,
-            )
+            return _segments_payload(sub_id, raw_segments, duration_str, max_chars)
         return _truncate(header + "\n" + per_min, max_chars)
 
     if name == "zju_fetch_slides":
@@ -477,19 +579,27 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             return f"错误: 读取讲义文件失败: {exc}"
 
         applied = []
+        backup_path = ""
         if arguments.get("fix"):
             fixed_text, applied = fix_markdown(note_text)
             if fixed_text != note_text:
+                backup_path = file_path + ".bak"
                 try:
-                    with open(file_path, "w", encoding="utf-8", newline="\n") as handle:
-                        handle.write(fixed_text)
+                    write_with_backup(file_path, fixed_text)
                 except OSError as exc:
-                    return f"错误: 回写讲义文件失败: {exc}"
+                    hint = (
+                        f"备份在 {backup_path}"
+                        if os.path.exists(backup_path)
+                        else "备份未生成"
+                    )
+                    return f"错误: 回写讲义文件失败（原文件未改动，{hint}）: {exc}"
                 note_text = fixed_text
 
         report = format_report(os.path.basename(file_path), check_markdown(note_text))
         if applied:
             applied_block = "\n".join(f"- {item}" for item in applied)
+            if backup_path:
+                applied_block += f"\n- 原文件已备份到 {backup_path}"
             report = f"=== 已自动修复 ===\n{applied_block}\n\n{report}"
         return report
 

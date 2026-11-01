@@ -23,7 +23,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from zju_lecture.note_lint import check_markdown, fix_markdown, format_report  # noqa: E402
+from zju_lecture.note_lint import (  # noqa: E402
+    check_markdown,
+    fix_markdown,
+    format_report,
+    write_with_backup,
+)
 
 
 def main() -> int:
@@ -31,7 +36,7 @@ def main() -> int:
     parser.add_argument("files", nargs="+", help="待检查的讲义 Markdown 文件")
     parser.add_argument("--quiet", action="store_true", help="只输出结论，不打印逐条问题")
     parser.add_argument("--fix", action="store_true",
-                        help="自动修正可机械修复的问题并回写文件")
+                        help="自动修正可机械修复的问题并回写文件（先备份 .bak）")
     args = parser.parse_args()
 
     failed = False
@@ -47,8 +52,9 @@ def main() -> int:
         if args.fix:
             fixed, applied = fix_markdown(text)
             if fixed != text:
-                with open(path, "w", encoding="utf-8", newline="\n") as handle:
-                    handle.write(fixed)
+                # 先备份再原子写：--fix 不能成为"不可逆覆盖"的入口。
+                backup = write_with_backup(path, fixed)
+                print(f"（原文件已备份到 {backup}）")
                 text = fixed
 
         issues = check_markdown(text)

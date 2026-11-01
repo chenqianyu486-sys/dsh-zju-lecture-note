@@ -588,7 +588,6 @@ class TestPrivacy(unittest.TestCase):
             for name in (
                 ".env.json",
                 "credentials.md",
-                "config.json",
                 "my-secret-notes.md",
                 "password.txt",
             ):

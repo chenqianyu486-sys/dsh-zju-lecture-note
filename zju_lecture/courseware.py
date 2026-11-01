@@ -4,8 +4,11 @@ Courseware text extraction without heavy dependencies.
 Extracts text from .pptx, .docx, .txt, .md, and optionally .pdf.
 """
 
+import html
+import importlib
 import os
 import re
+import sys
 import zipfile
 from typing import Optional
 
@@ -92,48 +95,86 @@ def _extract_pptx(path: str) -> str:
         raise CoursewareError(f"读取 PPTX 课件失败: {e}")
 
 
+_DOCX_TOKEN_RE = re.compile(
+    r"<w:t(?:\s[^>]*)?>(?P<text>.*?)</w:t>"
+    r"|<w:br(?:\s[^>]*)?/?>"
+    r"|<w:tab(?:\s[^>]*)?/?>"
+    r"|</w:p>",
+    re.DOTALL,
+)
+
+
 def _extract_docx(path: str) -> str:
-    """Extract text from document.xml inside DOCX zip package."""
+    """Extract text from ``word/document.xml``, keeping paragraph structure.
+
+    A DOCX paragraph is ``<w:p>``; the text inside it lives in ``<w:t>``.
+    Replacing ``</w:p>`` with a newline *before* joining ``<w:t>`` fragments
+    drops every newline again, so the old implementation collapsed the whole
+    document into a single line. Walking the token stream keeps paragraphs,
+    tabs and explicit line breaks.
+    """
     try:
         with zipfile.ZipFile(path, "r") as z:
             xml_content = z.read("word/document.xml").decode("utf-8", "ignore")
-            # Replace paragraph tags with newlines
-            xml_content = re.sub(r"</w:p>", "\n", xml_content)
-            texts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml_content)
-            # Normalize whitespace
-            return "".join(texts).strip()
     except Exception as e:
         raise CoursewareError(f"读取 DOCX 课件失败: {e}")
 
+    out = []
+    for match in _DOCX_TOKEN_RE.finditer(xml_content):
+        text = match.group("text")
+        if text is not None:
+            out.append(html.unescape(text))
+        elif match.group(0).startswith("</w:p"):
+            out.append("\n")
+        elif match.group(0).startswith("<w:br"):
+            out.append("\n")
+        elif match.group(0).startswith("<w:tab"):
+            out.append("\t")
+
+    text = "".join(out)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 
 def _extract_pdf(path: str) -> str:
-    """Extract text from PDF using pypdf if available, or fall back to basic stream extraction."""
-    try:
-        import pypdf
-        reader = pypdf.PdfReader(path)
-        pages_text = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(pages_text)
-    except ImportError:
-        pass
+    """Extract text from a PDF, explaining every failed attempt.
 
-    try:
-        import PyPDF2
-        reader = PyPDF2.PdfReader(path)
-        pages_text = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(pages_text)
-    except ImportError:
-        pass
+    ``pypdf`` is an optional dependency and dsh ships its own Python, so a
+    bare ``pip install pypdf`` is ambiguous: it may have been installed into a
+    *different* interpreter. Every failure therefore records the library, the
+    exception type and the absolute path of the interpreter that was used.
+    """
+    attempts = []
+    for module_name in ("pypdf", "PyPDF2"):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            attempts.append(f"{module_name}: 未安装")
+            continue
+        try:
+            reader = module.PdfReader(path)
+            pages_text = [page.extract_text() or "" for page in reader.pages]
+            return "\n\n".join(pages_text)
+        except Exception as exc:  # noqa: BLE001 - report, do not crash
+            attempts.append(f"{module_name}: {type(exc).__name__}: {exc}")
 
-    # Basic fallback: read binary, search for text chunks (limited but zero-dep)
+    # Basic fallback: read binary, search for plain text show operators.
     try:
         with open(path, "rb") as f:
             content = f.read()
         strings = re.findall(rb"\(([\w\s\d,.\-+=/]{3,})\)Tj", content)
         if strings:
             return " ".join(s.decode("latin-1", "ignore") for s in strings)
-    except Exception:
-        pass
+        attempts.append("内置兜底解析: 未找到可读文本层")
+    except Exception as exc:  # noqa: BLE001 - report, do not crash
+        attempts.append(f"内置兜底解析: {type(exc).__name__}: {exc}")
 
+    detail = "；".join(attempts) or "无可用 PDF 解析器"
     raise CoursewareError(
-        "PDF 解析需要可选依赖 'pypdf'。请在终端执行: pip install pypdf"
+        "无法解析 PDF 课件。\n"
+        f"当前 Python 解释器: {sys.executable}\n"
+        f"尝试结果: {detail}\n"
+        "如需完整 PDF 支持，请给上面这个解释器安装 pypdf："
+        f'"{sys.executable}" -m pip install pypdf'
     )
