@@ -27,6 +27,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -614,6 +615,42 @@ class TestTranscriptQualitySignal(unittest.TestCase):
             )
         self.assertIn("quality", payload)
         self.assertLessEqual(len(json.dumps(payload, ensure_ascii=False)), 1400)
+
+
+class TestNotesStayOutOfTheRepo(unittest.TestCase):
+    """讲义是本机学习材料，插件写出的文件不能被提交进仓库。
+
+    这一条对插件作者本人同样成立：他在这个仓库里跑插件时，讲义也不该出现在
+    `git status` 里。任何层级的 ``知识总结*.md`` 与推荐的 ``notes/`` 目录都要被忽略。
+    """
+
+    def test_gitignore_covers_generated_notes(self):
+        with io.open(os.path.join(BASE_DIR, ".gitignore"), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("知识总结*.md", text, "任意层级的讲义都要被忽略")
+        self.assertIn("/notes/", text, "推荐的 notes/ 目录要被忽略")
+
+    def _check_ignore(self, relative):
+        try:
+            completed = subprocess.run(
+                ["git", "check-ignore", "-q", relative],
+                cwd=BASE_DIR,
+                capture_output=True,
+                timeout=30,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError):
+            self.skipTest("本机没有可用的 git")
+        return completed.returncode == 0
+
+    def test_a_generated_note_is_ignored_in_the_workspace_root(self):
+        self.assertTrue(
+            self._check_ignore("知识总结-2026-10-28-复变函数-保角映射.md"),
+            "根目录的讲义没有被 .gitignore 挡住",
+        )
+
+    def test_notes_subdirectory_is_ignored(self):
+        self.assertTrue(self._check_ignore("notes/知识总结-2026-10-28.md"), "notes/ 没有被挡住")
+        self.assertTrue(self._check_ignore("notes/随手笔记.md"), "notes/ 下任意文件都要被挡住")
 
 
 if __name__ == "__main__":
