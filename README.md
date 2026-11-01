@@ -39,7 +39,7 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | **dsh 原生插件** | 本仓库根目录的 npm 包（`package.json` + `cordis.patch.yml` + `lib/`），随包携带 Python 核心 | DeepSeek Harness 用户 |
 | **标准 MCP + Skill** | `server.mjs` 拉起一个 stdio MCP Server，附带 `skills/` 里的讲义 SOP | 任意 MCP 宿主（MiniMax Code、Claude Code、Cursor、Cline…） |
 
-无论从哪种形态安装，Agent 看到的都是下面这 7 个工具。
+无论从哪种形态安装，Agent 看到的都是下面这 8 个工具。
 
 ## 隐私与安全（先看）
 
@@ -106,24 +106,25 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > 而不是 npm 全局安装的 `dsh`；`web` / `headless` 等 profile 用哪个都可以。
 
 **不要只把 GitHub 的 zip 解压出来让 dsh 加载。** 插件是 Node ESM 包，
-`lib/index.js` 里的 `@deepseek-ai/schemastery` 是**普通依赖**（`dependencies`），
-必须由 pnpm 装进 profile 的 `node_modules` 才会被解析到；解压出来的目录里没有
-`node_modules`，启用时会报：
+`lib/index.js` 里的 `@deepseek-ai/*` 全部是 **`peerDependencies`**（与 `dshmarket` 一致），
+由 pnpm 在 `dsh plugin add` 时装进 profile 的 `node_modules`（当前是 `@deepseek-ai/schemastery` 3.18.x）；
+解压出来的目录本身没有 `node_modules`，启用时会报：
 
 ```text
 Cannot find package '@deepseek-ai/schemastery' imported from ...\lib\index.js
 ```
 
-若一定要用本地目录，先在目录里装好依赖，再让 dsh 加载：
+若一定要用本地目录，先给它补一个能被解析的 schemastery（其余 `@deepseek-ai/dsh-*`
+仍由 dsh 运行时提供），再让 dsh 加载：
 
 ```bash
 cd /absolute/path/to/zju-lecture-agent-plugin
-npm install --omit=peer        # 只装普通依赖；peer 由 dsh 运行时提供
+npm install --no-save --no-package-lock @deepseek-ai/schemastery@^3.18.1
 dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 ```
 
-`--omit=peer` 是必要的：peer 里的 `@deepseek-ai/dsh-*` 由 dsh 运行时提供，
-让 npm 去 registry 装会因版本范围不匹配而失败。
+`--no-save --no-package-lock` 让这次安装只落进目录的 `node_modules`，不改 `package.json`
+（`@deepseek-ai/dsh-*` 是 dsh 提供的 peer，不要在这里重复安装）。
 
 装完后在 dsh 里直接说：
 
@@ -356,6 +357,14 @@ npm publish               # 发布到 npm registry
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
+## 1.4.2 修正
+
+- `@deepseek-ai/schemastery` 从 `dependencies` 改为 `peerDependencies`（`^3.18.1`），
+  与插件市场的推荐写法、`dshmarket` 保持一致：profile 里不会出现第二份运行时，
+  peer 由 pnpm 在 `dsh plugin add` 时自动装好；本地目录安装只需补这一颗依赖。
+- 文档口径统一到 **8 个工具**：`zju_write_note` 在 1.4.1 加入后，`README.md`、`ATTRIBUTION.md`
+  与 `lib/index.js` 的注释还写着 7。
+
 ## 1.4.1 修复了哪些问题
 
 针对 [实地运行反馈](docs/issue-1.4.0-实地运行反馈.md) 的 8 项问题（真实一节课 `sub_id=1988057` 跑下来）：
@@ -392,9 +401,11 @@ npm publish               # 发布到 npm registry
 ## 已知限制
 
 - **只解压 zip 就启用 → `Cannot find package '@deepseek-ai/schemastery'`**：
-  dsh 插件是 pnpm 包，依赖得由 pnpm 装进 profile 的 `node_modules` 才会被解析到。
+  它是 peer 依赖，由 pnpm 在 `dsh plugin add` 时装进 profile 的 `node_modules`，
+  解压出来的目录里没有，所以直接加载会失败。
   用 `dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note` 安装，
-  或在本地目录先 `npm install --omit=peer` 再 `dsh plugin ... add file:<路径>`。
+  或在本地目录先 `npm install --no-save --no-package-lock @deepseek-ai/schemastery@^3.18.1`
+  再 `dsh plugin ... add file:<路径>`。
   插件现在会把这类错误翻译成「缺少依赖 + 该怎么装」，不再只抛裸的模块找不到。
 - **Edge 登录态的两条死路**：Chromium 会对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
   v20 Cookie 连 DPAPI 也解不开。插件会读 `Local State` 里的 `app_bound_encrypted_key` 判定 ABE，
