@@ -709,5 +709,208 @@ class TestStdioProtocol(unittest.TestCase):
             process.stderr.close()
 
 
+class TransportResilienceTests(unittest.TestCase):
+    """回归：单次 TLS/读包抖动不应该让整节课失败。
+
+    线上真实故障序列是：TCP 握手成功 → 读正文时代理截断，抛
+    ``IncompleteRead``。旧实现只在"建连"外面包了 try，正文读取发生在重试
+    范围之外，所以重试形同虚设。
+    """
+
+    def _patch_sleep(self):
+        return mock.patch("zju_lecture.client.time.sleep", lambda _seconds: None)
+
+    def test_incomplete_read_is_retried_and_recovers(self):
+        import http.client
+
+        from zju_lecture import client as client_module
+
+        class _Response:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def read(self):
+                return self._payload
+
+        calls = {"count": 0}
+
+        def fake_open(url, headers, timeout):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise http.client.IncompleteRead(b"\x00" * 16, 200)
+            return _Response(b'{"code":0}')
+
+        with self._patch_sleep(), mock.patch.object(client_module, "_open_request", fake_open):
+            payload = client_module._fetch_bytes("https://classroom.zju.edu.cn/x", {}, 5)
+
+        self.assertEqual(payload, b'{"code":0}')
+        self.assertEqual(calls["count"], 2)
+
+    def test_certificate_failure_is_not_retried(self):
+        from zju_lecture import client as client_module
+
+        calls = {"count": 0}
+
+        def fake_open(url, headers, timeout):
+            calls["count"] += 1
+            raise ssl.SSLCertVerificationError(
+                1, "certificate verify failed: unable to get local issuer certificate"
+            )
+
+        with self._patch_sleep(), mock.patch.object(client_module, "_open_request", fake_open):
+            with self.assertRaises(ssl.SSLCertVerificationError):
+                client_module._fetch_bytes("https://classroom.zju.edu.cn/x", {}, 5)
+
+        # 证书问题重试多少次都一样，必须立刻把诊断交出去
+        self.assertEqual(calls["count"], 1)
+
+    def test_ssl_error_message_names_cause_and_next_step(self):
+        from zju_lecture import client as client_module
+
+        # 真实链路里证书错误总是被 urllib 包一层 URLError，必须能拆包分类
+        wrapped = urllib.error.URLError(
+            ssl.SSLCertVerificationError(
+                1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+                   "unable to get local issuer certificate (_ssl.c:1016)"
+            )
+        )
+        message = client_module.describe_network_error(wrapped)
+        self.assertIn("证书校验", message)
+        self.assertIn("certifi", message)
+        self.assertIn("NO_PROXY", message)
+
+    def test_dead_proxy_error_message_points_at_the_proxy(self):
+        from zju_lecture import client as client_module
+
+        message = client_module.describe_network_error(
+            urllib.error.URLError(ConnectionRefusedError(10061, "由于目标计算机积极拒绝，无法连接。"))
+        )
+        self.assertIn("代理", message)
+        self.assertIn("HTTPS_PROXY", message)
+
+    def test_transcript_error_wraps_actionable_diagnosis(self):
+        from zju_lecture import client as client_module
+
+        with mock.patch.object(
+            client_module,
+            "_fetch_bytes",
+            side_effect=urllib.error.URLError(
+                ssl.SSLCertVerificationError(1, "certificate verify failed")
+            ),
+        ):
+            with self.assertRaises(client_module.ZJUAPIError) as caught:
+                client_module.fetch_transcript("123456")
+
+        text = str(caught.exception)
+        self.assertIn("certifi", text)
+        self.assertIn("已重试", text)
+
+    def test_fetch_slides_records_reason_instead_of_swallowing_it(self):
+        from zju_lecture import client as client_module
+
+        diagnostics = []
+        with mock.patch.object(
+            client_module,
+            "_fetch_bytes",
+            side_effect=ssl.SSLCertVerificationError(1, "certificate verify failed"),
+        ):
+            result = client_module.fetch_slides("123456", cookie="SESSDATA=abc", diagnostics=diagnostics)
+
+        self.assertIsNone(result)
+        self.assertEqual(len(diagnostics), 1)
+        # 以前这里是 except Exception: pass —— 调用方只能猜"是不是没登录"
+        self.assertIn("certifi", diagnostics[0])
+
+    def test_fetch_slides_without_cookie_records_that_reason(self):
+        from zju_lecture import client as client_module
+
+        diagnostics = []
+        self.assertIsNone(client_module.fetch_slides("123456", diagnostics=diagnostics))
+        self.assertEqual(diagnostics, ["未提供登录 Cookie"])
+
+
+class TrustStoreTests(unittest.TestCase):
+    """随包 CA 兜底：dsh 自带 Python 没有 certifi，系统根证书又可能不全。"""
+
+    def tearDown(self):
+        from zju_lecture import client as client_module
+
+        # 每个用例都会重建 context，别把状态漏给后面的用例
+        client_module._SSL_CONTEXT = None
+        client_module.create_ssl_context()
+
+    def test_bundled_bundle_ships_and_parses(self):
+        from zju_lecture import client as client_module
+
+        path = client_module._bundled_ca_path()
+        self.assertIsNotNone(path, "插件必须随包携带 cacert.pem")
+        with open(path, "rb") as handle:
+            data = handle.read()
+        self.assertGreater(len(data), 50_000)
+        self.assertIn(b"-----BEGIN CERTIFICATE-----", data)
+        self.assertGreaterEqual(data.count(b"-----BEGIN CERTIFICATE-----"), 50)
+
+    def test_bundled_bundle_is_a_usable_trust_store(self):
+        from zju_lecture import client as client_module
+
+        context = client_module._context_from_cafile(client_module._bundled_ca_path())
+        self.assertIsNotNone(context)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+        self.assertGreater(len(context.get_ca_certs()), 50)
+
+    def test_bundled_bundle_is_used_when_certifi_is_absent(self):
+        from zju_lecture import client as client_module
+
+        with mock.patch.object(client_module, "_certifi_ca_path", lambda: None):
+            context = client_module.create_ssl_context()
+
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertEqual(client_module._CA_SOURCE, "bundled")
+        self.assertGreater(len(context.get_ca_certs()), 50)
+
+    def test_certifi_wins_over_the_bundled_bundle(self):
+        from zju_lecture import client as client_module
+
+        bundled = client_module._bundled_ca_path()
+        with mock.patch.object(client_module, "_certifi_ca_path", lambda: bundled):
+            client_module.create_ssl_context()
+
+        self.assertEqual(client_module._CA_SOURCE, "certifi")
+
+    def test_system_store_is_the_last_resort(self):
+        from zju_lecture import client as client_module
+
+        with mock.patch.object(client_module, "_certifi_ca_path", lambda: None), mock.patch.object(
+            client_module, "_bundled_ca_path", lambda: None
+        ):
+            context = client_module.create_ssl_context()
+
+        self.assertEqual(client_module._CA_SOURCE, "system")
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_health_reports_which_store_is_live(self):
+        from zju_lecture import client as client_module
+
+        health = client_module.ssl_context_health()
+        self.assertIn(health["source"], {"certifi", "bundled", "system"})
+        self.assertIsInstance(health["ca_certs"], int)
+
+    def test_certificate_message_names_the_live_store(self):
+        from zju_lecture import client as client_module
+
+        message = client_module.describe_network_error(
+            ssl.SSLCertVerificationError(1, "certificate verify failed")
+        )
+        self.assertIn("信任库：", message)
+        self.assertIn(str(client_module.ssl_context_health()["ca_certs"]), message)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

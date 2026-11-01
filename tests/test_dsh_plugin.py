@@ -135,6 +135,14 @@ class TestBridge(unittest.TestCase):
         self.assertIn("123456", payload["result"])
         self.assertEqual(payload["tools"], len(TOOLS))
 
+    def test_bridge_turns_mcp_is_error_into_a_throw(self):
+        """MCP 的 isError 必须冒泡成异常，否则失败在宿主里显示为成功。"""
+        result = run_node(os.path.join("tests", "bridge_error_smoke.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload.get("ok"), payload)
+        self.assertIn("sub_id", payload["message"])
+
 
 class TestPackage(unittest.TestCase):
 
@@ -142,7 +150,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.3.2")
+        self.assertEqual(manifest["version"], "1.3.3")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")

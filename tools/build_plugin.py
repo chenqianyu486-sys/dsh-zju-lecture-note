@@ -239,7 +239,9 @@ def collect_package_files() -> List[str]:
             # the installed package relies on namespace-package semantics.
             if entry == "__pycache__":
                 continue
-            if entry.endswith(".py"):
+            # .pem is the bundled CA store: without it dsh's certifi-less Python
+            # cannot verify classroom.zju.edu.cn on an incomplete OS root store.
+            if entry.endswith(".py") or entry.endswith(".pem"):
                 files.append(f"{package_dir}/{entry}")
     return files
 

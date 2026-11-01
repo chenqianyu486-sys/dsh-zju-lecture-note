@@ -50,7 +50,13 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
   所有 stdout / stderr / 错误消息还会再经过一次 redactor，注册过的 Cookie 值统一替换为 `[REDACTED]`。
 - **Cookie 不落盘**：读 Edge 时优先只读打开数据库；必须复制时用 0600 私有临时文件，读完覆写并删除。
   服务端缓存只存在于 Python 子进程内存，进程退出即消失。
-- **TLS 不降级**：证书校验永远不会被关闭；本机根证书不全时请求失败并提示安装 `certifi`，而不是"忽略证书错误"。
+- **TLS 不降级，也不靠运气**：证书校验永远不会被关闭。信任库按 `certifi` → **随包 `cacert.pem`** → 系统根证书
+  三级回落——dsh 自带的 Python 解释器不含 certifi，这份随包 Mozilla 根证书快照让"能不能抓字幕"不再取决于
+  用户碰巧 pip 装了什么。三级都不够时才失败，并把**原因 + 下一步**一起返回
+  （当前信任库、加载了几张 CA、`HTTPS_PROXY` 是什么、该装 `certifi` 还是把域名加进 `NO_PROXY`），
+  而不是丢一句 `<urlopen error ...>` 让人猜。
+- **瞬时故障有重试**：建连与**正文读取**都在重试范围内（`IncompleteRead` / `SSLEOFError` / 超时 / 5xx，
+  共 3 次、指数退避 + 抖动）；证书校验失败**不重试**——那需要修，不需要重跑。
 - **跨域重定向被拒绝**：避免 `urllib` 在 302 时把 `Cookie` 头重发到第三方域。
 - **本地文件有边界**：`zju_extract_courseware` / `zju_check_note` 只接受课件与讲义扩展名，
   并拒绝 `.env`、凭据、私钥、浏览器 Cookie/Login Data 等敏感文件与目录。
@@ -277,13 +283,16 @@ python tools/export_schemas.py              # 改动 TOOLS 后重新生成适配
 python tools/export_dsh_tools.py            # 改动 TOOLS 后重新生成 dsh 工具定义
 python tools/build_skill_manifest.py        # 改动 Skill 后重新生成 sha256 清单
 node tests/bridge_smoke.mjs                 # 端到端：拉起 Python 核心并调用一次工具
+node tests/bridge_error_smoke.mjs           # 端到端：确认 MCP 的 isError 会冒泡成异常
+python tools/refresh_ca_bundle.py --check   # 检查随包 CA 是否完整（≥50 张根证书）
 python tools/smoke_test.py --sub-id <真实 sub_id>               # 对已安装包跑端到端冒烟（--dir 可指定包目录）
 ```
 
 测试覆盖：URL 解析、时间戳格式化、分块时间区间回归、课件提取、工具 schema 健全性、
 MCP 协议往返（`initialize` / `tools/list` / `tools/call` / 通知不响应）、
 FIPS-197 AES-128 已知向量、Edge Cookie 失败原因分类、Cookie 主机精确匹配、Cookie 不回显与错误 redaction、
-敏感本地文件拒绝、TLS 不降级、跨域重定向拒绝、讲义公式规范检查与自动修复、隐私扫描器自测。
+敏感本地文件拒绝、TLS 不降级与三级信任库回落、瞬时故障重试与证书失败不重试、`isError` 冒泡、
+跨域重定向拒绝、讲义公式规范检查与自动修复、隐私扫描器自测。
 
 > 测试中的 `subprocess` / 管道 / 临时文件在受限沙箱里可能被拒绝；这是环境限制，不是插件缺陷。
 > 在普通终端或给予足够的文件/进程权限后运行即可。
@@ -317,7 +326,13 @@ npm publish               # 发布到 npm registry
   此时 `zju_read_browser_cookie` 会明确返回"请完全退出 Edge 后重试"，而不是含糊地说"未登录"。
   新版 Edge 的 v20 应用绑定加密在部分系统上仍可能无法本地解密，可改用 `ZJU_COOKIE_FILE`。
 - **PDF 课件**需要可选依赖 `pypdf`（`pip install pypdf`）；其余格式零依赖。
-- **SSL**：本机根证书不全时请求会失败并提示安装 `certifi`；插件**不会**为了"能跑"而关闭证书校验。
+- **SSL / 代理**：信任库按 `certifi` → 随包 `cacert.pem` → 系统根证书 回落，所以 dsh 自带的无 certifi
+  解释器也能正常握手；真正会失败的是**代理做了 HTTPS 解密**或**系统时间偏差过大**。错误消息会给出当前
+  信任库、CA 张数、代理环境变量与具体修法（把 `classroom.zju.edu.cn` 设为直连或放进 `NO_PROXY`）。
+  插件**不会**为了"能跑"而关闭证书校验。瞬时抖动（截断读包、握手 EOF、超时、5xx）已内置 3 次退避重试。
+- **同名 Skill 的磁盘副本会抢名字**：若 `$DSH_HOME/skills/zju-lecture-summarizer/` 下还留着一份旧副本，
+  一个名字只保留一份、重复的仅打 warning，Agent 可能一直读那份过期 SOP。插件启动时会在 stderr
+  明确告警并给出删除路径。
 - **git 历史**：历史中已有的个人路径/密钥不会因为当前文件干净而消失；
   用 `python tools/privacy_scan.py --history` 检查，必要时重写历史并轮换凭证。
 - **形态别选错**：`tools/build_plugin.py` 产出的是 **MCode 插件包**；装进 dsh 用的是本仓库根目录的

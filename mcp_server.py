@@ -56,7 +56,7 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.3.2"
+SERVER_VERSION = "1.3.3"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -399,10 +399,14 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                 "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
             )
 
-        slides_data = fetch_slides(sub_id, tenant, cookie)
+        diagnostics: List[str] = []
+        slides_data = fetch_slides(sub_id, tenant, cookie, diagnostics=diagnostics)
         if not slides_data:
+            reason = "\n".join(f"- {item}" for item in diagnostics) or "- 未获得具体原因"
             return (
-                "未抓取到 PPT 记录。可能原因：\n"
+                "未抓取到 PPT 记录。\n"
+                f"诊断：\n{reason}\n"
+                "其余可能原因：\n"
                 "1. 登录 Cookie 无效或已过期\n"
                 "2. 老师授课时未通过智云课堂课件系统同步投影\n"
                 "（流水线可平滑降级，仅依赖语音字幕完成讲义生成）"
@@ -437,9 +441,16 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                 f"{cookie_error or '请退出 Edge 后重试，或在宿主配置里设置 ZJU_COOKIE。'}"
             )
 
-        mp4_url = fetch_video_url(course_id, sub_id, tenant, cookie)
+        video_diagnostics: List[str] = []
+        mp4_url = fetch_video_url(
+            course_id, sub_id, tenant, cookie, diagnostics=video_diagnostics
+        )
         if not mp4_url:
-            return f"未能获取到 MP4 视频直链 (sub_id={sub_id}, course_id={course_id})"
+            reason = "\n".join(f"- {item}" for item in video_diagnostics) or "- 未获得具体原因"
+            return (
+                f"未能获取到 MP4 视频直链 (sub_id={sub_id}, course_id={course_id})\n"
+                f"诊断：\n{reason}"
+            )
 
         return json.dumps(
             {"sub_id": sub_id, "course_id": course_id, "video_url": mp4_url},

@@ -28,6 +28,15 @@
   TLS 校验不降级、同域重定向限制、本地文件敏感路径拒绝、`tools/privacy_scan.py` 发布闸门。
   设计说明见 [`SECURITY.md`](SECURITY.md)。
 
+## 第三方数据：随包 CA 证书库
+
+| 文件 | 来源 | 许可 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `zju_lecture/cacert.pem` | [`certifi`](https://github.com/certifi/python-certifi) 的 `cacert.pem`，其上游是 [Mozilla CA Certificate Program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/) 根证书库 | Mozilla Public License 2.0 | 原样复制（仅在文件头追加来源注释），作为 `certifi` 缺失时的信任库兜底。dsh 自带的 Python 解释器不含 certifi，没有这份文件时在根证书不全的机器上会 `CERTIFICATE_VERIFY_FAILED`。刷新方式见 `tools/refresh_ca_bundle.py`。 |
+
+> 该文件只包含**公开的根证书**，不含任何私钥、站点证书或个人信息；它不会关闭 TLS 校验，
+> 只是把信任库从"用户碰巧装了什么"变成"随包可复现"。
+
 ## 声明
 
 本项目仅供个人学习使用：抓取的是本人有权限访问的课程回放，频率极低。请遵守
