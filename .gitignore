@@ -30,3 +30,8 @@ output/
 cookie*.txt
 *zju-cookie*
 edge-cookies-*
+
+# 本机工作区笔记 / 插件生成的讲义（留在本地，不进仓库）
+/AGENTS.md
+/知识总结*.md
+
