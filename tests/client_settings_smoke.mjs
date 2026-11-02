@@ -97,10 +97,12 @@ const ctx = {
 module.apply(ctx)
 
 const settingsSlot = registered.find((entry) => entry.kind === 'slot')
-if (!settingsSlot) throw new Error('settings.general.item was not registered')
-if (settingsSlot.registration.name !== 'settings.general.item') throw new Error('wrong slot name')
-if (settingsSlot.registration.id !== 'dsh-zju-lecture-note') throw new Error('wrong settings row id')
-if (typeof settingsSlot.registration.locale !== 'string') throw new Error('settings row has no locale')
+if (!settingsSlot) throw new Error('settings.section was not registered')
+if (settingsSlot.registration.name !== 'settings.section') throw new Error('wrong slot name')
+if (settingsSlot.registration.id !== 'zju-lecture') throw new Error('wrong settings section id')
+if (settingsSlot.registration.order !== 25) throw new Error('wrong settings section order')
+if (typeof settingsSlot.registration.label !== 'function') throw new Error('settings section label must be localized')
+if (typeof settingsSlot.registration.locale !== 'string') throw new Error('settings section has no locale')
 
 const face = settingsSlot.registration.inject()
 if (!face || !face.settings) throw new Error('settings row inject face is missing the controller')

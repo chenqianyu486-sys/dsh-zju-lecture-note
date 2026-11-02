@@ -257,10 +257,11 @@ class TestGuiSettingsPage(unittest.TestCase):
                 f"{field} 必须标记 .volatile()，否则不会出现在设置表单里",
             )
 
-    def test_client_registers_a_general_settings_row(self):
+    def test_client_registers_a_separate_settings_section(self):
         source = read_text("lib", "client.js")
         for needle in (
-            "settings.general.item",
+            "settings.section",
+            "sectionTitle",
             "configForms",
             "useEffect",
             "role: 'switch'",
@@ -269,6 +270,7 @@ class TestGuiSettingsPage(unittest.TestCase):
             "embedSlideImages",
         ):
             self.assertIn(needle, source)
+        self.assertNotIn("settings.general.item", source)
         self.assertIn("window.__ModuleLoader__.load", source)
 
     def test_client_settings_smoke(self):
@@ -283,7 +285,9 @@ class TestGuiSettingsPage(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout.strip())
         self.assertTrue(payload.get("ok"), payload)
-        self.assertEqual(payload["slot"], "settings.general.item")
+        self.assertEqual(payload["slot"], "settings.section")
+        self.assertEqual(payload["rowId"], "zju-lecture")
+        self.assertEqual(payload["order"], 25)
         self.assertIn("configForms", payload["services"])
         self.assertEqual(payload["calls"], [["enableSlides", True]])
 

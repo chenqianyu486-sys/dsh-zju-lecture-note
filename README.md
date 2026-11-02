@@ -119,12 +119,12 @@ v1.5.1 起，原本「仅依赖字幕、已实测跑通」的链路与「依赖�
 
 总开关关闭（默认）时只走字幕，不下载截图、不读浏览器 Cookie、不追加投影 Skill 附录，成本最低。
 
-- **dsh**：打开 **设置 → 通用**，找到「浙大智云课堂讲义」这一行，打开「启用 PPT 投影抓取」
-  （`enableSlides`）；需要插图再打开「把截图引用进讲义」（`embedSlideImages`）。
-  设置通过 dsh 的 `configForms` 写回 profile 配置，保存后插件会按新配置重新加载。
-  **首次安装或更新后如果看不到这一行，请完全重启 DeepSeek Harness（不是只刷新页面）**：
-  dsh 在启动时缓存每个包的 `dsh.client` 元数据，新增的浏览器半边只有在重启后才会进入
-  Client 模块图。
+- **dsh**：打开 **设置**，在左侧导航选择 **「浙大智云课堂讲义」**（独立一栏，不占通用设置），
+  打开「启用 PPT 投影抓取」（`enableSlides`）；需要插图再打开「把截图引用进讲义」
+  （`embedSlideImages`）。设置通过 dsh 的 `configForms` 写回 profile 配置，保存后插件会按
+  新配置重新加载。**首次安装或更新后如果看不到这一栏，请完全重启 DeepSeek Harness
+  （不是只刷新页面）**：dsh 在启动时缓存每个包的 `dsh.client` 元数据，新增的浏览器半边
+  只有在重启后才会进入 Client 模块图。
 - **MCP / MiniMax Code**：在 server env 中设 `ZJU_ENABLE_SLIDES=1`，需要插图时再加
   `ZJU_EMBED_SLIDES=1`（仓库自带的 `zju-lecture.mcp.json` 两个都是 `0`）：
 
@@ -445,13 +445,14 @@ npm publish               # 发布到 npm registry
   关闭时 Agent 不会看到投影工具的操作指南。
 - **两层次开关**：`enableSlides` 是总开关，`embedSlideImages` 是「截图是否入讲义」子开关；
   总开关关闭时子开关无效，避免出现「开了插图却抓不到投影」的误解。
-- **图形化设置**：dsh 不会自动渲染插件 `Config`。新增浏览器半边 `lib/client.js`，在
-  **设置 → 通用** 注册「浙大智云课堂讲义」行；`enableSlides` / `embedSlideImages` 标记为
-  Schemastery `.volatile()`，通过共享 `configForms` 服务读写并带 revision 校验。
-  `package.json` 增加 `dsh.client`（`./client` 导出、`platform: web`）。
+- **图形化设置**：dsh 不会自动渲染插件 `Config`。新增浏览器半边 `lib/client.js`，通过
+  `settings.section` 在设置左侧导航注册独立的 **「浙大智云课堂讲义」** 一栏（不塞进通用设置）；
+  `enableSlides` / `embedSlideImages` 标记为 Schemastery `.volatile()`，通过共享
+  `configForms` 服务读写并带 revision 校验。`package.json` 增加 `dsh.client`
+  （`./client` 导出、`platform: web`）。
 - 新增 `tests/test_feature_decoupling_v151.py`：覆盖环境变量、工具过滤、RPC 错误、
   字幕链路在关闭状态下可用、纯字幕进程不加载 slides 模块、Skill/清单/MCP 配置一致性；
-  另含浏览器设置行的注册冒烟（`tests/client_settings_smoke.mjs`）。
+  另含浏览器独立设置栏的注册冒烟（`tests/client_settings_smoke.mjs`）。
 
 ## 1.5.0 智云投影 PPT 读取与讲义插图
 
