@@ -2,7 +2,7 @@
 
 > 面向 **DeepSeek Harness（dsh）** 与任意 **MCP 宿主**：把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放
 > 变成一份可复习、结构化、**能正常渲染**的讲义。
-> 语音字幕 + 课堂投影 PPT + 本地课件，交给宿主智能体做知识蒸馏。
+> **语音字幕 + 本地课件**是默认主链路；课堂投影 PPT 截图是**可选模块**，需要时在插件界面一键打开。
 > **字幕接口公开免登录**；核心只用 Python 标准库（PDF 课件另需可选的 `pypdf`）。
 >
 > **隐私优先**：登录 Cookie 只进入本地进程内存，工具不收、不回显、不落盘、不写日志；
@@ -39,7 +39,27 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | **dsh 原生插件** | 本仓库根目录的 npm 包（`package.json` + `cordis.patch.yml` + `lib/`），随包携带 Python 核心 | DeepSeek Harness 用户 |
 | **标准 MCP + Skill** | `server.mjs` 拉起一个 stdio MCP Server，附带 `skills/` 里的讲义 SOP | 任意 MCP 宿主（MiniMax Code、Claude Code、Cursor、Cline…） |
 
-无论从哪种形态安装，Agent 看到的都是下面这 8 个工具。
+- **dsh**：默认注册 **7 个工具**（字幕主链路 + 登录辅助）；在插件设置里打开
+  **「启用 PPT 投影抓取」** 后额外注册 `zju_fetch_slides`，共 **8 个工具**。
+- **MCP**：未设置 `ZJU_ENABLE_SLIDES` 时保持旧行为（8 个）；设 `0` 关闭，仓库自带的
+  `zju-lecture.mcp.json` 默认就是 `0`（7 个）。
+
+## 功能分层：字幕主链路 vs 可选投影抓取
+
+v1.5.1 起，原本「仅依赖字幕、已实测跑通」的链路与「依赖投影 PPT 抓取」的链路彻底解耦：
+
+| 分层 | 工具 | 依赖 | 默认 |
+| :--- | :--- | :--- | :--- |
+| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note` | 公开字幕接口 + 本地文件，**无需登录态** | 始终开启 |
+| **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie` | 本机 Edge 或 `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 可用，但不会主动读取 |
+| **投影抓取（可选）** | `zju_fetch_slides` | 登录态 + 截图下载 + PDF 合成 | **关闭**，需显式开启 |
+
+- dsh 插件设置项 **`enableSlides`**（默认 `false`）是投影模块的总开关；MCP 宿主用
+  **`ZJU_ENABLE_SLIDES`**（未设置时保持旧版行为，设为 `0` 即关闭）。
+- 关闭时：不注册 `zju_fetch_slides`、不加载 `zju_lecture.slides` 模块、不读浏览器 Cookie、
+  Skill 不追加投影附录；系统提示会明确告诉 Agent「投影抓取已关闭」。
+- 开启后才会追加 `skills/zju-lecture-summarizer/SLIDES.md` 的投影下载与插图规范，
+  讲义插图子开关 **`embedSlideImages`**（默认 `false`）才生效。
 
 ## 隐私与安全（先看）
 
@@ -73,7 +93,7 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 | :--- | :--- | :--- | :--- |
 | `zju_parse_url` | 解析回放链接，取 `sub_id` / `course_id` / `tenant_code` | 公开 | 纯字符串解析 |
 | `zju_fetch_transcript` | 抓整节课或指定时间段的语音字幕，支持按分钟/逐句/分块/JSON 四种视图与字符上限 | **公开免登录** | 无 Cookie |
-| `zju_fetch_slides` | 抓取课堂投影 PPT **截图清单**；可选下载截图并合成 PDF（接口不返回文字层/OCR）；可开关是否把截图引用进讲义 | 需登录态（Cookie 需含 `_token`） | 不收/不回显 Cookie |
+| `zju_fetch_slides` | **（可选模块，默认关闭）** 抓取课堂投影 PPT **截图清单**；可选下载截图并合成 PDF（接口不返回文字层/OCR）；可开关是否把截图引用进讲义 | 需登录态（Cookie 需含 `_token`） | 不收/不回显 Cookie |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 本地文件 | 拒绝敏感路径 |
 | `zju_check_note` | 检查讲义 Markdown 的公式规范与渲染（一键修复机械问题；报告按问题类型聚合） | 本地文件 | 只接受 `.md` / `.markdown` |
 | `zju_write_note` | 写入讲义：文件名由 Agent 按「上课日期 + 本节内容」命名（如 `知识总结-2026-10-28-复变函数-保角映射.md`）、拒绝静默覆盖、写前修正 + 写后校验 | 本地文件 | 只写工作区内的 `.md` |
@@ -86,18 +106,30 @@ Python 脚本 + 本地网页 + 写死的 DeepSeek key 完成"链接 → 讲义"�
 > 连续字节相同的截图折叠为一页）。只传纯 `sub_id` 时必须同时给 `course_id`；
 > 鉴权使用 Cookie 父域 `.zju.edu.cn` 中的 `_token`（`Authorization: Bearer`）。
 
-### 讲义中引用投影截图（可选，默认关闭）
+### 启用投影抓取与讲义插图（可选，默认关闭）
 
-打开这个开关后，Agent 会把截图下载到 `ppt-assets/<sub_id>/images/`，并从中挑 **3–8 张**关键页，
-以 Markdown 相对路径插进讲义对应的小节，复习时不用来回切回放。默认关闭：整节课的截图下载较慢，
-让视觉模型看截图也会明显增加 token；不需要插图时只走字幕，成本最低。
+投影模块有两层开关，**先开总开关，再决定要不要插图**：
 
-- **dsh**：插件设置 `embedSlideImages: true`。
-- **MCP / MiniMax Code**：在 server env 中设 `ZJU_EMBED_SLIDES=1`（仓库自带的
-  `zju-lecture.mcp.json` 默认是 `0`）：
+1. **`enableSlides`（dsh）/ `ZJU_ENABLE_SLIDES`（MCP）——总开关，默认关闭**。
+   打开后才会注册 `zju_fetch_slides`，并加载截图下载/PDF 合成代码；关闭时整个投影模块
+   不存在，字幕主链路不受任何影响。
+2. **`embedSlideImages`（dsh）/ `ZJU_EMBED_SLIDES`（MCP）——插图子开关，默认关闭**。
+   仅在总开关打开时有意义；打开后 Agent 会把截图下载到 `ppt-assets/<sub_id>/images/`，
+   并从中挑 **3–8 张**关键页，以 Markdown 相对路径插进讲义对应小节。
+
+总开关关闭（默认）时只走字幕，不下载截图、不读浏览器 Cookie、不追加投影 Skill 附录，成本最低。
+
+- **dsh**：打开 **设置 → 通用**，找到「浙大智云课堂讲义」这一行，打开「启用 PPT 投影抓取」
+  （`enableSlides`）；需要插图再打开「把截图引用进讲义」（`embedSlideImages`）。
+  设置通过 dsh 的 `configForms` 写回 profile 配置，保存后插件会按新配置重新加载。
+  **首次安装或更新后如果看不到这一行，请完全重启 DeepSeek Harness（不是只刷新页面）**：
+  dsh 在启动时缓存每个包的 `dsh.client` 元数据，新增的浏览器半边只有在重启后才会进入
+  Client 模块图。
+- **MCP / MiniMax Code**：在 server env 中设 `ZJU_ENABLE_SLIDES=1`，需要插图时再加
+  `ZJU_EMBED_SLIDES=1`（仓库自带的 `zju-lecture.mcp.json` 两个都是 `0`）：
 
   ```json
-  "env": { "ZJU_EMBED_SLIDES": "1" }
+  "env": { "ZJU_ENABLE_SLIDES": "1", "ZJU_EMBED_SLIDES": "1" }
   ```
 - **CLI**：`python -m zju_lecture.cli slides <url> --download` 只负责下载截图与 PDF；
   是否把图片写进讲义由 Agent 按上面的开关决定。
@@ -163,8 +195,9 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > **版本要求**：dsh 会按 `peerDependencies` 中的 `@deepseek-ai/dsh-*` 范围校验运行时版本；
 > 本插件声明 `>=0.2.0-rc.2 <0.3.0-0`，不匹配时需要显式的版本豁免。
 > **Python 探测顺序**：插件配置项 → 环境变量 `ZJU_PYTHON` → DeepSeek Harness 自带 Python → PATH 上的 `python3` / `python` / `py -3`。
-> **讲义插图开关**：dsh 设置项 `embedSlideImages`（默认 `false`）；MCP 宿主用环境变量 `ZJU_EMBED_SLIDES=1`。
-> 开启后 Agent 会下载截图并挑 3–8 张关键页插进讲义；关闭时只走字幕，省时间与 token。
+> **投影抓取开关**：dsh 设置项 `enableSlides`（默认 `false`，投影模块总开关）；
+> MCP 宿主用环境变量 `ZJU_ENABLE_SLIDES=1`。需要把截图插进讲义时，再打开子开关
+> `embedSlideImages` / `ZJU_EMBED_SLIDES=1`。关闭时只走字幕，不注册投影工具、不读登录态。
 
 **登录态（可选，仅投影 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
 且 Edge 127+ 若启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密其 v20 Cookie，这时会直接
@@ -396,6 +429,30 @@ npm publish               # 发布到 npm registry
 > dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 > `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
+## 1.5.1 字幕主链路与投影抓取解耦
+
+- **新增总开关**：dsh 插件设置 `enableSlides`（默认 `false`）与 MCP 环境变量
+  `ZJU_ENABLE_SLIDES`。关闭时 `zju_fetch_slides` 不注册、不读登录态、不下载截图；
+  字幕主链路（`zju_fetch_transcript` 等）完全不受影响。MCP 宿主未设置该变量时保持旧行为
+  （开启），设 `0` 即关闭；仓库自带的 `zju-lecture.mcp.json` 默认 `0`。
+- **代码层解耦**：`zju_lecture/__init__.py` 用 PEP 562 懒加载 `download_slides` /
+  `build_slides_pdf` / `SlideError`；`mcp_server.py` 只在进入 `zju_fetch_slides` 分支时才导入
+  `zju_lecture.slides`。纯字幕进程的 `sys.modules` 里不会出现截图/PDF 模块。
+- **协议层解耦**：`tools/list` 与 `initialize.instructions` 按开关动态输出；关闭时即使客户端
+  直接调用 `zju_fetch_slides`，也会得到可执行的「投影抓取未启用 + 如何开启」错误。
+- **Skill 拆分**：`SKILL.md` 只保留字幕主链路；投影下载与插图规范移到
+  `skills/zju-lecture-summarizer/SLIDES.md`，dsh 插件仅在 `enableSlides=true` 时追加到内存 Skill。
+  关闭时 Agent 不会看到投影工具的操作指南。
+- **两层次开关**：`enableSlides` 是总开关，`embedSlideImages` 是「截图是否入讲义」子开关；
+  总开关关闭时子开关无效，避免出现「开了插图却抓不到投影」的误解。
+- **图形化设置**：dsh 不会自动渲染插件 `Config`。新增浏览器半边 `lib/client.js`，在
+  **设置 → 通用** 注册「浙大智云课堂讲义」行；`enableSlides` / `embedSlideImages` 标记为
+  Schemastery `.volatile()`，通过共享 `configForms` 服务读写并带 revision 校验。
+  `package.json` 增加 `dsh.client`（`./client` 导出、`platform: web`）。
+- 新增 `tests/test_feature_decoupling_v151.py`：覆盖环境变量、工具过滤、RPC 错误、
+  字幕链路在关闭状态下可用、纯字幕进程不加载 slides 模块、Skill/清单/MCP 配置一致性；
+  另含浏览器设置行的注册冒烟（`tests/client_settings_smoke.mjs`）。
+
 ## 1.5.0 智云投影 PPT 读取与讲义插图
 
 - `zju_fetch_slides` 按真实接口修正：从 Cookie 父域 `.zju.edu.cn` 会话中解析 `_token` 并加
@@ -465,6 +522,9 @@ npm publish               # 发布到 npm registry
 
 ## 已知限制
 
+- **投影抓取默认关闭**：dsh 的 `enableSlides` 默认 `false`，所以升级后默认看不到
+  `zju_fetch_slides`；需要投影时在插件设置里打开，或给 MCP server 设
+  `ZJU_ENABLE_SLIDES=1`（仓库自带的 `zju-lecture.mcp.json` 保持 `0`）。字幕主链路不受影响。
 - **只解压 zip 就启用 → `Cannot find package '@deepseek-ai/schemastery'`**：
   它是 peer 依赖，由 pnpm 在 `dsh plugin add` 时装进 profile 的 `node_modules`，
   解压出来的目录里没有，所以直接加载会失败。

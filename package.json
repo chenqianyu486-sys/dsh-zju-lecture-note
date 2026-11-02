@@ -1,7 +1,7 @@
 {
   "name": "dsh-zju-lecture-note",
-  "version": "1.5.0",
-  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：抓语音字幕 / 投影 PPT / 本地课件，产出带时间戳、可渲染的结构化复习讲义；Cookie 只在本地内存中使用，不回显、不落盘",
+  "version": "1.5.1",
+  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，可选启用投影 PPT 截图抓取；产出带时间戳、可渲染的结构化复习讲义；Cookie 只在本地内存中使用，不回显、不落盘",
   "license": "MIT",
   "author": "chenqianyu486",
   "icon": "icon.png",
@@ -30,6 +30,7 @@
   "main": "./lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
@@ -51,6 +52,14 @@
     "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
     }
   },
   "scripts": {

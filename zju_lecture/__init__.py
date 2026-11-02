@@ -29,7 +29,6 @@ from .paths import (
     note_target,
     resolve_path,
 )
-from .slides import SlideError, build_slides_pdf, download_slides
 from .formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -49,6 +48,28 @@ from .security import (
     mask_cookie_header,
     sanitize_cookie_header,
 )
+
+# The projection pipeline is an optional feature: importing this package (for
+# example just to fetch a transcript) must not load the screenshot/PDF module.
+# The public names stay importable through PEP 562 lazy attributes, so
+# ``from zju_lecture import download_slides`` still works and only then pulls
+# in ``zju_lecture.slides``.
+_LAZY_EXPORTS = {
+    "SlideError": ".slides",
+    "build_slides_pdf": ".slides",
+    "download_slides": ".slides",
+}
+
+
+def __getattr__(name: str):
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from importlib import import_module
+
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "BASE_URL",

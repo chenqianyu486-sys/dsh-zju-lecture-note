@@ -8,9 +8,10 @@
         "./server.mjs"
       ],
       "env": {
+        "ZJU_ENABLE_SLIDES": "0",
         "ZJU_EMBED_SLIDES": "0"
       },
-      "description": "提供浙大智云课堂回放的字幕、投影 PPT、课件文本与视频直链提取工具。设置 ZJU_EMBED_SLIDES=1 可让 Agent 在讲义中引用投影截图（默认关闭，节省 token）。",
+      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放。投影 PPT 截图抓取是可选的独立模块：设置 ZJU_ENABLE_SLIDES=1 才会启用 zju_fetch_slides（默认 0，纯字幕链路不需要登录态）；再设 ZJU_EMBED_SLIDES=1 可让 Agent 在讲义中引用投影截图（默认 0，节省 token）。",
       "timeout": 120000
     }
   }

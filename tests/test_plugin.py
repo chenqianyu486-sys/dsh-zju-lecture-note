@@ -59,6 +59,23 @@ import mcp_server
 from mcp_server import TOOLS, handle_request, handle_tool_call
 
 
+# This module covers the full tool surface, including the optional projection
+# pipeline. Pin the feature gate so an ambient ZJU_ENABLE_SLIDES=0 cannot turn
+# those tests into false failures.
+_PREVIOUS_SLIDES_GATE = os.environ.get("ZJU_ENABLE_SLIDES")
+
+
+def setUpModule():
+    os.environ["ZJU_ENABLE_SLIDES"] = "1"
+
+
+def tearDownModule():
+    if _PREVIOUS_SLIDES_GATE is None:
+        os.environ.pop("ZJU_ENABLE_SLIDES", None)
+    else:
+        os.environ["ZJU_ENABLE_SLIDES"] = _PREVIOUS_SLIDES_GATE
+
+
 class TestFormatters(unittest.TestCase):
 
     def test_parse_lecture_url(self):

@@ -53,7 +53,6 @@ from zju_lecture.paths import (
     note_target,
     resolve_path,
 )
-from zju_lecture.slides import build_slides_pdf, download_slides
 from zju_lecture.formatter import (
     build_transcript_views,
     chunk_transcript,
@@ -73,7 +72,7 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.5.0"
+SERVER_VERSION = "1.5.1"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -86,35 +85,97 @@ COOKIE_ENV = "ZJU_COOKIE"
 COOKIE_FILE_ENV = "ZJU_COOKIE_FILE"
 _MAX_COOKIE_FILE_BYTES = 64 * 1024
 
-#: Opt-in: download projected-slide screenshots and reference them in the
-#: note. Off by default because it adds download time and vision tokens.
+#: Sub-switch of the projection pipeline: download projected-slide screenshots
+#: and reference them in the note. Off by default because it adds download
+#: time and vision tokens.
 EMBED_SLIDES_ENV = "ZJU_EMBED_SLIDES"
+#: Master switch for the optional projection pipeline. The dsh plugin always
+#: exports 0/1 from its own setting; plain MCP hosts keep the pre-1.5.1
+#: behaviour (enabled) unless they explicitly set 0.
+SLIDES_ENABLED_ENV = "ZJU_ENABLE_SLIDES"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+#: Tools that depend on the projection pipeline. They are left out of
+#: ``tools/list`` when the feature is off, so a transcript-only host never
+#: sees a tool it cannot use (or its login/cookie requirement).
+SLIDES_TOOL_NAMES = ("zju_fetch_slides",)
+
+
+class SlidesDisabledError(Exception):
+    """Raised when a projection tool is called while the feature is off."""
+
+
+def slides_enabled() -> bool:
+    """Whether the optional projection (PPT screenshot) pipeline is enabled.
+
+    The transcript pipeline is always available and never consults this
+    switch; only ``zju_fetch_slides`` and the slide-image embedding are gated.
+    """
+    raw = str(os.environ.get(SLIDES_ENABLED_ENV, "")).strip().lower()
+    if raw in _TRUE_VALUES:
+        return True
+    if raw in _FALSE_VALUES:
+        return False
+    return True  # MCP default: keep the pre-1.5.1 behaviour
+
+
+def available_tools() -> List[Dict[str, Any]]:
+    """TOOLS after feature gates, as advertised by ``tools/list``."""
+    if slides_enabled():
+        return TOOLS
+    return [tool for tool in TOOLS if tool["name"] not in SLIDES_TOOL_NAMES]
 
 
 def embed_slides_enabled() -> bool:
-    """Whether the host asked for projected-slide images in the note."""
+    """Whether the host asked for projected-slide images in the note.
+
+    This is the note-illustration sub-switch only; the projection pipeline
+    itself is gated by :func:`slides_enabled` at the call sites.
+    """
     return str(os.environ.get(EMBED_SLIDES_ENV, "")).strip().lower() in _TRUE_VALUES
 
 
-SLIDE_IMAGE_MODE_TEXT = (
-    "讲义插图模式：开启。需要投影画面时调用 zju_fetch_slides(download=true)，"
-    "从返回的截图里挑 3–8 张关键页，按讲义所在目录的相对路径插入 Markdown；"
-    "模型不能查看本地图片时，只在文末列截图索引，不要臆造截图内容。"
-    if embed_slides_enabled()
-    else "讲义插图模式：关闭（默认，节省下载时间与 token）。"
-    "用户明确要求插图时再调用 zju_fetch_slides(download=true)。"
-)
+def slide_image_mode_text() -> str:
+    """One sentence describing the note-illustration mode for this process."""
+    if not slides_enabled():
+        return "投影抓取已关闭，讲义只使用字幕与本地课件。"
+    if embed_slides_enabled():
+        return (
+            "讲义插图模式：开启。需要投影画面时调用 zju_fetch_slides(download=true)，"
+            "从返回的截图里挑 3–8 张关键页，按讲义所在目录的相对路径插入 Markdown；"
+            "模型不能查看本地图片时，只在文末列截图索引，不要臆造截图内容。"
+        )
+    return (
+        "讲义插图模式：关闭（默认，节省下载时间与 token）。"
+        "用户明确要求插图时再调用 zju_fetch_slides(download=true)。"
+    )
 
-SERVER_INSTRUCTIONS = (
-    "提供浙大智云课堂（classroom.zju.edu.cn）回放的字幕、投影 PPT 截图与课件文本提取。"
-    "字幕接口公开免登录；投影截图（可下载并合成 PDF）与视频直链需要登录态（Cookie 需含 _token）。"
-    "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
-    "长课程请使用 view_format=chunked 分批处理。"
-    "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
-    "相对路径按当前工作区（ZJU_WORKSPACE）解析。"
-    + SLIDE_IMAGE_MODE_TEXT
-)
+
+def server_instructions() -> str:
+    """MCP initialize instructions, reflecting the current feature gate."""
+    if slides_enabled():
+        slides_boundary = (
+            "投影截图（可下载并合成 PDF）与视频直链需要登录态（Cookie 需含 _token）；"
+            "投影抓取可用 ZJU_ENABLE_SLIDES=0 关闭。"
+        )
+    else:
+        slides_boundary = (
+            "投影抓取已关闭（ZJU_ENABLE_SLIDES=0）：本次只提供「语音字幕 + 本地课件」链路，"
+            "不读取登录态、不下载投影截图，zju_fetch_slides 也不会出现在工具列表里。"
+            "需要投影截图时，在 dsh 插件设置里打开「启用 PPT 投影抓取」（enableSlides），"
+            "或给 MCP server 设置环境变量 ZJU_ENABLE_SLIDES=1 后重启。"
+        )
+    return (
+        "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取，"
+        "可选提供投影 PPT 截图。字幕接口公开免登录。"
+        + slides_boundary
+        + "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
+        "长课程请使用 view_format=chunked 分批处理。"
+        "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
+        "相对路径按当前工作区（ZJU_WORKSPACE）解析。"
+        + slide_image_mode_text()
+    )
 
 # Cookies read from the local browser are kept here instead of being handed
 # back to the model as plaintext.
@@ -307,6 +368,8 @@ TOOLS: List[Dict[str, Any]] = [
             "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是"
             "投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时"
             "请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。"
+            "本工具属于可选的「投影抓取」模块：dsh 插件设置 enableSlides / "
+            "环境变量 ZJU_ENABLE_SLIDES 关闭时不会注册本工具（默认关闭）。"
             "是否把截图引用进讲义由插件设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES 控制"
             "（默认关闭，节省下载时间与 token）。"
             "接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、"
@@ -704,6 +767,18 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         return _truncate(header + "\n" + per_min, max_chars)
 
     if name == "zju_fetch_slides":
+        if not slides_enabled():
+            raise SlidesDisabledError(
+                "PPT 投影抓取未启用（ZJU_ENABLE_SLIDES=0）：本进程只提供「语音字幕 + "
+                "本地课件」链路，不读取登录态、不下载投影截图。\n"
+                "需要投影截图时：dsh 插件设置里打开「启用 PPT 投影抓取」（enableSlides），"
+                "或给 MCP server 设置环境变量 ZJU_ENABLE_SLIDES=1 后重启；"
+                "不需要时直接继续用 zju_fetch_transcript 的字幕生成讲义即可。"
+            )
+        # Imported lazily so a transcript-only process never loads the
+        # screenshot/PDF pipeline (and its auth surface) at all.
+        from zju_lecture.slides import build_slides_pdf, download_slides
+
         parsed = parse_lecture_url(str(arguments.get("url_or_sub_id", "")))
         sub_id = parsed["sub_id"]
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
@@ -986,7 +1061,8 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                 **info,
                 "note": (
                     "登录态已缓存在 MCP 服务端内存中，明文未回显；"
-                    "后续 zju_fetch_slides / zju_get_video_url 会自动使用。"
+                    "后续需要登录态的工具（如 zju_get_video_url，投影抓取开启时还有 "
+                    "zju_fetch_slides）会自动使用。"
                 ),
             },
             ensure_ascii=False,
@@ -1048,7 +1124,7 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "protocolVersion": params.get("protocolVersion") or "2024-11-05",
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
-                "instructions": SERVER_INSTRUCTIONS,
+                "instructions": server_instructions(),
             },
         }
 
@@ -1056,14 +1132,14 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return {"jsonrpc": "2.0", "id": req_id, "result": {}}
 
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": available_tools()}}
 
     if method == "tools/call":
         tool_name = params.get("name")
         tool_args = params.get("arguments") or {}
         try:
             payload = handle_tool_call(tool_name, tool_args)
-        except (ZJUAPIError, CoursewareError, CookieAccessError) as exc:
+        except (ZJUAPIError, CoursewareError, CookieAccessError, SlidesDisabledError) as exc:
             message_text = REDACTOR.redact(str(exc))
             _log(f"{tool_name}: {message_text}")
             return {"jsonrpc": "2.0", "id": req_id, "result": _tool_error(message_text)}
@@ -1106,12 +1182,12 @@ def main() -> None:
         print("URL parsing test:", parse_lecture_url(
             "https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456&tenant_code=112"
         ))
-        print("Tools loaded:", [t["name"] for t in TOOLS])
+        print("Tools loaded:", [t["name"] for t in available_tools()])
         print("Ready for MCP stdio connection.")
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "--list-tools":
-        print(json.dumps(TOOLS, ensure_ascii=False, indent=2))
+        print(json.dumps(available_tools(), ensure_ascii=False, indent=2))
         return
 
     for line in sys.stdin:

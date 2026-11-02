@@ -27,7 +27,6 @@ from .formatter import (
 )
 from .paths import artifact_dir
 from .security import describe_cookie, sanitize_cookie_header
-from .slides import build_slides_pdf, download_slides
 
 
 def _read_cookie_file(path: str) -> str:
@@ -189,6 +188,10 @@ def main():
                 print(output)
 
         elif args.command == "slides":
+            # Optional module: keep transcript-only CLI invocations free of the
+            # screenshot/PDF pipeline.
+            from .slides import build_slides_pdf, download_slides
+
             parsed = parse_lecture_url(args.url)
             sub_id = parsed["sub_id"]
             tenant = parsed.get("tenant_code", "112")

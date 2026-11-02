@@ -64,6 +64,22 @@ def _read_bytes(path: str) -> bytes:
         return handle.read()
 
 
+# Slide-pipeline tests require the optional projection gate to be on; pin it
+# so an ambient ZJU_ENABLE_SLIDES=0 cannot make this module fail wholesale.
+_PREVIOUS_SLIDES_GATE = os.environ.get("ZJU_ENABLE_SLIDES")
+
+
+def setUpModule():
+    os.environ["ZJU_ENABLE_SLIDES"] = "1"
+
+
+def tearDownModule():
+    if _PREVIOUS_SLIDES_GATE is None:
+        os.environ.pop("ZJU_ENABLE_SLIDES", None)
+    else:
+        os.environ["ZJU_ENABLE_SLIDES"] = _PREVIOUS_SLIDES_GATE
+
+
 class TestClassroomToken(unittest.TestCase):
     def test_php_serialized_token_is_extracted(self):
         self.assertEqual(client_module.extract_classroom_token(_token_cookie()), "tok-123")
@@ -567,9 +583,9 @@ class TestMcpHandler(unittest.TestCase):
             mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
         ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
                 mock.patch.object(mcp_server, "artifact_dir", return_value=("/tmp/ppt", None)), \
-                mock.patch.object(mcp_server, "download_slides", return_value=summary), \
+                mock.patch.object(slides_module, "download_slides", return_value=summary), \
                 mock.patch.object(
-                    mcp_server, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
+                    slides_module, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
                 ):
             output = mcp_server.handle_tool_call("zju_fetch_slides", {
                 "url_or_sub_id": (
@@ -626,10 +642,10 @@ class TestMcpHandler(unittest.TestCase):
                 ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
                 mock.patch.object(mcp_server, "artifact_dir", return_value=("/tmp/ppt", None)), \
                 mock.patch.object(
-                    mcp_server, "download_slides", return_value=summary
+                    slides_module, "download_slides", return_value=summary
                 ) as download_mock, \
                 mock.patch.object(
-                    mcp_server, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
+                    slides_module, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
                 ):
             output = mcp_server.handle_tool_call("zju_fetch_slides", {
                 "url_or_sub_id": (
@@ -656,7 +672,7 @@ class TestMcpHandler(unittest.TestCase):
                     mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
                 ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
                 mock.patch.object(
-                    mcp_server, "download_slides"
+                    slides_module, "download_slides"
                 ) as download_mock:
             output = mcp_server.handle_tool_call("zju_fetch_slides", {
                 "url_or_sub_id": (

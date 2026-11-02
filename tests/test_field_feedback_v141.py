@@ -68,6 +68,21 @@ def glued_display_blocks(count=30):
 
 # --------------------------------------------------------------------- P1-1
 
+# The slide-failure messages live behind the optional projection gate; pin it
+# so an ambient ZJU_ENABLE_SLIDES=0 cannot hide them from this module.
+_PREVIOUS_SLIDES_GATE = os.environ.get("ZJU_ENABLE_SLIDES")
+
+
+def setUpModule():
+    os.environ["ZJU_ENABLE_SLIDES"] = "1"
+
+
+def tearDownModule():
+    if _PREVIOUS_SLIDES_GATE is None:
+        os.environ.pop("ZJU_ENABLE_SLIDES", None)
+    else:
+        os.environ["ZJU_ENABLE_SLIDES"] = _PREVIOUS_SLIDES_GATE
+
 
 class TestWorkspacePathResolution(unittest.TestCase):
     """A note in the session workspace must be found by its relative name."""

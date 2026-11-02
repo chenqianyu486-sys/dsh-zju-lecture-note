@@ -4,6 +4,10 @@
 这份文档说明插件做了什么、不做什么，以及哪些边界必须由宿主（DeepSeek Harness / MCP 宿主）与用户自己守住。
 
 > 一句话承诺：**Cookie 只进内存，不回显、不落盘、不写日志；本地文件工具不碰凭据与浏览器数据。**
+>
+> v1.5.1 起投影抓取是**可选模块**（dsh 设置 `enableSlides` 默认 `false`；MCP 环境变量
+> `ZJU_ENABLE_SLIDES=0`）：关闭时插件不注册 `zju_fetch_slides`、不加载截图模块、不读取浏览器
+> Cookie，只保留公开免登录的字幕主链路。未开启投影抓取时，本文件中与截图下载相关的边界不适用。
 
 ---
 
@@ -45,7 +49,8 @@
 ## 3. 本地文件边界
 
 `zju_extract_courseware` 与 `zju_check_note` 是唯一读本地文件的工具，
-`zju_write_note` 与 `zju_fetch_slides(download=true)` 是仅有的写本地文件工具：
+`zju_write_note` 与 `zju_fetch_slides(download=true)` 是仅有的写本地文件工具
+（后者仅在投影抓取模块开启时存在）：
 
 - **写入范围**：`zju_write_note` 只能写当前工作区（`ZJU_WORKSPACE` / cwd）内的 `.md`，
   文件名由 `sub_id` + 清洗过的课程简称生成；`directory` 参数跳出工作区会被拒绝；单次内容上限 2 MiB；

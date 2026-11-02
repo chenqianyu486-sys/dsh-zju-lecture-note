@@ -87,7 +87,13 @@ class TestToolDefinitions(unittest.TestCase):
         payload = json.loads(result.stdout.strip())
         self.assertTrue(payload.get("ok"), payload)
         if not payload.get("skipped"):
-            self.assertEqual(len(payload["tools"]), len(TOOLS))
+            # v1.5.1: the projection module is opt-in, so the default
+            # configuration registers the transcript core only.
+            self.assertEqual(len(payload["tools"]), len(TOOLS) - 1)
+            self.assertNotIn("zju_fetch_slides", payload["tools"])
+            self.assertEqual(len(payload["toolsWithSlides"]), len(TOOLS))
+            self.assertIn("zju_fetch_slides", payload["toolsWithSlides"])
+            self.assertTrue(payload["skillHasSlides"])
             self.assertEqual(payload["skill"], "zju-lecture-summarizer")
             self.assertIn("123456", payload["result"])
 
@@ -163,7 +169,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.5.0")
+        self.assertEqual(manifest["version"], "1.5.1")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
