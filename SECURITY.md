@@ -53,7 +53,8 @@
 （后者仅在投影抓取模块开启时存在）：
 
 - **写入范围**：`zju_write_note` 只能写当前工作区（`ZJU_WORKSPACE` / cwd）内的 `.md`，
-  文件名由 `sub_id` + 清洗过的课程简称生成；`directory` 参数跳出工作区会被拒绝；单次内容上限 2 MiB；
+  文件名由 Agent 按「上课日期 + 本节内容」指定（`name`，如 `知识总结-2026-10-28-复变函数-保角映射.md`），
+  缺省才回退到 `知识总结-<sub_id>-<课程简称>.md`；`directory` 参数跳出工作区会被拒绝；单次内容上限 2 MiB；
   同名文件默认**不覆盖**，覆盖必须显式 `overwrite=true` 且先备份。写入走临时文件 + 原子重命名。
 - **截图/PDF 写入范围**：`zju_fetch_slides(download=true)` 只写工作区内的 `ppt-assets/<sub_id>/`
   （或 `output_dir` 指定的工作区内目录）；最多 2000 张、单张 ≤32 MiB，只落盘通过魔数校验的 JPEG/PNG。
@@ -76,8 +77,11 @@
 ## 4. 不收集、不外传
 
 - 无遥测、无统计、无自动更新、无后台常驻进程。
-- 网络请求只发往 `https://classroom.zju.edu.cn`（字幕、PPT、视频直链三个接口）。
+- 网络请求只发往 `https://classroom.zju.edu.cn`（字幕、投影列表、视频直链）与
+  `https://*.zju.edu.cn` 图片主机（仅投影截图下载，且只在该模块开启时）。
 - 不读取 `~/.dsh`、不写 `~/.dsh`、不写 `~/.minimax`。
+- **浏览器半边不碰课程数据**：`lib/client.js` 只在设置页读写 `enableSlides` / `embedSlideImages`
+  两个布尔值（经 dsh 的 `configForms` 写入 profile 配置），不发起网络请求、不读 Cookie、不扫描页面内容。
 - 唯一会"离开本机"的数据是**你主动处理的课程材料**：字幕/课件文本会作为工具结果进入宿主模型上下文，
   由你选择的模型提供方按其条款处理——这是"用大模型整理讲义"的固有代价，不是插件额外收集。
 - `zju_get_video_url` 返回的 MP4 直链可能带有时效签名，属于会话凭证；不要粘贴到公开场合。

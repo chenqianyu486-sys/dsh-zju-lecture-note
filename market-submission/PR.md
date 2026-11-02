@@ -55,10 +55,10 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
       skill being the main thing; no objection.
 - [x] Description states what the plugin does; no superlatives. It also names the upstream
       scraping core (`nzw806/zju-lecture-summerizer-`, a standalone Python tool) and states the
-      login prerequisite for the slide capture. Every claim maps to `lib/tools.schema.json` /
-      `zju_lecture/` (`fetch_transcript` is the public, login-free endpoint; slides and the
-      video URL are the two tools that need a login, read from local config or the local Edge
-      profile rather than from a tool argument)
+      login prerequisite *and* the opt-in gate for the slide capture. Every claim maps to
+      `lib/tools.schema.json` / `zju_lecture/` (`fetch_transcript` is the public, login-free
+      endpoint; slides and the video URL are the two tools that need a login, read from local
+      config or the local Edge profile rather than from a tool argument)
 - [x] `dsh-plugin` topic added to the repository
 - [x] `icon:` points at `icon.png` in this repository (256×256 PNG, GitHub raw)
 
@@ -74,6 +74,13 @@ The version the entry describes was pushed to `main` the same day (1.5.0: slide 
 optional PDF), so the wording matches the code a reviewer installs: the slide endpoint returns
 screenshots, not a text layer, so the entry says "download the projected slide screenshots as
 a PDF" instead of "read the projected slides".
+
+**Update — 1.5.1 (2026-11-02).** `main` has since shipped 1.5.1, which decouples the transcript
+path from the slide module: `zju_fetch_slides` is now **opt-in** (`enableSlides`, default
+`false`; Settings → 「浙大智云课堂讲义」), so a fresh install gets the public, login-free
+transcript tools and nothing that touches a login. The entry now says the slide capture is
+opt-in as well, so its claim still matches what a reviewer sees after installing `main`.
+The transcript main path is unchanged.
 
 ## Privacy boundary (worth knowing before reading the diff)
 

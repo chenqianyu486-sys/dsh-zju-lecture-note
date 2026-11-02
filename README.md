@@ -199,6 +199,12 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 > MCP 宿主用环境变量 `ZJU_ENABLE_SLIDES=1`。需要把截图插进讲义时，再打开子开关
 > `embedSlideImages` / `ZJU_EMBED_SLIDES=1`。关闭时只走字幕，不注册投影工具、不读登录态。
 
+**插件市场（收录审核中）**：dsh 应用内市场读取
+[`awesome-dsh-plugin`](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 的条目列表。
+本仓库的收录 PR [#11087](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11087)
+目前仍是 open（`held: author`，等维护者复核描述）；**合并前在 market 里搜不到是预期行为**，
+合并后站点自动重建，届时可直接搜 `zju-lecture`。在那之前请用上面的 `github:` 命令安装。
+
 **登录态（可选，仅投影 PPT / 视频直链需要）**：优先自动读本机 Edge；Edge 正在运行时数据库被锁，
 且 Edge 127+ 若启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密其 v20 Cookie，这时会直接
 提示改用 `ZJU_COOKIE_FILE`。可在宿主配置里设置环境变量，**不要把 Cookie 粘贴到对话里**：
