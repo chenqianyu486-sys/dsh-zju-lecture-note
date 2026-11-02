@@ -110,11 +110,19 @@ def ssl_context_health() -> Dict[str, Any]:
 
 
 def _proxy_env() -> str:
+    """Name the proxy variables even when none of them is set.
+
+    "未设置" alone tells the user nothing. Naming HTTPS_PROXY and HTTP_PROXY is
+    what makes the follow-up actionable when a connection is refused.
+    """
+    found = []
     for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         value = os.environ.get(key)
         if value:
-            return f"{key}={value}"
-    return "(未设置)"
+            found.append(f"{key}={value}")
+    if found:
+        return "，".join(found)
+    return "HTTPS_PROXY / HTTP_PROXY 均未设置"
 
 
 def describe_network_error(error: BaseException) -> str:

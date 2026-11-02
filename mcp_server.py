@@ -72,7 +72,7 @@ from zju_lecture.security import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.5.1"
+SERVER_VERSION = "1.5.2"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 

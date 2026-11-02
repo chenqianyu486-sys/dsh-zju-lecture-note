@@ -1,6 +1,6 @@
 {
   "name": "dsh-zju-lecture-note",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，可选启用投影 PPT 截图抓取；产出带时间戳、可渲染的结构化复习讲义；Cookie 只在本地内存中使用，不回显、不落盘",
   "license": "MIT",
   "author": "chenqianyu486",

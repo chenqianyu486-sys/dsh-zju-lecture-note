@@ -345,13 +345,21 @@ def _fix_table_pipes(line: str) -> tuple:
 
 
 def _normalize_math(text: str) -> tuple:
-    """``\\dfrac`` -> ``\\frac`` and ``\\frac12`` -> ``\\frac{1}{2}``."""
-    count = 0
-    if "\\dfrac" in text:
-        count += text.count("\\dfrac")
-        text = text.replace("\\dfrac", "\\frac")
-    text, frac_count = _fix_fracs(text)
-    return text, count + frac_count
+    """``\\dfrac`` -> ``\\frac`` and ``\\frac12`` -> ``\\frac{1}{2}``.
+
+    Rewrites stop at inline-code spans, same as the table-pipe fixer: a note
+    that shows ``\\frac12`` inside backticks documents the wrong form on purpose.
+    """
+
+    def _segment(segment: str) -> tuple:
+        count = 0
+        if "\\dfrac" in segment:
+            count += segment.count("\\dfrac")
+            segment = segment.replace("\\dfrac", "\\frac")
+        segment, frac_count = _fix_fracs(segment)
+        return segment, count + frac_count
+
+    return _apply_outside_code(text, _segment)
 
 
 def _apply_outside_code(line: str, func) -> tuple:
