@@ -17,12 +17,13 @@ Adds one file — `data/plugins/chenqianyu486-sys__dsh-zju-lecture-note.yml` (`c
 Zhejiang University Zhizhi Classroom replays (`classroom.zju.edu.cn`) into Markdown study
 notes. Its scraping core comes from
 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-)
-(a standalone Python tool, not a DSH plugin). It reads the public speech transcript
-(per-minute, per-sentence or chunked) and can download the projected slide screenshots as a
-PDF to reference selected pages; that slide capture needs a ZJU login state
-(`ZJU_COOKIE` / `ZJU_COOKIE_FILE` or a local Edge profile), while transcript reading is
-public. It writes a note named after the class date and section, and checks that note's
-Markdown so formulas and tables render.
+(a standalone Python tool, not a DSH plugin), and the slide capture follows
+[`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli) (MIT), reimplemented
+here without copying code. It reads the public speech transcript (per-minute, per-sentence or
+chunked) and can download the projected slide screenshots as a PDF to reference selected
+pages; that slide capture needs a ZJU login state (`ZJU_COOKIE` / `ZJU_COOKIE_FILE` or a local
+Edge profile), while transcript reading is public. It writes a note named after the class date
+and section, and checks that note's Markdown so formulas and tables render.
 
 Not on npm yet, so the install command is the GitHub one:
 
@@ -65,9 +66,14 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 
 `held: author` asked for two things in the entry description: name the upstream project, and
 state that the projected-slide capture needs a login state. Both are in the `en` / `zh` lines
-now. The slide sentence was also aligned with 1.5.0 — the slide endpoint returns screenshots,
-not a text layer, so the entry says "download the projected slide screenshots as a PDF"
-instead of "read the projected slides".
+now, and the slide pipeline's reference implementation
+([`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli), MIT, no code copied)
+is credited too — `ATTRIBUTION.md` lists it under 参考实现（未拷贝代码）.
+
+The version the entry describes was pushed to `main` the same day (1.5.0: slide screenshots +
+optional PDF), so the wording matches the code a reviewer installs: the slide endpoint returns
+screenshots, not a text layer, so the entry says "download the projected slide screenshots as
+a PDF" instead of "read the projected slides".
 
 ## Privacy boundary (worth knowing before reading the diff)
 
