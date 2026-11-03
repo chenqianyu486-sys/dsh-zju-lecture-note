@@ -1,6 +1,6 @@
 {
   "name": "scholia-notes",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "contentHash": "sha256:0574615db5ba3b7eab4893b4cc63ddf75983403cf170a783d082a18a8241c25b",
   "fileCount": 11,
   "files": [
@@ -24,8 +24,8 @@
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
-      "sha256": "aa6d3714ac7e81ee406053e75252ed665df5c107ad2fe47edcfdd4f003ba42c0",
-      "size": 4725,
+      "sha256": "00bbabe1afcb5477486767607c953138639ce40ac62f2bcc289c0bf63fd1d2d5",
+      "size": 6262,
       "mode": "0644"
     },
     {
@@ -36,8 +36,8 @@
     },
     {
       "path": "references/format-spec.md",
-      "sha256": "ca2e4dd8bcdca4cd2f109d955c1060edd2b3075dc681a26f984ca7eb3cf827e1",
-      "size": 17811,
+      "sha256": "f5445c5ce26e8f453768868092f174959ec858fb064c292377cf13efd9fcdc4b",
+      "size": 18209,
       "mode": "0644"
     },
     {

@@ -12,10 +12,11 @@
         "ZJU_EMBED_SLIDES": "0",
         "ZJU_ENABLE_STUDY_NOTES": "0",
         "ZJU_ENABLE_LOGIN_TOOLS": "0",
-        "ZJU_RENDER_PDF": "0"
+        "ZJU_RENDER_PDF": "0",
+        "ZJU_TYPST_AUTO_INSTALL": "1"
       },
-      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放；dsh 插件默认会自动排版同名 PDF，MCP 这里默认关闭（ZJU_RENDER_PDF=1 开启，需要本机 Typst）。投影截图（ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）、填空笔记（ZJU_ENABLE_STUDY_NOTES）与登录辅助（ZJU_ENABLE_LOGIN_TOOLS）都是独立可选模块，默认 0。",
-      "timeout": 120000
+      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放；dsh 插件默认会自动排版同名 PDF，MCP 这里默认关闭（ZJU_RENDER_PDF=1 开启）。打开后若本机没有 Typst，插件会按 ZJU_TYPST_AUTO_INSTALL=1 自动下载官方版本（约 20 MB，SHA256 固定）到用户缓存目录，也可设为 0 关闭、改用 ZJU_TYPST_BIN 指定已有 Typst。投影截图（ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）、填空笔记（ZJU_ENABLE_STUDY_NOTES）与登录辅助（ZJU_ENABLE_LOGIN_TOOLS）都是独立可选模块，默认 0。",
+      "timeout": 300000
     }
   }
 }

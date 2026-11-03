@@ -237,15 +237,19 @@ def collect_package_files() -> List[str]:
         abs_dir = os.path.join(REPO_ROOT, package_dir)
         if not os.path.isdir(abs_dir):
             continue
-        for entry in sorted(os.listdir(abs_dir)):
-            # Skip the bytecode cache only: "__init__.py" must ship, otherwise
-            # the installed package relies on namespace-package semantics.
-            if entry == "__pycache__":
-                continue
-            # .pem is the bundled CA store: without it dsh's certifi-less Python
-            # cannot verify classroom.zju.edu.cn on an incomplete OS root store.
-            if entry.endswith(".py") or entry.endswith(".pem"):
-                files.append(f"{package_dir}/{entry}")
+        for current, dirs, names in os.walk(abs_dir):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for entry in sorted(names):
+                relative = os.path.relpath(os.path.join(current, entry), REPO_ROOT)
+                # .pem：随包 CA；.typ / .json / .ttf / .md：PDF 排版需要的
+                # prelude、Typst 资产清单、中文字体与 vendor 的 Typst 包。
+                # typst.toml / LICENSE / UNLICENSE / OFL.txt 是**许可与解析**
+                # 的硬要求：少了它们，MCode 包要么编译不了，要么分发了 MIT
+                # 代码却不带许可。
+                allowed = (".py", ".pem", ".typ", ".json", ".ttf", ".md", ".toml", ".txt")
+                licence_files = {"LICENSE", "UNLICENSE", "COPYING"}
+                if entry.endswith(allowed) or entry in licence_files:
+                    files.append(relative.replace(os.sep, "/"))
     return files
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "zju-lecture-agent-plugin"
-version = "2.0.2"
+version = "2.1.0"
 description = "浙大智云课堂（classroom.zju.edu.cn）回放提取、知识蒸馏与自动 PDF 讲义的 Agent Plugin / MCP Server"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -31,4 +31,11 @@ build-backend = "setuptools.build_meta"
 packages = ["zju_lecture"]
 
 [tool.setuptools.package-data]
-zju_lecture = ["py.typed", "cacert.pem", "prelude.typ", "handout_prelude.typ"]
+zju_lecture = [
+  "py.typed", "cacert.pem", "prelude.typ", "handout_prelude.typ",
+  "typst_assets.json",
+  "fonts/*.ttf", "fonts/*.txt", "fonts/*.md",
+  "typst-packages/*.md",
+  "typst-packages/preview/*/*/*",
+  "typst-packages/preview/*/*/*/*",
+]

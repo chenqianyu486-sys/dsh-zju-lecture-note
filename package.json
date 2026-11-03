@@ -1,6 +1,6 @@
 {
   "name": "dsh-zju-lecture-note",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，写完讲义自动排版同名 PDF；可选启用投影 PPT 截图抓取、填空式学习笔记与登录辅助工具；Cookie 只在本地内存中使用，不回显、不落盘",
   "license": "MIT",
   "author": "chenqianyu486",
@@ -42,6 +42,9 @@
     "zju_lecture/cacert.pem",
     "zju_lecture/prelude.typ",
     "zju_lecture/handout_prelude.typ",
+    "zju_lecture/typst_assets.json",
+    "zju_lecture/fonts",
+    "zju_lecture/typst-packages",
     "skills/zju-lecture-summarizer",
     "skills/zju-lecture-summarizer.manifest.json",
     "skills/scholia-notes",
