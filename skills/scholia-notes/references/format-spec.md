@@ -308,13 +308,18 @@ Typst 编译 PDF 时会把命中的字体**子集内嵌**进产物。上游 `sch
 
 - **阅读版讲义**（`handout_prelude.typ`）默认就用**可再分发的字体栈**：
   `STIX Two Text` → `Libertinus Serif`（Typst 内嵌），标题同理，
-  mono 用 `DejaVu Sans Mono`，中文优先 `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。
+  mono 用 `DejaVu Sans Mono`，中文优先**随包**的 `Notes Serif SC`，再退
+  `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。
   产物可以直接对外分享；本机想还原 Optima / Avenir Next 的观感，
   `handout_prelude.typ` 里留了一个注释掉的 local 版，**但那种 PDF 不要再分发**。
-- **填空笔记**走上游包：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans`，
+- **填空笔记**走上游包：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans` / `cjk`，
   但进不去 `note` / `sidenote` / `label-it`（这三个直接读包内 `default-fonts`）。
-  要彻底可控只能 vendor 上游、改 `src/fonts.typ`（届时必须保留上游 MIT 声明）。
+  `zju_build_study_notes` 已把 `cjk` 设为随包字体优先，正文中文因此不再落到 SimSun。
 - **对外分发前核对一次**：`pdffonts out.pdf`（poppler）或 PDF 阅读器的「属性 → 字体」，
-  看到 Optima / Avenir Next / Menlo / Songti SC 就换字体重编，别把专有字体子集传出去。
-- 字体文件**不随本仓库分发**；仓库里只有字体名，缺字时 Typst 自动回退到内嵌字体族。
+  看到 Optima / Avenir Next / Menlo / Songti SC / SimSun 就换字体重编，
+  别把专有字体子集传出去。
+- **随包字体**（v2.1.0 起）：`zju_lecture/fonts/NotesSerifSC-Subset.ttf` 是 Noto Serif SC 的
+  GB2312 子集（OFL 1.1，无 Reserved Font Name），已改名为 `Notes Serif SC` 以免与本机完整版
+  重名。`OFL.txt` 与 `FONT-NOTICE.md` 必须随包分发；OFL 要求衍生字体继续以 OFL 分发、
+  不得单独售卖。生僻字不在子集中时 Typst 仍会回退到系统字体，那部分字形请用 `pdffonts` 复核。
 

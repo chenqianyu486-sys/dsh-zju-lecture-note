@@ -116,3 +116,19 @@ the local-file tools refuse credential and browser-data paths. Details in `SECUR
 | `generate-readme.mjs` | row generated in both `README.md` and `README.zh.md` |
 | Duplicate check | no existing entry for this repo; nearest neighbours are `YLL-KB/dsh-video-to-notes`, `logb-1/dsh-course-assistant`, `Chenfan2/dsh-bilibili-subtitles` |
 | `dsh-plugin` topic | set |
+
+## 2.1.0 follow-up — dependency bundling
+
+The plugin is now self-sufficient for PDF output:
+
+- six `@preview` Typst packages are vendored under `zju_lecture/typst-packages/` **together with
+  their `LICENSE` / `UNLICENSE` and `typst.toml`**, so the fill-in-notes PDF compiles offline;
+- a redistributable OFL CJK font subset (`Notes Serif SC`, renamed to avoid clashing with a locally
+  installed Noto Serif SC) ships in `zju_lecture/fonts/` with `OFL.txt` and `FONT-NOTICE.md`;
+- if Typst itself is missing, the plugin downloads the official release on first use
+  (about 20 MB, SHA256-pinned, opt-out via `typstAutoInstall`), and the new `zju_doctor` tool
+  reports the local state.
+
+The entry description was updated accordingly: it no longer claims "no upstream code is copied"
+as a blanket statement — the reading template is still original, while the six upstream packages
+are now vendored with their licence files.

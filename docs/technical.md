@@ -31,6 +31,10 @@ dsh-zju-lecture-note/
 │   ├── note_lint.py               # 讲义 Markdown 公式规范检查 / 自动修复
 │   ├── handout.py                 # 讲义 Markdown → 阅读版 PDF（自动排版）
 │   ├── handout_prelude.typ        # 自包含讲义模板（不依赖 Typst Universe 包）
+│   ├── deps.py                    # Typst 自举：查找 / 版本 / 下载 / SHA256 / 缓存
+│   ├── typst_assets.json          # 各平台 Typst Release 的固定校验和
+│   ├── typst-packages/            # vendor 的 @preview 包（离线编译，逐包带许可）
+│   ├── fonts/                     # Notes Serif SC 子集 + OFL.txt + FONT-NOTICE.md
 │   ├── study_notes.py             # 讲义 → 填空底稿 → Typst → PDF
 │   ├── prelude.typ                # scholia 淡彩 palette（填空笔记用，唯一权威副本）
 │   ├── slides.py                  # 投影截图下载 / PDF 合成（可选模块）
@@ -69,10 +73,27 @@ dsh-zju-lecture-note/
 
 | 形态 | 载体 | 依赖 |
 | :--- | :--- | :--- |
-| dsh 原生插件 | 仓库根目录的 npm 包（`package.json` + `cordis.patch.yml` + `lib/`） | pnpm 装 peer；Python 3.9+；Typst 可选 |
+| dsh 原生插件 | 仓库根目录的 npm 包（`package.json` + `cordis.patch.yml` + `lib/`） | pnpm 装 peer；Python 3.9+；Typst 由插件自举 |
 | 标准 MCP + Skill | `server.mjs` 拉起 stdio MCP Server | PATH 上的 `node`；Python 3.9+ |
 | MiniMax Code 插件包 | `tools/build_plugin.py` 产出的 `dist/*.zip` | 同上 |
 | 命令行 | `python -m zju_lecture.cli` | Python 3.9+；`pypdf` 仅 PDF 课件需要 |
+
+**Typst 自举**（v2.1.0）：`zju_lecture/deps.py` 把「本机没装 Typst」从静默失败变成一次可解释的准备：
+
+1. 查找顺序 `ZJU_TYPST_BIN` → 插件缓存 `%LOCALAPPDATA%\dsh-zju-lecture\typst\v<版本>`（macOS/Linux
+   对应 `~/Library/Caches`、`~/.cache`）→ `PATH` → 常见安装目录；
+2. 版本低于 0.13.0 时提示升级（0.13 是 `--package-path` 与现有模板的下限）；
+3. 找不到且允许自动安装时，从 GitHub Release 下载对应平台归档，**只信任**
+   `zju_lecture/typst_assets.json` 里钉死的 SHA256，解压后再用 `typst --version` 复核；
+4. 下载失败会写一个 6 小时的冷却标记，避免每写一份讲义都卡一次超时。
+
+`ZJU_TYPST_AUTO_INSTALL=0` 关闭自动安装；`ZJU_TYPST_MIRROR` 可给下载 URL 加镜像前缀
+（只影响传输路径，哈希仍按清单校验）。`zju_doctor` 报告上述全部状态，`install=true` 立即重试安装。
+
+**离线编译**：6 个 `@preview` 包（scholia / frame-it / marginalia / theoretic / showybox / noteworthy）
+已 vendor 到 `zju_lecture/typst-packages/`，编译统一带 `--package-path` 与工作区内的
+`--package-cache-path`，填空笔记首次编译不再访问 Typst 包注册表。逐包保留 `LICENSE` / `UNLICENSE`
+与 `typst.toml`（后者是 `@preview/name:version` 解析的依据），只删除 README 与模板示例。
 
 **peer 依赖**：`lib/index.js` 里的 `@deepseek-ai/*` 全部是 `peerDependencies`
 （与 `dshmarket` 一致），由 pnpm 在 `dsh plugin add` 时装进 profile 的 `node_modules`
@@ -118,7 +139,7 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 
 - dsh 默认注册 **5** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
   全开 **9** 个。
-- MCP 未设置新变量时保持旧行为（9 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（5 个）。
+- MCP 未设置新变量时保持旧行为（10 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（6 个）。
 - 关闭时：不注册对应工具、不加载对应模块、Skill 不追加对应附录；系统提示会说明
   「这个模块已关闭」，Agent 不会调用或假装调用。
 - 实现上，`lib/index.js` 用 `registerableTools()` 过滤；`mcp_server.available_tools()`
@@ -138,6 +159,10 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 | `ZJU_BACKUP_DIR` | `zju_check_note` / `zju_write_note` 的备份目录（默认系统临时目录） |
 | `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 登录态（仅投影 / 视频直链需要） |
 | `ZJU_RENDER_PDF` | 默认 `0`（MCP）；对应 dsh `renderPdf`（默认开） |
+| `ZJU_TYPST_AUTO_INSTALL` | 缺 Typst 时自动下载安装（默认 `1`；dsh 对应 `typstAutoInstall`） |
+| `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高） |
+| `ZJU_TYPST_MIRROR` | Typst 下载 URL 的镜像前缀，例如 `https://ghfast.top/` |
+| `ZJU_TYPST_CACHE` | 覆盖 Typst 缓存目录（默认用户缓存；测试与换盘时用） |
 | `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关 |
 | `ZJU_ALLOW_SENSITIVE_PATHS` | 显式关闭本地敏感路径保护（不推荐） |
 
@@ -228,21 +253,27 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 
 ### 字体与可再分发性
 
-Typst 会把用到的字体子集内嵌进 PDF。阅读版讲义模板**默认就用可再分发的字体栈**：
+Typst 会把用到的字体子集内嵌进 PDF。两条 PDF 链路都优先使用**随包自带的 OFL 字体**：
 
 | role | 首选 | 回退 |
 | :--- | :--- | :--- |
 | body / heading | `STIX Two Text`（SIL OFL） | Typst 内嵌 `Libertinus Serif` |
 | math | `STIX Two Math` | `New Computer Modern Math` |
 | mono | `DejaVu Sans Mono` | `Consolas` |
-| 中文 | `Noto Serif SC` / `Source Han Serif SC`（OFL） | `Songti SC` / `SimSun` |
+| 中文 | **`Notes Serif SC`（随包，OFL 子集）** | `Noto Serif SC` / `Source Han Serif SC`（OFL）→ `Songti SC` / `SimSun` |
 
+- `Notes Serif SC` 是 Noto Serif SC 的 GB2312 子集 + 常用符号（约 7.5k 字，5.7 MB），**保留了
+  `wght` 变量轴**，所以标题的 `weight: "bold"` 有真正的粗体面；生僻字逐字回退到系统字体。
+- **改名是刻意的**：与用户本机完整版同名时 Typst 选哪个字体面不确定，也避免让人误以为是完整字体、
+  避开 Noto / Source / ZJU 商标。
+- 许可是 SIL OFL 1.1（无 Reserved Font Name）：允许子集化与再分发，但必须随附 `OFL.txt` 与版权声明，
+  衍生字体继续以 OFL 分发，且不得单独售卖字体。相关文件在 `zju_lecture/fonts/`。
 - `Optima` / `Avenir Next` / `Menlo` 等专有字体**不在生效的字体栈里**，只以注释形式留在模板中
   供本机还原上游观感；那种 PDF 不要再分发。
-- 填空笔记走上游包的 `default-fonts`：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans`，
-  但进不去 `note` / `sidenote` / `label-it`（它们直接读包内字体表）。
-  要彻底可控只能 vendor 上游包并改 `src/fonts.typ`（届时须保留上游 MIT 声明）。
-- 本仓库**不包含任何字体文件**，只写字体名；对外分发前用 `pdffonts out.pdf` 核对一次。
+- 填空笔记通过 `fonts: (cjk: (...))` 把随包字体插到首位；上游包的 `note` / `sidenote` / `label-it`
+  仍直接读包内字体表，改不到（已知限制）。
+- 对外分发 PDF 前用 `pdffonts out.pdf` 核对一次：若出现 `SimSun` / `Microsoft YaHei` 等系统商业字体，
+  说明生僻字回退到了它们，换一份完整 OFL 字体再排。
 
 ## 6. 填空笔记链路
 
@@ -357,7 +388,7 @@ python tools/sync_palette.py --check        # 只校验配色三处一致
 node tests/bridge_smoke.mjs                 # 端到端：拉起 Python 核心并调用一次工具
 node tests/bridge_error_smoke.mjs           # 端到端：确认 MCP 的 isError 会冒泡成异常
 node tests/bridge_workspace_smoke.mjs       # 端到端：相对路径按 session workspace 解析
-node tests/plugin_apply_smoke.mjs           # 插件形态：默认 5 工具 / 打开后 9 工具
+node tests/plugin_apply_smoke.mjs           # 插件形态：默认 6 工具 / 打开后 10 工具
 node tests/client_settings_smoke.mjs        # 设置页行注册与写字段
 python tools/refresh_ca_bundle.py --check   # 检查随包 CA 是否完整（≥50 张根证书）
 python tools/smoke_test.py --sub-id <sub_id>  # 对已安装包跑端到端冒烟（--dir 可指定包目录）
@@ -427,11 +458,14 @@ PY
 
 ## 11. 已知限制
 
-- **填空笔记链路需要本机装 Typst（≥ 0.13.0）**：`zju_build_study_notes(mode="compile")`
-  靠 `typst compile` 出 PDF，没装会明确报错并给出安装提示。`mode=draft` 不需要 Typst。
-- **阅读版 PDF 同样依赖 Typst**，但失败是软失败：Markdown 照常写入，只返回 `PDF 跳过`。
+- **Typst 由插件自举（≥ 0.13.0）**：首次排版会按需下载约 20 MB 的官方 Release 到用户缓存目录，
+  按仓库内固定的 SHA256 校验；可用 `ZJU_TYPST_AUTO_INSTALL=0` 关闭，改用 `zju_doctor` 的提示手动安装。
+  下载失败有 6 小时冷却，不会每次写讲义都重试。
+- **阅读版 PDF 的失败是软失败**：Markdown 照常写入，只返回 `PDF 跳过`；`zju_doctor` 能说明缺什么。
 - **字体覆盖的边界**：填空笔记的 `fonts:` 参数改不到 `note` / `sidenote` / `label-it`
-  （上游包内直接读 `default-fonts`）。要完全控制字体只能 vendor 上游包并改 `src/fonts.typ`。
+  （上游包内直接读 `default-fonts`）；随包字体通过 `cjk` 角色进入正文，已能覆盖绝大多数中文。
+- **网络依赖**：离线时字幕抓取、讲义写入、填空笔记编译（已 vendor 包与字体）都可用；
+  只有「首次安装 Typst」需要网络。
 - **投影截图没有文字层 / OCR**：接口只返回图片。需要幻灯片原文时让用户提供 `.pptx` 走
   `zju_extract_courseware`；模型不能看图时 Agent 只列截图索引，不臆造内容。
 - **Edge 登录态的两条死路**：Chromium 对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
@@ -460,7 +494,9 @@ PY
 其中与 PDF 模板直接相关的：
 
 - `@preview/scholia` 0.1.0（MIT，© Eric Yang）是填空笔记链路的排版引擎，
-  编译期由 Typst 包注册表拉取，**未随本仓库分发**；
+  **已随本仓库分发（vendored）**在 `zju_lecture/typst-packages/`，逐包保留上游许可与 `typst.toml`；
+- 其余传递依赖（frame-it / marginalia / theoretic / showybox / noteworthy）同样随包分发，
+  版本与许可见 `zju_lecture/typst-packages/VENDORED.md`；
 - 阅读版讲义模板 `handout_prelude.typ` 是本项目自研、自包含的重写，视觉上参考 scholia 的
   浅色 notes 主题（配色角色、装置语义），**未拷贝上游源码**；
 - 上游 scholia 声明自己是受 `loom-notes` 设计启发的独立重写（未复用源码），本仓库亦未分发它；

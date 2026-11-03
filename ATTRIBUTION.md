@@ -17,7 +17,7 @@
 
 ## 本插件新增的部分
 
-- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 9 个工具定义（dsh 默认按开关注册 5 个）；
+- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 10 个工具定义（dsh 默认按开关注册 6 个）；
 - `server.mjs` 启动器：运行时解析 Python 解释器，跨平台统一用 `node` 启动；
 - Skill 化的工作流 SOP；
 - 协议级回归测试、FIPS-197 AES 已知向量测试、Edge Cookie 失败原因分类；
@@ -79,14 +79,30 @@ Markdown → Typst 直排模板，**不 import 任何 Typst Universe 包**，也
 
 | 项目 | 许可 | 版权人 | 说明 |
 | :--- | :--- | :--- | :--- |
-| [`@preview/scholia`](https://typst.app/universe/package/scholia) | MIT | [Eric Yang](https://github.com/Eryc123Y)（杨星宇） | 填空式学习笔记的排版引擎（knot / note / 右边栏 / 封面）。**编译期由 Typst 包注册表拉取，未随本仓库分发**，因此不构成分发。 |
-| [`@preview/frame-it`](https://typst.app/universe/package/frame-it) | MIT | Marc Thieme | scholia 的 knot 底层（figure + 原生 label 交叉引用）。同上，未随本仓库分发。 |
-| [`@preview/marginalia`](https://typst.app/universe/package/marginalia) | UNLICENSE | 公有领域 | scholia 的右边栏边注。同上，未随本仓库分发。 |
+| [`@preview/scholia`](https://typst.app/universe/package/scholia) | MIT | [Eric Yang](https://github.com/Eryc123Y)（杨星宇） | 填空式学习笔记的排版引擎（knot / note / 右边栏 / 封面）。**v2.1.0 起随本仓库分发（vendored）**：`zju_lecture/typst-packages/preview/scholia/0.1.0/`，保留 `LICENSE` 与 `typst.toml`，只删除 README 与模板示例。 |
+| [`@preview/frame-it`](https://typst.app/universe/package/frame-it) | MIT | Marc Thieme | scholia 的 knot 底层（figure + 原生 label 交叉引用）。随仓库分发，保留 `LICENSE`。 |
+| [`@preview/marginalia`](https://typst.app/universe/package/marginalia) | UNLICENSE | 公有领域 | scholia 的右边栏边注。随仓库分发，保留 `UNLICENSE`。 |
+| [`@preview/theoretic`](https://typst.app/universe/package/theoretic) | UNLICENSE | 公有领域 | noteworthy 的定理底层；随仓库分发，保留 `UNLICENSE`。 |
+| [`@preview/showybox`](https://typst.app/universe/package/showybox) | MIT | Pablo González Calderón | noteworthy 的方框底层；随仓库分发，保留 `LICENSE`。 |
+| [`@preview/noteworthy`](https://typst.app/universe/package/noteworthy) | MIT | Tarun Kumar Jana | scholia 的证明/注记底层；随仓库分发，保留 `LICENSE`。 |
 | [`loom-notes`](https://github.com/Polaris-Aeterna/loom-notes) | MIT | 北极甜虾（Polaris） | 上游 `scholia` 作者声明其实现是受该项目**设计启发**的独立重写，未复用其源码；本仓库亦未分发其代码。 |
 
-> **本仓库没有 vendor 任何上游 Typst 包源码**，所以 MIT 的「保留版权声明」义务目前不触发。
-> 若将来把 `@preview/scholia` 源码拷进仓库（例如为了改 `src/fonts.typ`），
-> **必须**同时保留上游 `LICENSE` 与版权声明原文。
+> **v2.1.0 起，6 个 `@preview` 包已 vendor 进 `zju_lecture/typst-packages/`**，用于离线编译。
+> MIT 的「保留版权声明与许可全文」义务由此触发，已逐包保留 `LICENSE`；Unlicense 包保留 `UNLICENSE`。
+> 修改范围仅限**删除文档**（README / template / tests），代码、`typst.toml` 与许可文件逐字节保持上游原样。
+> 逐包版本见 `zju_lecture/typst-packages/VENDORED.md`。
+
+**随包中文字体**（v2.1.0）：
+
+| 项目 | 许可 | 版权人 | 说明 |
+| :--- | :--- | :--- | :--- |
+| Noto Serif SC → `Notes Serif SC` | SIL OFL 1.1 | Copyright 2012 Google Inc.；字体内部 © 2017-2023 Adobe | GB2312 + 常用符号子集（约 7.5k 字），保留 `wght` 变量轴。已改名以避免与本机完整字体冲突；`zju_lecture/fonts/OFL.txt` 与 `FONT-NOTICE.md` 必须随包分发。 |
+
+**Typst 二进制**（不随仓库分发）：
+
+| 项目 | 许可 | 说明 |
+| :--- | :--- | :--- |
+| [Typst](https://typst.app) 0.15.1 | Apache-2.0 | 插件不含二进制；缺少时从官方 GitHub Release 下载到用户缓存目录，按 `zju_lecture/typst_assets.json` 的 SHA256 校验。若将来改为随包/镜像分发，必须补 Apache-2.0 的 `LICENSE` 与 `NOTICE`，并带上其内嵌字体（Libertinus / New Computer Modern / DejaVu）的 OFL 声明。 |
 
 本插件与 `@preview/scholia` 的作者**没有隶属关系，也未获其背书**；
 「scholia」一词仅用于指代所依赖的 Typst 包（指示性使用），不主张任何商标权利。

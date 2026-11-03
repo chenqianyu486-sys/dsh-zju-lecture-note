@@ -3,7 +3,39 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
-## 2.0.2 — 未发布（本地）
+## 2.1.0 — 2026-11-03
+
+- **PDF 装完即用（Typst 自举）**：新增 `zju_lecture/deps.py`，把「本机没装 Typst」从静默的
+  `PDF 跳过` 变成一次可解释的准备：`ZJU_TYPST_BIN` → 插件缓存 → `PATH` → 常见目录；版本低于
+  0.13.0 提示升级；缺失时按平台从 **GitHub 官方 Release** 下载，只信任
+  `zju_lecture/typst_assets.json` 里钉死的 SHA256（6 个平台，`tools/pin_typst_assets.py` 生成），
+  解压后再用 `typst --version` 复核。下载失败写 6 小时冷却标记，避免每份讲义都卡一次超时。
+  开关 `typstAutoInstall` / `ZJU_TYPST_AUTO_INSTALL`（默认开），镜像前缀 `ZJU_TYPST_MIRROR`。
+- **随包中文字体**：`zju_lecture/fonts/NotesSerifSC-Subset.ttf` —— Noto Serif SC 的
+  GB2312 + 常用符号子集（约 7.5k 字，5.7 MB，保留 `wght` 变量轴），**改名为 `Notes Serif SC`**
+  以免与本机完整字体重名。两条 PDF 链路都把它排在中文首位，干净 Windows 上标题也有真正的粗体。
+  随附 `OFL.txt` 与 `FONT-NOTICE.md`（OFL 1.1 要求随字体分发）。`tools/build_font_subset.py`
+  从 Google Fonts 固定 URL 取源字体并按 SHA256 校验，产物可复现。
+- **Typst 包 vendor（离线编译）**：`zju_lecture/typst-packages/` 收录 scholia / frame-it /
+  marginalia / theoretic / showybox / noteworthy 六个包（约 257 KB），编译统一带
+  `--package-path` 与工作区内的 `--package-cache-path`，填空笔记首次编译不再访问 Typst 包注册表。
+  **逐包保留 `LICENSE` / `UNLICENSE` 与 `typst.toml`**，只删除 README 与模板示例；
+  `tools/vendor_typst_packages.py` 可重建，`VENDORED.md` 记录版本与许可。
+- **新工具 `zju_doctor`**（第 10 个，始终常驻）：报告 Python / Typst（版本 / 路径 / 来源）/
+  随包字体 / Typst 包 / 缓存 / 自动安装开关；`install=true` 立即下载安装。默认工具数 5 → 6，
+  全开 9 → 10。
+- **设置页新增「环境与依赖」**：`typstAutoInstall` 开关 + 依赖说明；PDF 提示不再说「需要本机装 Typst」。
+- **打包**：npm `files`、`pyproject` package-data、`tools/build_plugin.py` 都纳入字体、vendored 包与
+  资产清单；MCode 包的收集逻辑从「只收 `.py` / `.pem`」改为递归收 `.typ` / `.toml` / `.ttf` /
+  `LICENSE` 等，修掉此前 MCode 包缺 `prelude.typ` 的隐患。
+- **文档口径修正（合规）**：`README` / `ATTRIBUTION` / `docs/technical.md` /
+  `THIRD_PARTY_NOTICES.md` / 市场条目中「编译期拉取、未随仓库分发、No upstream code is copied」
+  等表述改为「已 vendor 并附许可」；补「非官方工具，与浙大无隶属关系」声明；补 Typst 二进制的
+  Apache-2.0 边界（不随包分发，若将来转分发需补 LICENSE / NOTICE 与内嵌字体许可）。
+- **测试**：新增 `tests/test_deps_v210.py`（清单 / 校验和 / 平台映射 / 恶意归档 / 字体改名 /
+  vendor 许可 / doctor / 离线编译 / 打包清单）。
+
+## 2.0.2 — 2026-11-03
 
 - **阅读版讲义 PDF 按参考图重做**：一级标题是「灰蓝编号 + 蓝色标题 + 细横线」；
   直觉 / 定义 / 定理 / 例 / 练习用淡彩底 + 左侧竖线的方框；证明以斜体 `Proof.` + 行末 qed 结束；

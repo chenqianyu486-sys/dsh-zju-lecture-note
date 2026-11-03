@@ -103,7 +103,9 @@ zju_write_note(
   （插件设置 `renderPdf`，默认开启），所以通常**不需要再单独调 `zju_check_note`，也不需要额外调排版工具**。
   **先写文件，再校验，不要只在回复里贴公式。**
 - 交付时把两条路径都给用户：Markdown 是源文件，同名 `.pdf` 是阅读版。
-  返回里出现 `PDF 跳过: …`（例如本机没装 Typst）时照常交付 Markdown，**不要重试或假装 PDF 已生成**。
+  返回里出现 `PDF 跳过: …` 时照常交付 Markdown，**不要重试或假装 PDF 已生成**；
+  若原因是 `找不到 typst`，调用一次 `zju_doctor(install=true)` 后重试 `zju_check_note(pdf=true)`，
+  仍失败就把 `zju_doctor` 的结论原样转告用户。
 - **讲义不进仓库**：讲义是给自己复习用的本机学习材料，不要 `git add`、不要提交，
   也不要把讲义内容塞进仓库里的文档或示例。工作区本身就是 git 仓库时，可以传
   `directory="notes"` 把它们收进 `notes/`，并让该目录保持未被跟踪。

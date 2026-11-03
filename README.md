@@ -3,7 +3,8 @@
 > 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：
 > 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。
 > 字幕接口公开免登录；登录 Cookie 只在本机进程内存里使用，工具不收、不回显、不落盘。
-> 核心只用 Python 标准库（PDF 课件另需可选的 `pypdf`，PDF 排版需要本机装 Typst）。
+> 核心只用 Python 标准库；PDF 排版用的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备
+> （PDF 课件另需可选的 `pypdf`）。**非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
 
 面向 **DeepSeek Harness（dsh）** 与任意 **MCP 宿主**（Claude Code / Cursor / Cline / MiniMax Code…）。
 两种形态共用同一份 Python 核心，工具名、参数、返回值完全一致。
@@ -11,6 +12,8 @@
 ## 功能特色
 
 - **一句话出讲义**：给回放链接或 `sub_id`，Agent 抓字幕、写 Markdown、修公式、校验、命名，一次完成。
+- **装完即用**：缺少 Typst 时首次排版自动下载安装（SHA256 固定、可关），中文字体与 Typst 包随插件分发，
+  填空笔记离线也能编译；`zju_doctor` 随时报告本机依赖状态。
 - **自动 PDF**：写完讲义就在本地排同名 PDF（封面、目录、标题层级、居中公式、三线表、边注）；
   PDF 失败不影响 Markdown，Agent 只多收一行路径。
 - **内容不丢**：字幕按分钟 / 逐句 / 分块读取；可读本地 PPTX / DOCX / PDF 课件校准术语；
@@ -117,10 +120,10 @@ Agent 只多收到一行 `PDF: <路径>（N 页）`。失败时 Markdown 照常�
 打开 `enableStudyNotes` 后，`zju_build_study_notes` 把讲义变成**能自己填的复习笔记**：
 `mode=draft` 生成填空底稿，`mode=compile` 排成 scholia PDF + 逐页 PNG。
 工具只做搬运与排版，哪句是定理、哪里挖空仍由你判断——自动挖空等于替读者决定「考什么」。
-需要本机装 Typst（≥ 0.13.0）。
 
-字体提示：阅读版讲义默认使用**可再分发的字体栈**，产物可以直接分享；填空笔记走上游默认字体表，
-对外分发前请按 [格式规范 §7](skills/scholia-notes/references/format-spec.md) 换成 STIX Two / 内嵌字体。
+字体：两条 PDF 链路都优先用随包的 **Notes Serif SC**（Noto Serif SC 的 GB2312 子集，OFL），
+生僻字回退系统字体；对外分发 PDF 前按 [格式规范 §7](skills/scholia-notes/references/format-spec.md)
+用 `pdffonts` 确认没嵌入 SimSun 等系统商业字体。
 
 ### 投影截图（可选，默认关闭）
 
@@ -131,7 +134,7 @@ Agent 只多收到一行 `PDF: <路径>（N 页）`。失败时 Markdown 照常�
 
 ## 工具一览
 
-dsh 默认只注册 **5 个**核心工具；打开填空笔记 +1、投影 +1、登录辅助 +2，**全开 9 个**。
+dsh 默认注册 **6 个**核心工具（含依赖自检 `zju_doctor`）；打开填空笔记 +1、投影 +1、登录辅助 +2，**全开 10 个**。
 关掉的模块不占工具列表、不加载代码。
 
 | 工具 | 用途 | 默认 |
@@ -141,6 +144,7 @@ dsh 默认只注册 **5 个**核心工具；打开填空笔记 +1、投影 +1、
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 开 |
 | `zju_check_note` | 检查 / 修复**已有**讲义；`pdf=true` 重排 PDF | 开 |
 | `zju_write_note` | 写入讲义：自动命名、拒绝静默覆盖、修公式、校验、自动排 PDF | 开 |
+| `zju_doctor` | 检查 Python / Typst / 字体 / 包；`install=true` 自动装 Typst | 开 |
 | `zju_build_study_notes` | 讲义 → 填空底稿 → scholia PDF + 逐页 PNG | 关（`enableStudyNotes`） |
 | `zju_fetch_slides` | 抓投影截图清单，可选下载并合成 PDF | 关（`enableSlides`） |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 关（`enableLoginTools`） |
@@ -148,20 +152,22 @@ dsh 默认只注册 **5 个**核心工具；打开填空笔记 +1、投影 +1、
 
 ## 设置
 
-dsh 的五个开关在 **设置 → 左侧导航「浙大智云课堂讲义」**（独立一栏，不占通用设置），
-按「核心链路 → 阅读输出 → 主动回忆 → 课堂投影 → 登录辅助」分组，并有三枚预设：
+dsh 的六个开关在 **设置 → 左侧导航「浙大智云课堂讲义」**（独立一栏，不占通用设置），
+按「核心链路 → 阅读输出 → 环境与依赖 → 主动回忆 → 课堂投影 → 登录辅助」分组，并有三枚预设：
 **省 Token / 复习模式 / 全功能**。
 
 | 设置 | 作用 | 默认 |
 | :--- | :--- | :--- |
 | `renderPdf` | 写完讲义自动排同名 PDF | 开 |
+| `typstAutoInstall` | 缺少 Typst 时自动下载安装（约 20 MB，SHA256 校验） | 开 |
 | `enableStudyNotes` | 填空式学习笔记（`zju_build_study_notes` + scholia Skill） | 关 |
 | `enableSlides` | 投影抓取总开关（`zju_fetch_slides`） | 关 |
 | `embedSlideImages` | 投影截图是否插进讲义（仅在总开关打开时有效） | 关 |
 | `enableLoginTools` | 登录辅助（视频直链 / 读 Edge Cookie） | 关 |
 
-MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_ENABLE_STUDY_NOTES`、`ZJU_ENABLE_SLIDES`、
-`ZJU_EMBED_SLIDES`、`ZJU_ENABLE_LOGIN_TOOLS`（仓库自带的 `zju-lecture.mcp.json` 默认关掉可选模块）。
+MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、`ZJU_ENABLE_STUDY_NOTES`、
+`ZJU_ENABLE_SLIDES`、`ZJU_EMBED_SLIDES`、`ZJU_ENABLE_LOGIN_TOOLS`（仓库自带的 `zju-lecture.mcp.json`
+默认关掉可选模块）。另有 `ZJU_TYPST_BIN`（指定已有 Typst）与 `ZJU_TYPST_MIRROR`（下载镜像前缀）。
 
 ## 常见问题
 
@@ -169,8 +175,11 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_ENABLE_STUDY_NOTES`、
 完全重启 DeepSeek Harness。dsh 在启动时缓存 `dsh.client` 元数据，刷新页面或只重装插件都不够。
 
 **返回 `PDF 跳过: …`？**
-本机没装 Typst 或缺少字体。装好 Typst（`typst --version` 能跑）后，用
-`zju_check_note(pdf=true)` 给已有讲义补排；Markdown 本身不受影响。
+先让 Agent 跑 `zju_doctor`：它会报 Typst 版本 / 路径 / 来源、字体与 Typst 包是否就位。
+缺少 Typst 时 `zju_doctor(install=true)` 会下载并校验安装；也可以自己装好（`typst --version` 能跑）
+后用 `zju_check_note(pdf=true)` 给已有讲义补排。Markdown 本身不受影响。
+若返回 `PDF 跳过: 找不到 typst：…` 且自动安装被关闭（`ZJU_TYPST_AUTO_INSTALL=0`），
+打开设置里的「自动安装 Typst」或手动安装即可。
 
 **看不到投影 / 登录工具？**
 它们默认关闭。到设置里打开 `enableSlides` / `enableLoginTools` 后才注册；字幕主链路不需要登录。
@@ -204,17 +213,27 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_ENABLE_STUDY_NOTES`、
 
 - [`@preview/scholia`](https://typst.app/universe/package/scholia) **0.1.0**（MIT，© Eric Yang / 杨星宇，
   仓库 [`Eryc123Y/scholia`](https://github.com/Eryc123Y/scholia)）：填空式学习笔记的排版引擎
-  （knot / note / 边注 / 封面 / 淡彩主题）。它由 Typst 包注册表在**编译期拉取，未随本仓库分发**；
+  （knot / note / 边注 / 封面 / 淡彩主题）。**该包及其依赖已随本仓库分发（vendored）**在
+  `zju_lecture/typst-packages/`，使填空笔记编译不再依赖 Typst 包注册表；逐包保留上游
+  `LICENSE` / `UNLICENSE` 与 `typst.toml`，只删除了 README 与模板示例。
   本插件的阅读版讲义 PDF 使用自研模板（`zju_lecture/handout_prelude.typ`），
-  **视觉设计参考了它的浅色 notes 主题**，未拷贝上游源码。
-- [`@preview/frame-it`](https://typst.app/universe/package/frame-it)（MIT，© Marc Thieme）与
-  [`@preview/marginalia`](https://typst.app/universe/package/marginalia)（UNLICENSE）：
-  scholia 的 knot 与右边栏依赖，同样只在编译期拉取。
+  **视觉设计参考了它的浅色 notes 主题**，未拷贝其源码。
+- [`@preview/frame-it`](https://typst.app/universe/package/frame-it)（MIT，© Marc Thieme）、
+  [`@preview/marginalia`](https://typst.app/universe/package/marginalia)（UNLICENSE）、
+  [`@preview/theoretic`](https://typst.app/universe/package/theoretic)（UNLICENSE）、
+  [`@preview/showybox`](https://typst.app/universe/package/showybox)（MIT）与
+  [`@preview/noteworthy`](https://typst.app/universe/package/noteworthy)（MIT）：scholia 的传递依赖，
+  同样随包分发，版本与许可见 [`VENDORED.md`](zju_lecture/typst-packages/VENDORED.md)。
 - 上游 scholia 声明自己是受 [`loom-notes`](https://github.com/Polaris-Aeterna/loom-notes)
   设计启发的独立重写（XeLaTeX，MIT，未复用源码）；本仓库也未分发它。
 - 「scholia」一词仅用于指代所依赖的 Typst 包；本插件与 Eric Yang 无隶属关系，也未获其背书。
   逐条归属与「未拷贝代码」边界见 [ATTRIBUTION.md](ATTRIBUTION.md) 与
   [THIRD_PARTY_NOTICES.md](skills/scholia-notes/THIRD_PARTY_NOTICES.md)。
+
+**随包中文字体**：`zju_lecture/fonts/NotesSerifSC-Subset.ttf` 是
+[Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC) 的 GB2312 子集（OFL 1.1，
+© 2012 Google / © 2017-2023 Adobe），已改名以免与本机完整字体冲突；`OFL.txt` 与 `FONT-NOTICE.md`
+必须随字体一起分发。
 
 其他项目：
 
@@ -222,7 +241,8 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_ENABLE_STUDY_NOTES`、
   智云课堂 / 学在浙大 API 流程的原始实现，本插件与参考 CLI 的共同上游。
 - [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli)（MIT）：投影 PPT 管线的参考
   （`_token` → Bearer、分页去重、截图合成 PDF），本仓库按零第三方依赖重新实现，未拷贝代码。
-- [Typst](https://typst.app)（Apache-2.0）：两条 PDF 链路的排版编译器。
+- [Typst](https://typst.app)（Apache-2.0）：两条 PDF 链路的排版编译器。插件**不分发** Typst 二进制：
+  缺少时从官方 GitHub Release 下载到用户缓存目录，按仓库内固定的 SHA256 校验后再使用。
 - [`certifi`](https://github.com/certifi/python-certifi) 与 Mozilla CA 证书库：随包 `cacert.pem` 的来源。
 - 以及为本插件提交 issue、做实地运行反馈、审查代码与文档的同学。
 
@@ -231,7 +251,7 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_ENABLE_STUDY_NOTES`、
 | 文档 | 内容 |
 | :--- | :--- |
 | [docs/technical.md](docs/technical.md) | 技术细节：目录结构、隐私实现、PDF 排版、标记语法、开发测试、发布流程 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史（2.0.2 → 1.4.0） |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史（2.1.0 → 1.4.0） |
 | [SECURITY.md](SECURITY.md) | 威胁模型、Cookie 生命周期、已知边界 |
 | [ATTRIBUTION.md](ATTRIBUTION.md) | 逐文件来源、第三方许可、参考实现边界 |
 | [format-spec.md](skills/scholia-notes/references/format-spec.md) | 规范性文件：Markdown → PDF 装置的语义对应、预算、配色与字体 |
