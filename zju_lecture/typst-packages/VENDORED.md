@@ -17,9 +17,17 @@
 
 - 来源：<https://github.com/typst/packages>（Typst Universe registry 的公开仓库），
   逐个包按 `packages/preview/<name>/<version>/` 取用。
-- 修改：**只删除文档**（`README.md` / `README.typ` / `template/` / `tests/`），
-  代码、`typst.toml` 与许可文件逐字节保持上游原样。
+- 删除：`README.md` / `README.typ` / `template/` / `tests/` / `examples/` / `docs/`。
 - frame-it 的 `README.md` 有 3.8MB（示例图），删除它同时避免分发来源不明的素材。
+- **修改**：`@preview/scholia` 0.1.0 打了以下补丁（由
+  `tools/vendor_typst_packages.py` 重放，重新 vendor 时会自动应用）：
+
+| 文件 | 修改 |
+| :--- | :--- |
+| `src/fonts.typ` | 字体表改为可再分发栈：STIX Two / Libertinus / 随包 Notes Kai SC、Notes Serif SC / Noto / Source Han；移除 Optima / Avenir Next / Menlo / Songti SC |
+| `src/lib.typ` | 二级/三级标题字号统一为 12.5pt / 11.5pt；边注段距补 0.4em |
+
+  除上述补丁外，其余代码、`typst.toml` 与许可文件保持上游原样。
 
 ## 许可
 

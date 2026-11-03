@@ -200,14 +200,33 @@ class TestBundledFont(unittest.TestCase):
         self.assertIn("fvar", font)
         font.close()
 
+    def test_kai_font_exists_and_is_renamed(self):
+        from fontTools.ttLib import TTFont
+
+        path = os.path.join(deps.font_path(), "NotesKaiSC-Subset.ttf")
+        self.assertTrue(os.path.isfile(path), path)
+        self.assertLess(os.path.getsize(path), 8 * 1024 * 1024)
+        font = TTFont(path)
+        families = {
+            record.toUnicode()
+            for record in font["name"].names
+            if record.nameID in (1, 16)
+        }
+        self.assertEqual(families, {"Notes Kai SC"})
+        # 上游有 Reserved Font Name，衍生字体不得继续使用 LXGW / 霞鹜。
+        self.assertNotIn("LXGW", " ".join(families))
+        font.close()
+
     def test_licence_bundle_ships_with_the_font(self):
         directory = deps.font_path()
-        with open(os.path.join(directory, "OFL.txt"), encoding="utf-8") as handle:
-            self.assertIn("SIL OPEN FONT LICENSE", handle.read())
+        for licence in ("OFL.txt", "OFL-Kai.txt"):
+            with open(os.path.join(directory, licence), encoding="utf-8") as handle:
+                self.assertIn("SIL OPEN FONT LICENSE", handle.read())
         with open(os.path.join(directory, "FONT-NOTICE.md"), encoding="utf-8") as handle:
             notice = handle.read()
         self.assertIn("子集", notice)
         self.assertIn("OFL", notice)
+        self.assertIn("Notes Kai SC", notice)
 
 
 class TestDoctorTool(unittest.TestCase):
@@ -321,7 +340,9 @@ class TestPackagingIncludesAssets(unittest.TestCase):
         files = build_plugin.collect_package_files()
         joined = "\n".join(files)
         self.assertIn("zju_lecture/fonts/NotesSerifSC-Subset.ttf", joined)
+        self.assertIn("zju_lecture/fonts/NotesKaiSC-Subset.ttf", joined)
         self.assertIn("zju_lecture/fonts/OFL.txt", joined)
+        self.assertIn("zju_lecture/fonts/OFL-Kai.txt", joined)
         self.assertIn("zju_lecture/typst-packages/preview/scholia/0.1.0/LICENSE", joined)
         self.assertIn("zju_lecture/typst_assets.json", joined)
 

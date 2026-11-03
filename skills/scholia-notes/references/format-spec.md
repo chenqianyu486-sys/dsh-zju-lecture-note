@@ -33,48 +33,16 @@
 
 ### 1.2 正文的排版参数
 
-底稿不写排版，但**排版长什么样是规范的一部分** —— 工具按下面这组参数渲染：
+字号、行距、段距、段首缩进、公式间距、版心与边注栏**不在本文件重复**：
+它们是 [`typography-spec.md`](typography-spec.md) §2–§4 的内容，两条链路共用同一套值。
+本文件只规定「底稿写什么、映射成什么装置」；底稿里**不写**任何 Typst 语法、样式、
+颜色或手写编号。
 
-| 参数 | 值 | 含义 |
-| :--- | :--- | :--- |
-| `lang` | `"zh"` | 中文断行规则（上游写死 `"en"`，必须覆盖） |
-| `justify` | `false` | 两端对齐会把中文字距拉得很松 |
-| `leading` | `0.72em` | 行与行之间的额外留白 |
-| `spacing` | `0.95em` | **段间距，略大于行间距**：比行距多一点点，段落看得出来，但不至于让人以为换了一节 |
-| 段首缩进 | `#h(2em)` | **正文段首空两格**：中文靠缩进区分段落，不靠空行 |
-| 块级公式上下间距 | `1.6em` | **显式给出**，不跟随 `par.spacing` |
-| 填空线颜色 | 灰 `#8E97A3` | 灰色 = 留给读者写的地方；黑色会看起来像印刷内容 |
-| 版心 | 左 2.4cm / 右 3.9cm | 右侧留出 2.6cm 边注栏：`[边注]` 不占正文版面 |
-| 直觉框正文 | `#h(2em)` 首行缩进 | 与正文段落同一节奏（参考图里蓝框的首行也是缩进的） |
+三条与底稿写法直接相关的实现约定（具体写法与数值见 `typography-spec.md` §3.1）：
 
-三条要点（每一条都是实测踩出来的）：
-
-- **段首缩进不用 `par.first-line-indent`，改用 `#h(2em)`。**
-  Typst 只在「前一个兄弟元素是段落」时才应用首行缩进；**标题后、块后、图后、
-  公式后的段落一律不缩进**。而 `#h(2em)` 是行内元素，放在段首就会把首行顶开两格、
-  第二行回到版心 —— 与位置无关，处处一致。配合 `first-line-indent: 0pt`
-  （避免「跟在段落后」的段落被缩进两次）。
-- **独占一行的公式必须写成 `$ … $`（两侧留空格）。**
-  Typst 只有在 `$` 之后有空白时，才把它当**块级公式**：居中 + 独立的上下间距。
-  写成 `$x$` 的话，它只是「一行里的行内公式」—— 靠左排，还把那一行的首行缩进吃掉。
-  工具在渲染时自动给独占一行的公式补空格。
-- **块级公式的间距必须与 `par.spacing` 解耦。**
-  实测：把 `spacing` 压到 0.5em，块级公式会直接压在下一段文字上（重叠），
-  而且段与段之间完全看不出分段。显式给 `math.equation` 设
-  `block(above: 1.6em, below: 1.6em)` 之后，两者互不影响。
-
-对应到 `main.typ` 的固定头部（工具自动写，手工排版时照抄）：
-
-```typst
-#set text(lang: "zh")
-#set par(
-  justify: false,
-  leading: 0.72em,
-  first-line-indent: 0pt,
-  spacing: 0.95em,
-)
-#show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
-```
+- 正文段首空两格，用行内空白顶首行，不用 `par.first-line-indent`；
+- 独占一行的公式写成 `$ … $`（两侧留空格），工具会自动补；
+- 块级公式的上下间距与 `par.spacing` 解耦，显式给出。
 
 ## 2. 语义对应表
 
@@ -111,7 +79,7 @@
 ### 2.1 框框的决策规则
 
 > **填空线只出现在正文里。** 练习块（`[练习]`）里已经有书写横线，
-> 再叠几条 2.2cm 的短下划线只会挤在题面里、还折行 —— 工具会**丢弃**练习块里的 `____`。
+> 再叠几条短下划线只会挤在题面里、还折行 —— 工具会**丢弃**练习块里的 `____`。
 > 正文里显式写的挖空（如「关键处留空：____」）照常画成灰色填空线。
 写到一个结论/定义/例子时，**按顺序问**：
 
@@ -264,62 +232,27 @@ python tools/build_skill_manifest.py   # 重算 sha256 清单
 
 ### 7.2 角色与色值（浅色 / soft-palette）
 
-| role | 色值 | 对比度 vs 纸白 | 用途 |
-| :--- | :--- | :--- | :--- |
-| `bg` | `#FDFDFB` | 1.00 | 纸白，页面底色（略暖，长时间阅读不刺眼） |
-| `ink` | `#1A1A1C` | 17.06 | 正文近黑 —— 全篇主体 |
-| `thm` | `#33609B` | 6.27 | 蓝 · 结论族：theorem / lemma / proposition / corollary / proof / qed / 回指 |
-| `def` | `#20705F` | 5.82 | 青绿 · 定义族：definition / axiom / assumption / notation / remark |
-| `eg` | `#8F6218` | 5.25 | 琥珀 · 例子族：example / yourturn / 缺口 / 书写位 |
-| `warn` | `#6350A8` | 6.36 | 紫 · 易错警示（项目扩展，上游没有这个角色） |
-| `muted` | `#6F7683` | 4.49 | 灰 · 次要：页码 / 边注 / aside |
-| `fillin` | `#8E97A3` | 2.90 | 灰 · 填空线（留给读者写；黑色会像印刷内容） |
-| `rule` | `#93A6C4` | 2.43 | 标题下横线（蓝系，呼应结论族） |
-| `hairline` | `#DBDFE6` | 1.31 | 分隔线 / 练习块书写横线 |
+浅色主题的完整色表、对比度与「四个强调色极差 ≤ 1.2」的口径见
+[`typography-spec.md`](typography-spec.md) §7。本节只保留归属事实：
 
-`tag` 与 `keyword` 都指向 `#20705F`（归入定义族：术语、出处同属「定」）。
-
-四个强调色（`thm` / `def` / `eg` / `warn`）的对比度**极差 1.11**（6.36 − 5.25，即刻度上的跨度）——
-视觉重量接近，读者看到的是「一套配色」而不是「一主两辅」。分组依据是内容链条
-「推理—定义—应用」，紫色承担反例语义、与前三类正交。改色时保住这个性质，
-极差不要超过 1.2。
+- 浅色 `soft-palette` 是本项目自定义的，**不是**上游默认值；
+- 深色主题（slate）由上游 `scholia` 自带，本项目不覆盖；
+- 改色只改 `zju_lecture/prelude.typ`，再跑 `tools/sync_palette.py` 与
+  `tools/sync_skill_assets.py`。
 
 ### 7.3 深色主题
 
-深色主题（slate，`bg #141B27` / `ink #E3E8F0` / `thm #74A6FF` / `def #54C8B6` /
-`eg #E0A458`）由上游 `scholia` 自带，本项目**不覆盖**：`#show: use-palette` 只在
-`theme: "light"` 时注入，深色下注入会把它覆盖回浅色。阅读版讲义目前只出浅色。
+深色主题（slate）由上游 `scholia` 自带，本项目**不覆盖**：`#show: use-palette`
+只在 `theme: "light"` 时注入，深色下注入会把它覆盖回浅色。阅读版讲义目前只出浅色。
 
 ### 7.4 字体：默认就是「可分发的」
 
-Typst 编译 PDF 时会把命中的字体**子集内嵌**进产物。上游 `scholia` 的 `default-fonts`
-把商业专有字体放在首选位：
+字体角色、回退链与许可列见 [`typography-spec.md`](typography-spec.md) §1。
+两条链路的默认字体栈都只包含可再分发字体（STIX Two / Libertinus / 随包
+Notes Kai SC 与 Notes Serif SC / Noto / Source Han / DejaVu）；商业字体
+（Optima / Avenir Next / Menlo / Songti SC / SimSun / Microsoft YaHei / Consolas）
+不在生效列表里。
 
-| 角色 | 上游首选 | 兜底 |
-| :--- | :--- | :--- |
-| body | `STIX Two Text`（OFL） | `Libertinus Serif`（Typst 内嵌） |
-| math | `STIX Two Math`（OFL） | `New Computer Modern Math`（内嵌） |
-| heading | `Optima`（专有） | `Libertinus Serif` |
-| sans | `Avenir Next`（专有） | `Libertinus Serif` |
-| mono | `Menlo`（专有） | `DejaVu Sans Mono`（内嵌） |
-| cjk | `Songti SC`（专有） | — |
-
-本项目的处理：
-
-- **阅读版讲义**（`handout_prelude.typ`）默认就用**可再分发的字体栈**：
-  `STIX Two Text` → `Libertinus Serif`（Typst 内嵌），标题同理，
-  mono 用 `DejaVu Sans Mono`，中文优先**随包**的 `Notes Serif SC`，再退
-  `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。
-  产物可以直接对外分享；本机想还原 Optima / Avenir Next 的观感，
-  `handout_prelude.typ` 里留了一个注释掉的 local 版，**但那种 PDF 不要再分发**。
-- **填空笔记**走上游包：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans` / `cjk`，
-  但进不去 `note` / `sidenote` / `label-it`（这三个直接读包内 `default-fonts`）。
-  `zju_build_study_notes` 已把 `cjk` 设为随包字体优先，正文中文因此不再落到 SimSun。
-- **对外分发前核对一次**：`pdffonts out.pdf`（poppler）或 PDF 阅读器的「属性 → 字体」，
-  看到 Optima / Avenir Next / Menlo / Songti SC / SimSun 就换字体重编，
-  别把专有字体子集传出去。
-- **随包字体**（v2.1.0 起）：`zju_lecture/fonts/NotesSerifSC-Subset.ttf` 是 Noto Serif SC 的
-  GB2312 子集（OFL 1.1，无 Reserved Font Name），已改名为 `Notes Serif SC` 以免与本机完整版
-  重名。`OFL.txt` 与 `FONT-NOTICE.md` 必须随包分发；OFL 要求衍生字体继续以 OFL 分发、
-  不得单独售卖。生僻字不在子集中时 Typst 仍会回退到系统字体，那部分字形请用 `pdffonts` 复核。
+对外分发前核对一次：`pdffonts out.pdf`（poppler）或 PDF 阅读器的「属性 → 字体」，
+看到上述商业字体就换字体重编，别把专有字体子集传出去。
 

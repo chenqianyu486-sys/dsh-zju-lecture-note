@@ -85,7 +85,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.1.0"
+SERVER_VERSION = "2.2.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -204,7 +204,7 @@ def slide_image_mode_text() -> str:
         return "投影抓取已关闭，讲义只使用字幕与本地课件。"
     if embed_slides_enabled():
         return (
-            "讲义插图模式：开启。需要投影画面时调用 zju_fetch_slides(download=true)，"
+            "讲义插图模式：开启。写讲义前默认抓一次投影（整节课只抓一次），"
             "从返回的截图里挑 3–8 张关键页，按讲义所在目录的相对路径插入 Markdown；"
             "模型不能查看本地图片时，只在文末列截图索引，不要臆造截图内容。"
         )
@@ -234,6 +234,9 @@ def server_instructions() -> str:
         "写前修正、写后校验）。zju_write_note 已包含检查，不要为同一份讲义再调 "
         "zju_check_note；它只用于修复已有文件。相对路径按 ZJU_WORKSPACE 解析。"
         + _pdf_mode_text(),
+        "讲义默认按「复习版」写：每节保留 [HH:MM]；老师讲过的例题整理成"
+        "「题目 → 切入点 → 关键步骤 → 易错点」，本节没有例题就写「本节无例题」；"
+        "文末给 3–5 道自测题（答案用 <details> 折叠）与 5–10 条考点预测。",
     ]
     if slides_enabled():
         parts.append(
@@ -248,8 +251,8 @@ def server_instructions() -> str:
         )
     if study_notes_enabled():
         parts.append(
-            "要把 STEM 讲义变成可填空的复习笔记，用 zju_build_study_notes："
-            "mode=draft 生成填空底稿（你补内容），mode=compile 编译成 PDF。"
+            "填空笔记已开启：写完讲义后默认再出一份填空版（用户只要 Markdown/PDF 时跳过）——"
+            "zju_build_study_notes 先 mode=draft 生成填空底稿（你补内容），再 mode=compile 编译成 PDF。"
         )
     else:
         parts.append(
@@ -974,6 +977,15 @@ def _doctor_report(install: bool) -> str:
     )
     lines.append(f"汇编缓存: {info['compile_cache'] or '(未指定工作区)'}")
     lines.append(f"自动安装: {'开' if auto else '关'}（ZJU_TYPST_AUTO_INSTALL）")
+    lines.append(
+        "模块: 投影=%s / 填空=%s / 登录=%s / PDF=%s（本进程启动时的设置）"
+        % (
+            "开" if slides_enabled() else "关",
+            "开" if study_notes_enabled() else "关",
+            "开" if login_tools_enabled() else "关",
+            "开" if render_pdf_enabled() else "关",
+        )
+    )
     if info["mirror"]:
         lines.append(f"下载镜像: {info['mirror']}")
     if not info["typst_ok"]:

@@ -2,7 +2,8 @@
 
 把 STEM 内容做成**填空式学习笔记**的 Agent Skill：先用 Markdown 把内容和结构写完整，
 再套 Typst 的 [scholia](https://typst.app/universe/package/scholia) 模板排版，
-本地编译校验为 PDF / PNG。
+本地编译校验为 PDF / PNG。**配色与段落规范由本项目定义**，见
+[`references/typography-spec.md`](references/typography-spec.md)。
 
 > 本 skill 与 `scholia` 包的作者、发行方无关，也未获其背书。
 

@@ -46,6 +46,81 @@ PACKAGES = {
     "noteworthy": "0.4.0",
 }
 
+#: 对上游源码打的补丁：``(相对路径, 上游片段, 本项目片段, 说明)``。
+#:
+#: 只改 scholia：字体表是商业字体问题的根源；标题字号/边注段距让两条 PDF
+#: 链路统一到同一套排版规范。补丁必须能重放——重新 vendor 时自动应用，
+#: 否则下次 ``--from-cache`` 会把改动冲掉。``--check`` 会验证补丁已生效。
+PATCHES = {
+    "scholia": [
+        (
+            "src/fonts.typ",
+            """#let default-fonts = (
+  body: ("STIX Two Text", "Libertinus Serif"),
+  math: ("STIX Two Math", "New Computer Modern Math"),
+  heading: ("Optima", "Libertinus Serif"),
+  sans: ("Avenir Next", "Libertinus Serif"), // the informal "intuition voice"
+  mono: ("Menlo", "DejaVu Sans Mono"),
+  cjk: ("Songti SC",), // appended after body/sans for 中文 glyph fallback
+)""",
+            """#let default-fonts = (
+  body: ("STIX Two Text", "Libertinus Serif"),
+  math: ("STIX Two Math", "New Computer Modern Math"),
+  heading: (
+    "STIX Two Text", "Libertinus Serif",
+    "Notes Kai SC", "Notes Serif SC", "Noto Serif SC", "Source Han Serif SC",
+  ),
+  sans: (
+    "STIX Two Text", "Libertinus Serif",
+    "Notes Kai SC", "Notes Serif SC", "Noto Sans SC", "Source Han Sans SC",
+  ),
+  mono: ("DejaVu Sans Mono", "Notes Kai SC", "Notes Serif SC"),
+  cjk: ("Notes Kai SC", "Notes Serif SC", "Noto Serif SC", "Source Han Serif SC"),
+)""",
+            "字体表改为可再分发栈，移除 Optima / Avenir Next / Menlo / Songti SC",
+        ),
+        (
+            "src/lib.typ",
+            "set par(leading: 0.5em)",
+            "set par(leading: 0.5em, spacing: 0.4em)",
+            "边注段距补 0.4em，与阅读版一致",
+        ),
+        (
+            "src/lib.typ",
+            '#text(font: hfont, weight: "bold", fill: p.def)[#counter(heading).display() #it.body]',
+            '#text(font: hfont, weight: "bold", size: 12.5pt, fill: p.def)[#counter(heading).display() #it.body]',
+            "二级标题字号统一为 12.5pt",
+        ),
+        (
+            "src/lib.typ",
+            '#text(font: f.sans, weight: "bold", fill: p.thm)[#it.body]',
+            '#text(font: f.sans, weight: "bold", size: 11.5pt, fill: p.thm)[#it.body]',
+            "三级标题字号统一为 11.5pt",
+        ),
+    ],
+}
+
+
+def apply_patches(destination: str, name: str) -> None:
+    """把本项目对上游源码的补丁重放到刚 vendor 的目录。"""
+    for relative, old, new, note in PATCHES.get(name, ()):
+        path = os.path.join(destination, relative)
+        if not os.path.isfile(path):
+            raise SystemExit(f"{_manifest(name, '?')} 缺少补丁目标 {relative}")
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        if new in text:
+            continue
+        if old not in text:
+            raise SystemExit(
+                f"补丁无法应用：{_manifest(name, '?')}/{relative} 与预期上游内容不一致。\n"
+                f"  补丁说明：{note}\n"
+                "  上游版本变了就更新 tools/vendor_typst_packages.py 里的补丁片段。"
+            )
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text.replace(old, new, 1))
+
+
 # 只删文档与模板，代码、许可、清单都保留。
 DROP_FILES = {"README.md", "README.typ"}
 DROP_DIRS = {"template", "tests", "examples", "docs"}
@@ -95,6 +170,8 @@ def copy_package(source_root: str, name: str, version: str) -> dict:
     if not licences:
         raise SystemExit(f"{_manifest(name, version)} 没有许可文件，拒绝 vendor。")
 
+    apply_patches(destination, name)
+
     return {
         "name": name,
         "version": version,
@@ -126,6 +203,10 @@ def download_package(name: str, version: str) -> dict:
         known.append(license_name)
     for index in range(1, 12):
         known.append(f"src/part{index}.typ")
+    if name == "scholia":
+        # 本项目的补丁目标；下载路径不完整，但至少把被改的文件拿全。
+        known += ["src/fonts.typ", "src/lib.typ", "src/colors.typ",
+                  "src/theorems.typ", "src/visual.typ"]
 
     downloaded = []
     for path in known:
@@ -146,6 +227,8 @@ def download_package(name: str, version: str) -> dict:
     # 用户用 --from-cache。这里只验证最小可用集。
     if "typst.toml" not in downloaded:
         raise SystemExit(f"下载 {_manifest(name, version)} 失败（网络或路径变化）。")
+
+    apply_patches(destination, name)
 
     return {
         "name": name,
@@ -178,9 +261,17 @@ def write_index(entries: list) -> None:
         "",
         f"- 来源：<https://github.com/typst/packages>（Typst Universe registry 的公开仓库），",
         "  逐个包按 `packages/preview/<name>/<version>/` 取用。",
-        "- 修改：**只删除文档**（`README.md` / `README.typ` / `template/` / `tests/`），",
-        "  代码、`typst.toml` 与许可文件逐字节保持上游原样。",
+        "- 删除：`README.md` / `README.typ` / `template/` / `tests/` / `examples/` / `docs/`。",
         "- frame-it 的 `README.md` 有 3.8MB（示例图），删除它同时避免分发来源不明的素材。",
+        "- **修改**：`@preview/scholia` 0.1.0 打了以下补丁（由",
+        "  `tools/vendor_typst_packages.py` 重放，重新 vendor 时会自动应用）：",
+        "",
+        "| 文件 | 修改 |",
+        "| :--- | :--- |",
+        "| `src/fonts.typ` | 字体表改为可再分发栈：STIX Two / Libertinus / 随包 Notes Kai SC、Notes Serif SC / Noto / Source Han；移除 Optima / Avenir Next / Menlo / Songti SC |",
+        "| `src/lib.typ` | 二级/三级标题字号统一为 12.5pt / 11.5pt；边注段距补 0.4em |",
+        "",
+        "  除上述补丁外，其余代码、`typst.toml` 与许可文件保持上游原样。",
         "",
         "## 许可",
         "",
@@ -216,6 +307,18 @@ def check() -> int:
         if not os.path.isfile(manifest):
             print(f"✗ @preview/{name}:{version} 缺 typst.toml")
             problems += 1
+        for relative, _old, new, note in PATCHES.get(name, ()):
+            path = os.path.join(directory, relative)
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError:
+                print(f"✗ @preview/{name}:{version} 缺补丁目标 {relative}")
+                problems += 1
+                continue
+            if new not in text:
+                print(f"✗ @preview/{name}:{version}/{relative} 未打补丁：{note}")
+                problems += 1
         if not problems:
             print(f"✓ @preview/{name}:{version}")
     return 1 if problems else 0

@@ -15,6 +15,10 @@ descriptions:
 
 # Scholia Notes
 
+> **口径**：本 Skill 产出的是**基于 Typst scholia 模板排版的填空式学习笔记**；
+> 配色与段落规范由本项目定义，见
+> [`references/typography-spec.md`](references/typography-spec.md)。
+>
 > **先分清两份 PDF**：普通讲义（知识总结）的阅读版 PDF 由 `zju_write_note` 自动生成，
 > 不需要本 Skill；本 Skill 只负责「可动手填写的复习笔记」这一种更重的产物。
 > 用户只是要一份好读的讲义时，直接走 `zju_write_note`，不要启动这条填空链路。
@@ -154,27 +158,19 @@ prelude 已内置四色体系，**照着用，不要另挑颜色**：
 
    原因：方框是这套模板最重的视觉元素，堆多了整页就糊；正文保持黑白，
    强调用行内淡色加粗，视觉负担小一个数量级。knot 只为「可编号、可回指」而存在。
-   口径以 `references/style.md` 第 3 节为准。
+   口径以 `references/format-spec.md` §2.2 为准。
 
-   **中文正文额外加这几行**（放在 `#show: use-palette` 之后）：
+   **中文正文额外加这两行**（放在 `#show: use-palette` 之后）：
 
    ```typst
    #set text(lang: "zh")
-   #set par(
-     justify: false,
-     leading: 0.72em,
-     first-line-indent: 0pt,
-     spacing: 0.95em,
-   )
-   #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
+   #set par(justify: false)
    ```
 
    原因：scholia 包装器写死 `lang: "en"` 且 `justify: true`；
    前者影响断行规则，后者会让两端对齐把中文字距拉得很松（实测 `justify: false` 才是关键）。
-   `spacing` 略大于 `leading`，段落看得出来但不夸张。
-   块级公式的上下间距**必须显式给** —— 它一旦跟着 `par.spacing` 走，
-   公式就会压到下一段文字上（实测重叠）。
-   完整口径见 [`references/format-spec.md`](references/format-spec.md) §1.2。
+   行距、段距、缩进、公式间距等**数值**见
+   [`references/typography-spec.md`](references/typography-spec.md) §3，不要在这里重复。
 
 5. 编译并肉眼验版（**两道关，缺一不可**）：
 
@@ -274,45 +270,31 @@ typst fonts                     # 看本机可用字体名
 ```
 
 - 用 Read/Write 工具写 `.md`/`.typ`，不要用 `Set-Content`（PowerShell 5.1 默认 ANSI 会破坏 UTF-8 中文）。
-- 本机缺 `STIX Two` / `Optima` / `Avenir Next` / `Songti SC`，编译会刷一串
-  `warning: unknown font family`。**无害**，Typst 自动回退，中文照样出字。
-- 想要接近官方的字体观感就装 STIX Two（免费/OFL）。
-- 想指定中文字形：`#show: scholia.with(fonts: (cjk: ("Noto Serif SC",), heading: ("Microsoft YaHei",)))`，
-  但它进不了 `note`/`sidenote`/`label-it`（这三个直接读包内 default-fonts）。
+- 两条链路的默认字体栈已经统一：`STIX Two` / `Libertinus` / 随包 `Notes Kai SC` 与
+  `Notes Serif SC` / `Noto` / `Source Han`。本机缺 `STIX Two` 时会刷
+  `warning: unknown font family`，**无害**，Typst 自动回退到 Libertinus / 随包字体。
+- 不需要再手工覆盖字体：vendored `scholia` 的 `default-fonts` 已 patch，
+  `note` / `sidenote` / `label-it` 也跟随同一套字体。实际字体表见
+  [`references/typography-spec.md`](references/typography-spec.md) §1。
 
 ### 字体与分发（对外分享 PDF 前必读）
 
-Typst 编译 PDF 时会**内嵌并子集化**用到的字体。上游 `scholia` 的默认字体表里
-`Optima` / `Avenir Next` / `Menlo` / `Songti SC` 都是**商业专有字体**，
-一旦本机装了并被用上，这些字体的子集就会进入 PDF；把该 PDF 再分发出去，
-就属于字体分发，多数商业字体 EULA 明确限制。
+两条链路的默认字体栈只包含**可再分发**字体（STIX Two / Libertinus / 随包
+`Notes Kai SC` 与 `Notes Serif SC` / Noto / Source Han / DejaVu）。商业专有字体
+（Optima / Avenir Next / Menlo / Songti SC / SimSun / Microsoft YaHei / Consolas）
+不在生效列表里；模板里即使出现，也只以注释形式保留。
 
-| 场景 | 建议 |
-|---|---|
-| 自己复习、存档 | 直接用默认字体，回退到 Typst 内嵌的 Libertinus 即可 |
-| 要把 PDF 发给别人 / 公开分发 | 把 `body` / `math` / `heading` / `sans` 覆盖成 **STIX Two（OFL）** 或 Typst 内嵌字体，确保 PDF 里只有可再分发的字体 |
-
-```typst
-#show: scholia.with(
-  theme: "light",
-  fonts: (
-    body: ("STIX Two Text", "Libertinus Serif"),
-    math: ("STIX Two Math", "New Computer Modern Math"),
-    heading: ("STIX Two Text", "Libertinus Serif"),
-    sans: ("STIX Two Text", "Libertinus Serif"),
-  ),
-)
-```
-
-> 注意 `fonts:` 覆盖**进不了** `note` / `sidenote` / `label-it`（这三个直接读包内 default-fonts），
-> 所以只覆盖 `body` 并不彻底；要彻底可控就 vendor 包改 `src/fonts.typ`（保留上游 MIT 声明，见
-> `THIRD_PARTY_NOTICES.md`）。
+对外分发前跑一次 `pdffonts out.pdf`：看到上述商业字体，说明生僻字回退到了系统字体，
+换一份完整 OFL 字体再排。完整口径见
+[`references/typography-spec.md`](references/typography-spec.md) §1 与 §8。
 
 ## 许可与致谢
 
 - 本 skill（工作流说明、配色方案、`prelude.typ` 扩展、`mapping` / `style` / `troubleshooting` 文档）
   以 **MIT** 授权发布，见 [`LICENSE`](LICENSE)。
 - 排版引擎 [`@preview/scholia`](https://typst.app/universe/package/scholia)（MIT © Eric Yang）
-  及其依赖 `@preview/frame-it`（MIT）、`@preview/marginalia`（UNLICENSE）均为宽松授权，
-  在编译期由 Typst 包注册表拉取，**未随本仓库分发**。
+  及其依赖 `@preview/frame-it`（MIT）、`@preview/marginalia`（UNLICENSE）等已
+  **vendor 进 `zju_lecture/typst-packages/`**（保留各自许可文件），编译时离线解析；
+  本项目对 `scholia` 的 `src/fonts.typ` / `src/lib.typ` 打了补丁，记录在
+  `zju_lecture/typst-packages/VENDORED.md`。
 - 逐条归属见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

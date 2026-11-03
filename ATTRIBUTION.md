@@ -77,9 +77,13 @@ Markdown → Typst 直排模板，**不 import 任何 Typst Universe 包**，也
 
 ## v1.6.0 新增：填空式学习笔记链路（`skills/scholia-notes/`）
 
+**口径**：填空式学习笔记是**基于 Typst scholia 模板排版**的产物；配色与段落规范由本项目定义，
+见 scholia-notes 规范（`skills/scholia-notes/references/typography-spec.md`）。
+上游包的版权归其作者所有；本项目与上游作者无隶属关系、未获背书。
+
 | 项目 | 许可 | 版权人 | 说明 |
 | :--- | :--- | :--- | :--- |
-| [`@preview/scholia`](https://typst.app/universe/package/scholia) | MIT | [Eric Yang](https://github.com/Eryc123Y)（杨星宇） | 填空式学习笔记的排版引擎（knot / note / 右边栏 / 封面）。**v2.1.0 起随本仓库分发（vendored）**：`zju_lecture/typst-packages/preview/scholia/0.1.0/`，保留 `LICENSE` 与 `typst.toml`，只删除 README 与模板示例。 |
+| [`@preview/scholia`](https://typst.app/universe/package/scholia) | MIT | [Eric Yang](https://github.com/Eryc123Y)（杨星宇） | 基于 Typst scholia 模板排版的填空式学习笔记的排版引擎（knot / note / 右边栏 / 封面）。**v2.1.0 起随本仓库分发（vendored）**：`zju_lecture/typst-packages/preview/scholia/0.1.0/`，保留 `LICENSE` 与 `typst.toml`；删除文档，并对 `src/fonts.typ` / `src/lib.typ` 打补丁（见 `VENDORED.md`）。 |
 | [`@preview/frame-it`](https://typst.app/universe/package/frame-it) | MIT | Marc Thieme | scholia 的 knot 底层（figure + 原生 label 交叉引用）。随仓库分发，保留 `LICENSE`。 |
 | [`@preview/marginalia`](https://typst.app/universe/package/marginalia) | UNLICENSE | 公有领域 | scholia 的右边栏边注。随仓库分发，保留 `UNLICENSE`。 |
 | [`@preview/theoretic`](https://typst.app/universe/package/theoretic) | UNLICENSE | 公有领域 | noteworthy 的定理底层；随仓库分发，保留 `UNLICENSE`。 |
@@ -89,14 +93,18 @@ Markdown → Typst 直排模板，**不 import 任何 Typst Universe 包**，也
 
 > **v2.1.0 起，6 个 `@preview` 包已 vendor 进 `zju_lecture/typst-packages/`**，用于离线编译。
 > MIT 的「保留版权声明与许可全文」义务由此触发，已逐包保留 `LICENSE`；Unlicense 包保留 `UNLICENSE`。
-> 修改范围仅限**删除文档**（README / template / tests），代码、`typst.toml` 与许可文件逐字节保持上游原样。
-> 逐包版本见 `zju_lecture/typst-packages/VENDORED.md`。
+> 删除范围是文档（README / template / tests）；另外 `@preview/scholia` 的
+> `src/fonts.typ` / `src/lib.typ` 由本项目打了补丁（字体表改为可再分发栈、
+> 二/三级标题字号统一、边注段距补 0.4em），补丁在
+> `tools/vendor_typst_packages.py` 里可重放，逐条记录见
+> `zju_lecture/typst-packages/VENDORED.md`。
 
-**随包中文字体**（v2.1.0）：
+**随包中文字体**（v2.1.0 起 Serif，v2.2.0 起 Kai）：
 
 | 项目 | 许可 | 版权人 | 说明 |
 | :--- | :--- | :--- | :--- |
 | Noto Serif SC → `Notes Serif SC` | SIL OFL 1.1 | Copyright 2012 Google Inc.；字体内部 © 2017-2023 Adobe | GB2312 + 常用符号子集（约 7.5k 字），保留 `wght` 变量轴。已改名以避免与本机完整字体冲突；`zju_lecture/fonts/OFL.txt` 与 `FONT-NOTICE.md` 必须随包分发。 |
+| LXGW WenKai（霞鹜文楷）→ `Notes Kai SC` | SIL OFL 1.1 | Copyright 2021-2026 LXGW；上游还包含 Copyright 2020 The Klee Project Authors | GB2312 子集（约 3.6 MB），**上游有 Reserved Font Name，因此必须改名**；`zju_lecture/fonts/OFL-Kai.txt` 与 `FONT-NOTICE.md` 必须随包分发。 |
 
 **Typst 二进制**（不随仓库分发）：
 
@@ -127,15 +135,15 @@ Typst 编译 PDF 时会内嵌并子集化用到的字体。上游 `scholia` 的 
 
 - **阅读版讲义**（`handout_prelude.typ`，默认 PDF 链路）**默认就用可再分发的字体栈**：
   `STIX Two Text` → Typst 内嵌的 `Libertinus Serif`，标题同理，mono 用
-  `DejaVu Sans Mono`，中文优先 `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。
-  默认产物不内嵌任何商业字体，可以直接对外分享。想在本机还原上游观感，
-  模板里留了一份注释掉的 local 字体栈 —— 那种 PDF 不要再分发。
-- **填空笔记**走上游包：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans`，
-  但进不去 `note` / `sidenote` / `label-it`（这三个直接读包内 `default-fonts`）。
-  所以 `zju_build_study_notes` 的 PDF 里嵌了哪些字体，取决于本机装了什么；
-  要彻底可控只能 vendor 上游包并改 `src/fonts.typ`（届时须保留上游 MIT 声明）。
+  `DejaVu Sans Mono`，中文优先随包 `Notes Kai SC` / `Notes Serif SC`，再退
+  `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。默认产物不内嵌任何商业字体，
+  可以直接对外分享。想在本机还原上游观感，模板里留了一份注释掉的 local 字体栈 ——
+  那种 PDF 不要再分发。
+- **填空笔记**的 vendored `scholia` 已 patch `src/fonts.typ` 的 `default-fonts`：
+  `note` / `sidenote` / `label-it` 不再直接读商业字体，而是跟随同一套可再分发栈；
+  补丁由 `tools/vendor_typst_packages.py` 重放，记录在 `VENDORED.md`。
   `skills/scholia-notes/SKILL.md` 与 `references/troubleshooting.md` 给出了
-  「对外分发前换成 STIX Two」的覆盖写法与 `pdffonts` 核对方法。
+  `pdffonts` 核对方法。
 
 配色方面：**浅色主题（`soft-palette`）是本项目自定义的**，色值由
 `zju_lecture/prelude.typ` 定义、`tools/sync_palette.py` 同步到讲义模板与 Python 侧；

@@ -22,8 +22,10 @@
 // fails while loading the module. Import dynamically to keep this smoke test
 // runnable (as a skip) on machines without a dsh installation.
 let apply;
+let featureFlags;
+let readSetting;
 try {
-  ({ apply } = await import("../lib/index.js"));
+  ({ apply, featureFlags, readSetting } = await import("../lib/index.js"));
 } catch (error) {
   const message = String(error?.message ?? error);
   if (/Cannot find package '@deepseek-ai\//.test(message)) {
@@ -102,10 +104,43 @@ try {
     enableStudyNotes: true,
     enableLoginTools: true,
   });
+  // dsh projects `.volatile()` Config fields as live `{ get() }` references,
+  // not primitives. A plugin that compares the reference to `true` always
+  // sees "off", so this shape must be covered explicitly.
+  const ref = (value) => ({ get: () => value });
+  const live = runApply({
+    python: "",
+    timeoutMs: ref(60000),
+    registerSkill: ref(true),
+    renderPdf: ref(true),
+    enableSlides: ref(true),
+    embedSlideImages: ref(true),
+    enableStudyNotes: ref(true),
+    enableLoginTools: ref(true),
+  });
+
+  const flags = featureFlags({
+    renderPdf: ref(true),
+    enableSlides: ref(true),
+    embedSlideImages: ref(true),
+    enableStudyNotes: ref(true),
+    enableLoginTools: ref(true),
+    typstAutoInstall: ref(false),
+  });
+  if (flags.enableSlides !== true || flags.enableStudyNotes !== true || flags.enableLoginTools !== true) {
+    throw new Error(`volatile config refs were not unwrapped: ${JSON.stringify(flags)}`);
+  }
+  if (flags.typstAutoInstall !== false || flags.renderPdf !== true) {
+    throw new Error(`volatile config defaults are wrong: ${JSON.stringify(flags)}`);
+  }
+  if (readSetting({ enableSlides: ref(true) }, "enableSlides") !== true) {
+    throw new Error("readSetting did not unwrap a config reference");
+  }
 
   const names = core.tools.map((tool) => tool.name);
   const namesWithStudy = study.tools.map((tool) => tool.name);
   const namesFull = full.tools.map((tool) => tool.name);
+  const namesLive = live.tools.map((tool) => tool.name);
   if (names.length !== 6) throw new Error(`expected 6 core tools, got ${names.length}: ${names}`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (names.includes(optional)) throw new Error(`core mode registered optional tool ${optional}`);
@@ -114,8 +149,10 @@ try {
     throw new Error(`study mode tools are wrong: ${namesWithStudy}`);
   }
   if (namesFull.length !== 10) throw new Error(`expected 10 tools with every module, got ${namesFull.length}`);
+  if (namesLive.length !== 10) throw new Error(`volatile refs registered ${namesLive.length} tools, expected 10`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (!namesFull.includes(optional)) throw new Error(`full mode missing ${optional}`);
+    if (!namesLive.includes(optional)) throw new Error(`volatile refs missing ${optional}`);
   }
 
   for (const tool of [...core.tools, ...study.tools, ...full.tools]) {
@@ -154,6 +191,12 @@ try {
   if (!full.sections[0].text.includes("PPT 投影抓取已开启")) throw new Error("full prompt does not mark slides as on");
   if (!full.sections[0].text.includes("讲义插图模式已开启")) throw new Error("full prompt misses the image rule");
   if (!full.sections[0].text.includes("登录辅助工具已开启")) throw new Error("full prompt misses the login rule");
+  if (!live.sections[0].text.includes("PPT 投影抓取已开启")) throw new Error("volatile refs did not reach the prompt (slides)");
+  if (!live.sections[0].text.includes("填空笔记已开启")) throw new Error("volatile refs did not reach the prompt (study notes)");
+  if (!live.sections[0].text.includes("登录辅助工具已开启")) throw new Error("volatile refs did not reach the prompt (login tools)");
+  if (!core.sections[0].text.includes("复习版")) throw new Error("core prompt misses the review-note contract");
+  if (!core.sections[0].text.includes("例题")) throw new Error("core prompt misses the worked-example rule");
+  if (!core.sections[0].text.includes("自测题")) throw new Error("core prompt misses the self-test rule");
 
   const parseTool = core.tools.find((tool) => tool.name === "zju_parse_url");
   const rendered = parseTool.output.render({}, { text: "hello" });

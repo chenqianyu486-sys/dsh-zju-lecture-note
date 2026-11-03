@@ -23,7 +23,11 @@ from zju_lecture.handout import _PALETTE  # noqa: E402
 
 PRELUDE = os.path.join(ROOT, "zju_lecture", "prelude.typ")
 HANDOUT_TYP = os.path.join(ROOT, "zju_lecture", "handout_prelude.typ")
+VENDORED_FONTS = os.path.join(
+    ROOT, "zju_lecture", "typst-packages", "preview", "scholia", "0.1.0", "src", "fonts.typ"
+)
 FORMAT_SPEC = os.path.join(ROOT, "skills", "scholia-notes", "references", "format-spec.md")
+TYPOGRAPHY_SPEC = os.path.join(ROOT, "skills", "scholia-notes", "references", "typography-spec.md")
 
 #: 讲义链路用到的角色（与 tools/sync_palette.py 的 ROLES 一致）。
 ROLES = ("bg", "ink", "muted", "hairline", "thm", "def", "eg", "warn", "rule", "fillin")
@@ -147,6 +151,7 @@ class TestFontsCanBeRedistributed(unittest.TestCase):
             line for line in match.group("body").splitlines()
             if line.strip() and not line.strip().startswith("//")
         )
+        self.vendored = read_text(VENDORED_FONTS)
 
     def test_oFL_faces_come_first(self):
         self.assertRegex(self.active, r'body:\s*\(\s*"STIX Two Text"')
@@ -154,16 +159,37 @@ class TestFontsCanBeRedistributed(unittest.TestCase):
         self.assertIn('"STIX Two Math"', self.template)
 
     def test_no_proprietary_face_in_the_default_stack(self):
-        for proprietary in ("Optima", "Avenir Next", "Menlo"):
+        for proprietary in (
+            "Optima", "Avenir Next", "Menlo", "Songti SC", "SimSun",
+            "Microsoft YaHei", "Consolas",
+        ):
             self.assertNotIn(proprietary, self.active)
 
     def test_cjk_falls_back_to_oFL_fonts_first(self):
         body = self.active.split("body:", 1)[1].split("heading:", 1)[0]
-        self.assertLess(body.find("Noto Serif SC"), body.find("Songti SC"))
+        self.assertLess(body.find("Notes Kai SC"), body.find("Notes Serif SC"))
+        self.assertLess(body.find("Notes Serif SC"), body.find("Noto Serif SC"))
+        self.assertNotIn("Songti SC", body)
 
     def test_typst_embedded_faces_are_used_as_backstop(self):
         for embedded in ("Libertinus Serif", "DejaVu Sans Mono"):
             self.assertIn(embedded, self.active)
+
+    def test_vendored_scholia_defaults_are_patched(self):
+        """填空笔记链路直接读 vendored default-fonts，必须同样可再分发。"""
+        match = re.search(r"#let default-fonts = \((.*?)\n\)", self.vendored, re.S)
+        self.assertIsNotNone(match, "vendored fonts.typ 里找不到 default-fonts")
+        active = "\n".join(
+            line for line in match.group(1).splitlines()
+            if line.strip() and not line.strip().startswith("//")
+        )
+        for proprietary in (
+            "Optima", "Avenir Next", "Menlo", "Songti SC", "SimSun",
+            "Microsoft YaHei", "Consolas",
+        ):
+            self.assertNotIn(proprietary, active)
+        for required in ("Notes Kai SC", "Notes Serif SC", "STIX Two Text", "Libertinus Serif"):
+            self.assertIn(required, active)
 
     def test_page_is_filled_with_paper_white(self):
         self.assertIn("fill: palette.bg", self.template)
@@ -172,19 +198,24 @@ class TestFontsCanBeRedistributed(unittest.TestCase):
 class TestFormatSpecDocumentsThePalette(unittest.TestCase):
     def setUp(self):
         self.spec = read_text(FORMAT_SPEC)
+        self.typography = read_text(TYPOGRAPHY_SPEC)
 
     def test_single_source_and_sync_command(self):
-        self.assertIn("soft-palette", self.spec)
-        self.assertIn("sync_palette.py", self.spec)
+        self.assertIn("soft-palette", self.typography)
+        self.assertIn("sync_palette.py", self.typography)
+
+    def test_format_spec_points_at_typography_spec(self):
+        self.assertIn("typography-spec.md", self.spec)
 
     def test_every_role_is_documented(self):
         for role in ROLES:
-            self.assertIn("`%s`" % role, self.spec)
+            self.assertIn("`%s`" % role, self.typography)
         for hex_value in (
             "#FDFDFB", "#1A1A1C", "#6F7683", "#DBDFE6", "#33609B",
             "#20705F", "#8F6218", "#6350A8", "#93A6C4", "#8E97A3",
         ):
-            self.assertIn(hex_value, self.spec)
+            self.assertIn(hex_value, self.typography)
+
 
 
 if __name__ == "__main__":

@@ -4,6 +4,11 @@
 > 不是上游文档的翻译或复制。上游包的作者、许可与仓库地址列在下方；
 > 逐条归属见 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
 > 本项目与上游包无隶属关系，未获其背书。
+>
+> **本文件里的数值是上游 0.1.0 的行为。** 本项目实际生效的排版数值（字体、字号、
+> 版心、边注、封面）以 [`typography-spec.md`](typography-spec.md) 为准；vendored
+> 副本已由 `tools/vendor_typst_packages.py` 打补丁，差异见
+> [`../../../zju_lecture/typst-packages/VENDORED.md`](../../../zju_lecture/typst-packages/VENDORED.md)。
 
 - 包：`@preview/scholia:0.1.0`，MIT，入口 `src/lib.typ`，最低 Typst 0.13.0
 - 直接依赖：`@preview/marginalia:0.3.1`（右边栏）、`@preview/frame-it:2.0.0`（knot = figure）
@@ -126,7 +131,15 @@ marginalia 页边距（inner far 6mm/width 12mm，outer far 6mm/width 26mm）、
 
 每个角色都是**回退列表**：好看的字体在前，Typst 内嵌字体垫底，所以缺字体只会告警不会崩。
 
-| role | 默认列表 |
+> **下表是上游 0.1.0 的默认值，不是本项目实际生效的值。** 本项目的 vendored
+> 副本（`zju_lecture/typst-packages/preview/scholia/0.1.0/`）由
+> `tools/vendor_typst_packages.py` patch 过 `src/fonts.typ`：把 `Optima` /
+> `Avenir Next` / `Menlo` / `Songti SC` 换成可再分发栈（STIX Two / Libertinus /
+> 随包 `Notes Kai SC` / `Notes Serif SC` / Noto / Source Han）。实际生效的字体表
+> 与许可列见 [`typography-spec.md`](typography-spec.md) §1，修改记录见
+> `zju_lecture/typst-packages/VENDORED.md`。
+
+| role | 上游默认列表 |
 |---|---|
 | `body` | `("STIX Two Text", "Libertinus Serif")` |
 | `math` | `("STIX Two Math", "New Computer Modern Math")` |
@@ -143,6 +156,8 @@ Typst 包不能打包字体，所以 STIX Two / Optima / Avenir Next 需要自�
 1. 二级/三级标题是样式化块，不是真正的行内标题。
 2. `fonts:` 覆盖只作用于 `body` / `math` / `heading`；`note` 声音、`sidenote`、knot 标签直接读
    `default-fonts`，**不跟随覆盖**——中文 fallback 想全覆盖，只能 vendor 包改 `src/fonts.typ`。
+   本项目已经这样做了：vendored 副本的 `default-fonts` 已 patch 成可再分发栈，
+   因此 `note` / `sidenote` / `label-it` 也跟随同一套字体（见 `typography-spec.md` §1）。
 3. 配色只有 light/dark 两张固定卡，但可以用 `active.update(...)` 注入自定义调色板
    （必须放在 `#show: scholia.with(...)` 之后）。
 4. `scholia` 导入了 marginalia 的 `note` 并改名为 `_note`，因此包内的 `note` 是 scholia 的直觉块，

@@ -1,8 +1,8 @@
 {
   "name": "scholia-notes",
-  "version": "2.1.0",
-  "contentHash": "sha256:0574615db5ba3b7eab4893b4cc63ddf75983403cf170a783d082a18a8241c25b",
-  "fileCount": 11,
+  "version": "2.2.0",
+  "contentHash": "sha256:a98cc14179cca985186a83ba2f30dd099141570b75cb0c100f0cadf8f1f0743d",
+  "fileCount": 12,
   "files": [
     {
       "path": "LICENSE",
@@ -12,32 +12,32 @@
     },
     {
       "path": "README.md",
-      "sha256": "a75e1ddce18814a66a26057697f4263d877e33a4283402d17008bff709a0f778",
-      "size": 2941,
+      "sha256": "e51e3da695a6306cb9a961cfc74b5b6148e919ffd49eb62bc754558454a7147c",
+      "size": 3058,
       "mode": "0644"
     },
     {
       "path": "SKILL.md",
-      "sha256": "0574615db5ba3b7eab4893b4cc63ddf75983403cf170a783d082a18a8241c25b",
-      "size": 17946,
+      "sha256": "a98cc14179cca985186a83ba2f30dd099141570b75cb0c100f0cadf8f1f0743d",
+      "size": 17447,
       "mode": "0644"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
-      "sha256": "00bbabe1afcb5477486767607c953138639ce40ac62f2bcc289c0bf63fd1d2d5",
-      "size": 6262,
+      "sha256": "f763a0f2591303957b68e45489751572324f6c006afd53f41a6488c9823d609f",
+      "size": 6853,
       "mode": "0644"
     },
     {
       "path": "references/api.md",
-      "sha256": "7de41487ff332cc9e448edd22c7582df12c82fd3227f76498961aab5904a0f3c",
-      "size": 8064,
+      "sha256": "719a46370e206bc7a5dc46a55f2271a67a6de9cefef5afd6a5bc0b8558eaedff",
+      "size": 9221,
       "mode": "0644"
     },
     {
       "path": "references/format-spec.md",
-      "sha256": "f5445c5ce26e8f453768868092f174959ec858fb064c292377cf13efd9fcdc4b",
-      "size": 18209,
+      "sha256": "b7e0c0147a12bcca1c2c4f3c05be631e9b7be023dfed6ed76efc062973a6c8bc",
+      "size": 13789,
       "mode": "0644"
     },
     {
@@ -60,14 +60,20 @@
     },
     {
       "path": "references/style.md",
-      "sha256": "c7ca59160085b777c0444e4e9a3b2631b1728e3b2f56976a42ac8b1c91291ecc",
-      "size": 9555,
+      "sha256": "3f0c938a509cd5408b03564e0175acabdce87666fb68c21785938ec6482f69bf",
+      "size": 8389,
       "mode": "0644"
     },
     {
       "path": "references/troubleshooting.md",
-      "sha256": "584fd4f2aaac6b4ae693be9ce3259400917a569dbfe0da927801a2e2ae9a2b80",
-      "size": 8538,
+      "sha256": "83eba0bf04d9dfc0c9f192d7eafb8f7e9e0ff24d3da42147c7c17ba4888c3376",
+      "size": 6566,
+      "mode": "0644"
+    },
+    {
+      "path": "references/typography-spec.md",
+      "sha256": "4650ee5bca4a1a4bbab3ae9e204e562c29954bcfcc568a0cae11d09e047dbeee",
+      "size": 14713,
       "mode": "0644"
     }
   ]

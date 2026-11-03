@@ -24,10 +24,11 @@ chunked) and can download the projected slide screenshots as a PDF to reference 
 pages; that slide capture needs a ZJU login state (`ZJU_COOKIE` / `ZJU_COOKIE_FILE` or a local
 Edge profile), while transcript reading is public. It writes a note named after the class date
 and section, checks that note's Markdown so formulas and tables render, and renders the same
-note to a PDF locally with Typst. That PDF layout, and the optional fill-in-notes PDF, are based
-on the MIT-licensed [scholia](https://typst.app/universe/package/scholia) Typst template by Eric
-Yang; this project ships its own template instead of the upstream code and is not affiliated
-with or endorsed by the upstream author.
+note to a PDF locally with Typst. The optional fill-in study notes are typeset with the
+MIT-licensed [scholia](https://typst.app/universe/package/scholia) Typst template by Eric
+Yang; their color and paragraph specs are this project's own (see the scholia-notes spec).
+The reading PDF uses a self-contained template that follows scholia's light-theme design
+without copying source. This project is not affiliated with or endorsed by the upstream author.
 
 Not on npm yet, so the install command is the GitHub one:
 
@@ -87,9 +88,10 @@ opt-in as well, so its claim still matches what a reviewer sees after installing
 The transcript main path is unchanged.
 
 **Update — 2.0.2 (2026-11-03).** The entry now credits the PDF template too. Reading notes are
-rendered to a same-name PDF locally (cover, table of contents, sidenotes), and the optional
-fill-in-notes pipeline uses the MIT-licensed
-[`@preview/scholia`](https://typst.app/universe/package/scholia) Typst template by Eric Yang.
+rendered to a same-name PDF locally (cover, table of contents, sidenotes); the optional
+fill-in study notes are **typeset with the MIT-licensed
+[`@preview/scholia`](https://typst.app/universe/package/scholia) Typst template by Eric Yang**,
+with this project's own color and paragraph spec (see `skills/scholia-notes/references/typography-spec.md`).
 The reading-note template is this project's own (`zju_lecture/handout_prelude.typ`, self-contained,
 no upstream import); it follows scholia's light-theme design without copying source. The entry
 says both things, plus "not affiliated with or endorsed by" the upstream author. Full per-file

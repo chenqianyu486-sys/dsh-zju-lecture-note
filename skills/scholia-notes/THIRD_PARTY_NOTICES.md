@@ -3,6 +3,9 @@
 本目录（`skills/scholia-notes/`）是一套**独立的第三方工作流说明**，随 `dsh-zju-lecture-note`
 插件一同开源。它**不是** `@preview/scholia` 包的官方作品，也未获其作者背书。
 
+**口径**：填空式学习笔记是**基于 Typst scholia 模板排版**的产物；配色与段落规范由本项目
+定义，见 [`references/typography-spec.md`](references/typography-spec.md)。
+
 ## 1. 本目录的原创部分（MIT）
 
 | 文件 | 内容 |
@@ -42,9 +45,12 @@
 不复制其 `src/`**；色值本身见 §3.1。
 
 > **MIT 的硬性义务已履行**：每个 MIT 包都随目录保留了上游 `LICENSE` 与版权声明；
-> Unlicense 包保留 `UNLICENSE` 文本。修改范围仅限删除 README 与模板示例，代码与
-> `typst.toml` 保持上游原样。分发本插件（npm 包 / MCode zip）时必须把
-> `zju_lecture/typst-packages/` 一并带上，否则等于分发了代码却不带许可。
+> Unlicense 包保留 `UNLICENSE` 文本。删除范围是 README 与模板示例；另外
+> `@preview/scholia` 的 `src/fonts.typ` / `src/lib.typ` 由本项目打了补丁
+> （字体表改为可再分发栈、二/三级标题字号统一、边注段距补 0.4em），补丁在
+> `tools/vendor_typst_packages.py` 里可重放，逐条记录在
+> `zju_lecture/typst-packages/VENDORED.md`。分发本插件（npm 包 / MCode zip）时
+> 必须把 `zju_lecture/typst-packages/` 一并带上，否则等于分发了代码却不带许可。
 
 本插件与 `@preview/scholia` 的作者没有隶属关系，也未获其背书；「scholia」仅用于指代所依赖的包。
 
@@ -55,28 +61,28 @@ Typst 编译 PDF 时会内嵌并子集化用到的字体。上游 `scholia` 的�
 `STIX Two` 为 SIL OFL，可自由再分发；`Libertinus Serif`、`New Computer Modern`、
 `DejaVu Sans Mono` 由 Typst 运行时内嵌。
 
-本项目在 `SKILL.md` 中明确要求：**对外分发 PDF 前**把字体覆盖成 `STIX Two` 或 Typst 内嵌字体，
-避免把商业字体子集带进可公开分发的文件。阅读版讲义（`zju_lecture/handout_prelude.typ`）
-**默认就用可再分发的字体栈**（STIX Two → 内嵌 Libertinus，中文优先随包 `Notes Serif SC`），
-不依赖任何商业字体。
+本项目在 `SKILL.md` 中明确要求：**对外分发 PDF 前**核对字体，避免把商业字体子集
+带进可公开分发的文件。两条 PDF 链路现在**默认就用可再分发的字体栈**：
+`STIX Two` → Typst 内嵌 `Libertinus`，中文优先随包 `Notes Kai SC` /
+`Notes Serif SC`，再退 `Noto` / `Source Han`（皆 OFL），不依赖任何商业字体。
+填空笔记链路的 vendored `scholia` 已 patch `default-fonts`，`note` / `sidenote` /
+`label-it` 也跟随同一套字体。
 
-### 3.0 随包字体 `Notes Serif SC`（v2.1.0 起）
+### 3.0 随包字体（v2.2.0 起）
 
-| 项 | 值 |
-| :--- | :--- |
-| 文件 | `zju_lecture/fonts/NotesSerifSC-Subset.ttf` |
-| 上游 | Noto Serif SC（SIL OFL 1.1，无 Reserved Font Name） |
-| 版权 | Copyright 2012 Google Inc.；字体内部 © 2017-2023 Adobe |
-| 修改 | GB2312 + ASCII + 常用标点/数学符号子集，关闭 hinting，**改名** |
-| 许可文件 | `zju_lecture/fonts/OFL.txt` + `FONT-NOTICE.md`（必须随包分发） |
+| 文件 | 上游 | 许可 | 修改 |
+| :--- | :--- | :--- | :--- |
+| `NotesKaiSC-Subset.ttf` | LXGW WenKai（霞鹜文楷）v1.530 | SIL OFL 1.1（`OFL-Kai.txt`） | GB2312 子集、关闭 hinting、**改名**（上游有 Reserved Font Name） |
+| `NotesSerifSC-Subset.ttf` | Noto Serif SC | SIL OFL 1.1（`OFL.txt`） | GB2312 子集、关闭 hinting、**改名** |
 
-OFL 允许子集化与再分发，但要求：衍生字体继续以 OFL 分发、随附许可与版权声明、
-不得单独售卖字体。改名是为了避免与本机完整版 `Noto Serif SC` 重名（Typst 选中哪个字体面
-不确定），并避开 Noto / Source / ZJU 商标。
+版权：Notes Kai SC 为 Copyright 2021-2026 LXGW，上游还包含 Copyright 2020
+The Klee Project Authors；Notes Serif SC 为 Copyright 2012 Google Inc.，
+字体内部 © 2017-2023 Adobe。`OFL.txt` / `OFL-Kai.txt` / `FONT-NOTICE.md`
+必须随包分发；OFL 要求衍生字体继续以 OFL 分发、不得单独售卖、不得改回上游名称。
 
-其余情况：本仓库**不分发任何商业字体**，只写字体名；缺字时 Typst 回退到内嵌字体族与系统字体。
-若 PDF 里出现了 `SimSun` / `Microsoft YaHei` 等系统商业字体，那是生僻字回退的结果，
-这类 PDF 不宜对外分发。
+其余情况：本仓库**不分发任何商业字体**，只写字体名；缺字时 Typst 回退到内嵌字体族
+与随包 OFL 字体。若 PDF 里出现了 `SimSun` / `Microsoft YaHei` 等系统商业字体，
+那是生僻字回退的结果，这类 PDF 不宜对外分发。
 
 ## 3.1 配色
 

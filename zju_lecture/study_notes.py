@@ -102,6 +102,31 @@ _KNOT_SEPARATORS = ("——", "—", " - ", " – ", " -", "- ")
 #: 填空线：连续 4 个及以上下划线算一个空位。
 _FILLIN_RE = re.compile(r"_{4,}")
 
+#: 标题里手写的编号：渲染器自己编号，这里只负责剥掉。
+#:
+#: 两条链路共用同一套规则（阅读版从本模块 import），避免「A 剥了、B 没剥」
+#: 导致同一份底稿在两种 PDF 里标题不一致。
+HEADING_NUM_RES = (
+    # 中文序号：一、 / （二） / 三.
+    re.compile(r"^[（(]?[一二三四五六七八九十百零〇]+[）)]?[、.．,，:：)）]\s*"),
+    # 带点分层的阿拉伯编号：2.1 / 2.1.3（必须整体剥掉，否则会剩一个「1」）
+    re.compile(r"^\d+(?:\.\d+)+"),
+    # 单层阿拉伯编号：1. / 2、 / 3（后面必须有分隔符或空格）
+    re.compile(r"^\d{1,2}(?:[、.．,，:：)）]|\s+)"),
+)
+
+
+def strip_heading_number(title: str) -> str:
+    """剥掉标题里手写的编号（``一、`` / ``1.2`` / ``3 ``）。
+
+    渲染器会给标题自动编号；手写编号会叠成「1 1.」，见 format-spec.md §3。
+    """
+    for pattern in HEADING_NUM_RES:
+        stripped = pattern.sub("", title, count=1)
+        if stripped != title:
+            return stripped.strip()
+    return title
+
 #: 每节的框（所有类型合计）上限。超过就是「滥用」——
 #: 口径见 ``skills/scholia-notes/references/format-spec.md`` §2.2。
 KNOT_BUDGET_PER_SECTION = 2
@@ -1186,7 +1211,7 @@ def render_typst(
         heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading:
             level = len(heading.group(1))
-            title = heading.group(2).strip()
+            title = strip_heading_number(heading.group(2).strip())
             if level == 1 and title in ("封面", "Cover", "cover"):
                 # 封面块由 _render_cover 单独处理：标题行与它下面的
                 # `- key: value` 都不能再进正文，否则会在正文里多出一张列表。
@@ -1246,11 +1271,12 @@ def render_typst(
     body_text = "\n".join(lines_out).strip()
 
     cover = _render_cover(normalized)
-    # 中文字体族：插件自带的 Notes Serif SC（OFL 子集）排第一，保证任何机器
-    # 都有中文与真正的粗体面；生僻字继续回退到系统字体。
+    # 中文字体族：插件自带的 Notes Kai SC（LXGW WenKai 子集，OFL）排第一，
+    # 复现参考图的楷体观感；Notes Serif SC（Noto Serif SC 子集）兜底宋体。
+    # 生僻字继续回退到 Noto / Source Han（OFL）；不把系统商业字体放进列表。
     cjk_fonts = (
-        '"Notes Serif SC", "Noto Serif SC", "Source Han Serif SC", '
-        '"Songti SC", "SimSun"'
+        '"Notes Kai SC", "Notes Serif SC", "Noto Serif SC", '
+        '"Source Han Serif SC"'
     )
     setup = [
         '#import "prelude.typ": *',

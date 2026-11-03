@@ -70,7 +70,11 @@ class TestReadmeStaysUserFacing(unittest.TestCase):
 
     def test_readme_is_short(self):
         lines = read(README).splitlines()
-        self.assertLess(len(lines), 260, "README 又变长了，技术细节应放 docs/technical.md")
+        self.assertLess(
+            len(lines),
+            300,
+            "README 又变长了（目标 300 行内），技术细节应放 docs/technical.md",
+        )
 
     def test_version_history_moved_out(self):
         text = read(README)

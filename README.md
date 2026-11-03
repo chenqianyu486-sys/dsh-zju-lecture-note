@@ -28,7 +28,8 @@
   PDF 失败不影响 Markdown，Agent 只多收一行路径。
 - **内容不丢**：字幕按分钟 / 逐句 / 分块读取；可读本地 PPTX / DOCX / PDF 课件校准术语；
   可选把课堂投影截图合成 PDF。
-- **能动手复习**：可选「填空式学习笔记」，把讲义变成 scholia 风格的填空 PDF + 逐页 PNG。
+- **能动手复习**：可选「填空式学习笔记」——**基于 Typst scholia 模板排版的填空式学习笔记**；
+  配色与段落规范由本项目定义，见 [scholia-notes 规范](skills/scholia-notes/references/typography-spec.md)。
 - **隐私优先**：Cookie 不进工具参数与返回值，全输出脱敏；敏感文件拒绝；TLS 永不降级。
 - **到处能用**：dsh 原生插件、标准 MCP、MiniMax Code 插件包、命令行四种入口。
 
@@ -36,11 +37,18 @@
 
 ### 1. DeepSeek Harness（dsh）
 
+从 npm 安装（推荐，2.1.0 起）：
+
+```bash
+dsh plugin --profile desktop add dsh-zju-lecture-note
+```
+
+或直接从 GitHub 仓库安装（跟随最新提交）：
+
 ```bash
 dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 ```
 
-- 还没发布到 npm，先用上面的 `github:` 写法；发布后可用包名 `dsh-zju-lecture-note`。
 - `desktop` profile 请用 **dsh 自带的 dsh 命令**（`resources/runtime/cli/bin/dsh.cmd`），
   不要用 npm 全局安装的 `dsh`。
 - **装完 / 更新后完全重启 DeepSeek Harness**（不是刷新页面）：设置页的
@@ -121,17 +129,24 @@ Agent 只多收到一行 `PDF: <路径>（N 页）`。失败时 Markdown 照常�
 | `<def:x>` + `@def:x` | 编号与回指（原生交叉引用） |
 
 语义、预算（每节方框 ≤ 2 个）与数学写法由
-[格式规范](skills/scholia-notes/references/format-spec.md) 统一规定，填空笔记与阅读版讲义两条链路共用。
+[格式规范](skills/scholia-notes/references/format-spec.md) 统一规定；
+字体、字号、版心、边注等排版数值以
+[排版规范](skills/scholia-notes/references/typography-spec.md) 为唯一真相源。
+填空笔记与阅读版讲义两条链路共用同一套参数。
 
 ### 填空式学习笔记（可选）
 
-打开 `enableStudyNotes` 后，`zju_build_study_notes` 把讲义变成**能自己填的复习笔记**：
-`mode=draft` 生成填空底稿，`mode=compile` 排成 scholia PDF + 逐页 PNG。
+打开 `enableStudyNotes` 后，`zju_build_study_notes` 产出**基于 Typst scholia 模板排版的
+填空式学习笔记**：`mode=draft` 生成填空底稿，`mode=compile` 排成 PDF + 逐页 PNG。
+**配色与段落规范由本项目定义**，见
+[scholia-notes 规范](skills/scholia-notes/references/typography-spec.md)。
 工具只做搬运与排版，哪句是定理、哪里挖空仍由你判断——自动挖空等于替读者决定「考什么」。
 
-字体：两条 PDF 链路都优先用随包的 **Notes Serif SC**（Noto Serif SC 的 GB2312 子集，OFL），
-生僻字回退系统字体；对外分发 PDF 前按 [格式规范 §7](skills/scholia-notes/references/format-spec.md)
-用 `pdffonts` 确认没嵌入 SimSun 等系统商业字体。
+字体：两条 PDF 链路默认都用随包的 **Notes Kai SC**（LXGW WenKai / 霞鹜文楷的
+GB2312 子集）与 **Notes Serif SC**（Noto Serif SC 的 GB2312 子集），均为 SIL OFL，
+不再依赖系统商业字体；生僻字回退到 Noto / Source Han（OFL）。对外分发 PDF 前按
+[排版规范 §8](skills/scholia-notes/references/typography-spec.md) 用 `pdffonts`
+确认没嵌入 SimSun / KaiTi 等系统商业字体。
 
 ### 投影截图（可选，默认关闭）
 
@@ -193,7 +208,14 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
 它们默认关闭。到设置里打开 `enableSlides` / `enableLoginTools` 后才注册；字幕主链路不需要登录。
 
 **只解压 zip 启用，报 `Cannot find package '@deepseek-ai/schemastery'`？**
-那是 peer 依赖，由 pnpm 在 `dsh plugin add` 时装进 profile。请用 `github:` 或 `file:` 方式安装。
+那是 peer 依赖，由 pnpm 在 `dsh plugin add` 时装进 profile。请用 npm 包名、`github:` 或 `file:` 方式安装。
+
+**市场安装报 `connection to github.com timed out after 5000ms`？**
+这是 dsh 宿主在 pnpm 启动前做 GitHub 连通性预检（`git ls-remote`，默认 5 秒）超时，不是插件本身报错。
+优先用上面的 npm 命令安装，不经过 GitHub；必须走 GitHub 源时，先确认
+`git ls-remote https://github.com/chenqianyu486-sys/dsh-zju-lecture-note HEAD` 能在 5 秒内返回。
+超时的话给 git 配代理，并让 dsh 进程能读到 `HTTPS_PROXY` / `HTTP_PROXY`（它不读 Windows 系统代理）；
+或在该 profile 的 `cordis.patch.yml` 里把 `plugin-manager` 的 `githubConnectionTimeoutMs` 调大后重启。
 
 **字幕抓取失败（证书 / 代理）？**
 插件不会关闭证书校验，按 `certifi` → 随包 `cacert.pem` → 系统根证书三级回落，
@@ -220,10 +242,13 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
 **PDF 排版的上游模板**（特别感谢）：
 
 - [`@preview/scholia`](https://typst.app/universe/package/scholia) **0.1.0**（MIT，© Eric Yang / 杨星宇，
-  仓库 [`Eryc123Y/scholia`](https://github.com/Eryc123Y/scholia)）：填空式学习笔记的排版引擎
-  （knot / note / 边注 / 封面 / 淡彩主题）。**该包及其依赖已随本仓库分发（vendored）**在
-  `zju_lecture/typst-packages/`，使填空笔记编译不再依赖 Typst 包注册表；逐包保留上游
-  `LICENSE` / `UNLICENSE` 与 `typst.toml`，只删除了 README 与模板示例。
+  仓库 [`Eryc123Y/scholia`](https://github.com/Eryc123Y/scholia)）：**基于 Typst scholia 模板
+  排版的填空式学习笔记**的排版引擎（knot / note / 边注 / 封面 / 淡彩主题）；配色与段落规范
+  由本项目定义，见 [scholia-notes 规范](skills/scholia-notes/references/typography-spec.md)。
+  **该包及其依赖已随本仓库分发（vendored）**在 `zju_lecture/typst-packages/`，使填空笔记编译
+  不再依赖 Typst 包注册表；逐包保留上游 `LICENSE` / `UNLICENSE` 与 `typst.toml`，删除 README
+  与模板示例，并对 `src/fonts.typ` / `src/lib.typ` 打了补丁（见
+  [`VENDORED.md`](zju_lecture/typst-packages/VENDORED.md)）。
   本插件的阅读版讲义 PDF 使用自研模板（`zju_lecture/handout_prelude.typ`），
   **视觉设计参考了它的浅色 notes 主题**，未拷贝其源码。
 - [`@preview/frame-it`](https://typst.app/universe/package/frame-it)（MIT，© Marc Thieme）、
@@ -238,10 +263,11 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
   逐条归属与「未拷贝代码」边界见 [ATTRIBUTION.md](ATTRIBUTION.md) 与
   [THIRD_PARTY_NOTICES.md](skills/scholia-notes/THIRD_PARTY_NOTICES.md)。
 
-**随包中文字体**：`zju_lecture/fonts/NotesSerifSC-Subset.ttf` 是
-[Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC) 的 GB2312 子集（OFL 1.1，
-© 2012 Google / © 2017-2023 Adobe），已改名以免与本机完整字体冲突；`OFL.txt` 与 `FONT-NOTICE.md`
-必须随字体一起分发。
+**随包中文字体**：`zju_lecture/fonts/NotesKaiSC-Subset.ttf` 是
+[LXGW WenKai](https://github.com/lxgw/LxgwWenKai)（霞鹜文楷）v1.530 的 GB2312 子集，
+`NotesSerifSC-Subset.ttf` 是 [Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC)
+的 GB2312 子集，均为 SIL OFL 1.1；两个字体都已改名以免与本机完整字体冲突。
+`OFL.txt` / `OFL-Kai.txt` 与 `FONT-NOTICE.md` 必须随字体一起分发。
 
 其他项目：
 

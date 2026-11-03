@@ -41,28 +41,29 @@
 // 所以这里默认用 SIL OFL 的 STIX Two，再退到 Typst 运行时内嵌的 Libertinus /
 // New Computer Modern / DejaVu —— 任何机器都出字，且产物可以对外分享。
 //
-// 中文第一顺位是插件自带的 **Notes Serif SC**（Noto Serif SC 的 GB2312 子集，
-// OFL，见 zju_lecture/fonts/FONT-NOTICE.md）：它保证任何机器都有中文、且标题
-// 有真正的粗体面。生僻字不在子集里时，Typst 会继续往后回退到 Noto Serif SC /
-// Source Han / Songti SC / SimSun（后者仅本机兜底，其子集不宜随 PDF 对外分发）。
-// 本机想看上游原味：把注释里的 local 版换进来 —— 只限自用，别分发那种 PDF。
+// 中文第一顺位是插件自带的 **Notes Kai SC**（LXGW WenKai 的 GB2312 子集，
+// OFL，见 zju_lecture/fonts/FONT-NOTICE.md）：参考图的楷体观感在任何机器上
+// 都能复现；第二顺位 Notes Serif SC（Noto Serif SC 子集）提供宋体兜底。
+// 生僻字不在子集里时，Typst 会继续往后回退到 Noto Serif SC / Source Han
+// Serif SC（皆 OFL）；再往后没有系统商业字体，宁可缺字也不把 SimSun /
+// Microsoft YaHei 的子集嵌进可分发的 PDF。
 #let fonts = (
   body: (
     "STIX Two Text", "Libertinus Serif",
-    "Notes Serif SC",
-    "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun",
+    "Notes Kai SC", "Notes Serif SC",
+    "Noto Serif SC", "Source Han Serif SC",
   ),
   heading: (
     "STIX Two Text", "Libertinus Serif",
-    "Notes Serif SC",
-    "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun",
+    "Notes Kai SC", "Notes Serif SC",
+    "Noto Serif SC", "Source Han Serif SC",
   ),
   sans: (
     "STIX Two Text", "Libertinus Serif",
-    "Notes Serif SC",
-    "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei",
+    "Notes Kai SC", "Notes Serif SC",
+    "Noto Sans SC", "Source Han Sans SC",
   ),
-  mono: ("DejaVu Sans Mono", "Consolas"),
+  mono: ("DejaVu Sans Mono", "Notes Kai SC", "Notes Serif SC"),
 )
 // #let fonts = (
 //   body: ("STIX Two Text", "Libertinus Serif", "Noto Serif SC", "Songti SC", "SimSun"),
@@ -77,7 +78,7 @@
   margin: (left: 2.4cm, right: 3.9cm, top: 2.0cm, bottom: 2.3cm),
   // 纸白而不是纯白：与 palette.bg 一致，淡彩色块也朝这个底色混。
   fill: palette.bg,
-  footer: context align(right, text(font: fonts.sans, size: 8pt, fill: palette.muted)[
+  footer: context align(right, text(font: fonts.sans, size: 0.8em, fill: palette.muted)[
     #counter(page).display()
   ]),
 )
@@ -158,6 +159,7 @@
 #let example(number, body, title: none) = knot("Example", number, body, title: title, tone: "eg")
 
 // 直觉：淡蓝底 + 左侧细竖线，语气是「人话版」。
+// 块内正文**不缩进**（与填空笔记一致）：块本身的左内边距已经把内容与正文分开。
 #let note(body) = block(
   width: 100%,
   breakable: true,
@@ -169,7 +171,7 @@
   {
     set align(left)
     set text(font: fonts.sans, size: 0.92em, fill: palette.ink)
-    [#h(2em) #body]
+    [#body]
   },
 )
 
@@ -200,12 +202,14 @@
 )
 
 // 证明：不套框，只给斜体 Proof. 与行末的 qed 方块。
+// qed 用 box(rect(...)) 而不是裸 rect：rect 是块级元素，会另起一行；
+// 填空笔记链路的 mark() 也是 box，两条链路的方块才会都落在行末。
 #let proof(body) = block(above: 6pt, below: 8pt, {
   text(font: fonts.heading, style: "italic", fill: palette.muted)[Proof.]
   h(0.4em)
   body
   h(1fr)
-  rect(width: 6pt, height: 6pt, fill: palette.thm, radius: 0.5pt, inset: 0pt)
+  box(baseline: 1pt, rect(width: 6pt, height: 6pt, fill: palette.thm, radius: 0.5pt, inset: 0pt))
 })
 
 // 旁注：不套框，斜体青绿。
@@ -222,6 +226,8 @@
   context {
     let anchor = here().position()
     let note-width = 2.6cm
+    // 版心右边界 = 21cm - 3.9cm = 17.1cm；边注左边界 = 21 - 2.6 - 0.6 = 17.8cm，
+    // 因此边注与版心的实际间距是 0.7cm（不是 0.6cm；0.6cm 是边注到页边的距离）。
     let dx = page.width - anchor.x - note-width - 0.6cm
     place(
       top + left,
@@ -229,7 +235,7 @@
       box(width: note-width, {
         set align(left)
         set text(font: fonts.sans, size: 0.82em, fill: palette.muted)
-        set par(leading: 0.55em, spacing: 0.4em)
+        set par(leading: 0.5em, spacing: 0.4em)
         if symbol != none {
           text(fill: palette.thm, weight: "bold")[#symbol]
           h(0.25em)
@@ -281,15 +287,15 @@
 // 封面：独立页、无页码，排完把页码重置为 1（正文第一页从 1 开始）。
 #let cover(title, subtitle: none, author: none, date: none, kicker: none) = {
   // 封面用左右对称的版心，才能在物理页面上真正居中（正文版心右侧留了边注栏）。
-  page(footer: none, margin: (left: 2.4cm, right: 2.4cm, top: 2cm, bottom: 2.3cm))[
+  page(footer: none, margin: (left: 2.5cm, right: 2.5cm, top: 2cm, bottom: 2.3cm))[
     #v(1fr)
     #align(center)[
       #if kicker != none {
-        text(font: fonts.heading, size: 9pt, tracking: 3pt, fill: palette.muted)[#upper(kicker)]
-        v(1.0cm)
+        text(font: fonts.heading, size: 10pt, tracking: 3pt, fill: palette.muted)[#upper(kicker)]
+        v(0.9cm)
       }
-      #text(font: fonts.heading, weight: "bold", size: 28pt, fill: palette.thm)[#title]
-      #v(0.55cm)
+      #text(font: fonts.heading, weight: "bold", size: 30pt, tracking: 1.5pt, fill: palette.thm)[#title]
+      #v(0.5cm)
       #line(length: 32%, stroke: 1pt + palette.rule)
       #if subtitle != none {
         v(0.5cm)
@@ -299,11 +305,11 @@
     #v(1fr)
     #align(center)[
       #if author != none {
-        text(font: fonts.sans, size: 11pt, fill: palette.ink)[#author]
+        text(font: fonts.sans, size: 11pt, tracking: 0.5pt, fill: palette.ink)[#author]
       }
       #if date != none {
         v(0.3em)
-        text(font: fonts.sans, size: 9pt, fill: palette.muted)[#date]
+        text(font: fonts.sans, size: 9pt, tracking: 0.5pt, fill: palette.muted)[#date]
       }
     ]
     #v(1.6cm)

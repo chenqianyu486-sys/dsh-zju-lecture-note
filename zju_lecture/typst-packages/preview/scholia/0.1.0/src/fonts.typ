@@ -3,14 +3,26 @@
 // so every list degrades to something that exists everywhere, zero install.
 // (A Typst package cannot ship fonts; downstream users only have embedded +
 //  their own system fonts. Missing first choices just warn and fall back.)
+//
+// 本项目补丁（由 tools/vendor_typst_packages.py 重放，见 VENDORED.md）：
+// 上游把 Optima / Avenir Next / Menlo / Songti SC 放在首选位，它们都是商业
+// 专有字体，命中后会被子集嵌进 PDF，产物就不适合再分发。这里统一换成
+// 可再分发栈：STIX Two / Libertinus（Typst 内嵌）/ 随包 Notes Kai SC 与
+// Notes Serif SC / Noto / Source Han（OFL）。
 
 #let default-fonts = (
   body: ("STIX Two Text", "Libertinus Serif"),
   math: ("STIX Two Math", "New Computer Modern Math"),
-  heading: ("Optima", "Libertinus Serif"),
-  sans: ("Avenir Next", "Libertinus Serif"), // the informal "intuition voice"
-  mono: ("Menlo", "DejaVu Sans Mono"),
-  cjk: ("Songti SC",), // appended after body/sans for 中文 glyph fallback
+  heading: (
+    "STIX Two Text", "Libertinus Serif",
+    "Notes Kai SC", "Notes Serif SC", "Noto Serif SC", "Source Han Serif SC",
+  ),
+  sans: (
+    "STIX Two Text", "Libertinus Serif",
+    "Notes Kai SC", "Notes Serif SC", "Noto Sans SC", "Source Han Sans SC",
+  ),
+  mono: ("DejaVu Sans Mono", "Notes Kai SC", "Notes Serif SC"),
+  cjk: ("Notes Kai SC", "Notes Serif SC", "Noto Serif SC", "Source Han Serif SC"),
 )
 
 // shallow-merge user overrides over the defaults

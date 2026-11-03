@@ -2,53 +2,17 @@
 
 ## 1. `warning: unknown font family` 一大串 —— 可以忽略
 
-scholia 的默认字体表里 `STIX Two Text`、`STIX Two Math`、`Optima`、`Avenir Next`、`Menlo`、
-`Songti SC` 都不是 Typst 内嵌字体，Windows/Linux 上几乎必然缺失，于是编译时刷一片告警。
-
-实测结论：**告警不影响出字**。Typst 回退到内嵌字体族，中英文都正常渲染，PDF 完整。
-不要为了消告警去改文档结构。
-
-想让观感接近官方预览：
-
-```powershell
-typst fonts   # 先看本机已有哪些字体名，名字必须与这里列出的完全一致
-```
-
-- 免费装 **STIX Two**（Text + Math，OFL）→ body/math 立刻到位。
-- 标题/直觉层想要 Optima / Avenir Next 的观感，只能改 `fonts:` 覆盖成手头近似的字体。
+两条链路的默认字体表是 `STIX Two` / `Libertinus` / 随包 `Notes Kai SC` 与
+`Notes Serif SC` / `Noto` / `Source Han`。本机没装 STIX Two 时会刷告警；
+Typst 回退到 Libertinus 或随包字体，中英文照常出字，PDF 完整。
+不要为了消告警去改文档结构，也不需要再装 Optima / Avenir Next。
 
 ## 2. 中文要不要加 `fonts:` 覆盖
 
-**不用加也能出字**（已在 Windows 上实测中文标题、`note`、`theorem`、`sidenote`、封面全部正常）。
-
-加覆盖只是为了**指定字形**，例如：
-
-```typst
-#show: scholia.with(
-  theme: "light",
-  fonts: (
-    cjk: ("Noto Serif SC", "Source Han Serif SC", "SimSun"),
-    heading: ("Microsoft YaHei", "Noto Sans SC"),
-  ),
-)
-```
-
-覆盖的生效范围（源码 `lib.typ` / `theorems.typ` 实测）：
-
-| 部件 | 是否吃 `fonts:` 覆盖 |
-|---|---|
-| 正文、标题、页脚 | ✅ `body` / `heading` / `sans`(页脚) 生效，`cjk` 也生效 |
-| 公式 | ✅ `math` 生效 |
-| 行内代码 | ✅ `mono` 生效 |
-| `note` / `whisper` / `TODO` | ❌ 直接读包内 `default-fonts` |
-| `sidenote` | ❌ 直接读包内 `default-fonts` |
-| knot 标题、`Proof.`、`label-it`、`cover` 里的 heading/sans | ❌ 直接读包内 `default-fonts` |
-
-想让中文在 `note` 里也用指定字体，只有两条路：
-
-1. vendor 一份包：下载 `https://packages.typst.org/preview/scholia-0.1.0.tar.gz`，解包后改
-   `src/fonts.typ` 的 `cjk`（把 `("Songti SC",)` 换成你的字体栈），再从本地目录 import。
-2. 接受回退字形——实测回退字形的可读性完全够用。
+**不用。** vendored `scholia` 的 `default-fonts` 已由本项目 patch 成可再分发栈，
+`note` / `sidenote` / `label-it` 也跟随同一套字体；底稿与模板都不需要再写
+`fonts:`。要换字形时才覆盖，实际字体表见
+[`typography-spec.md`](typography-spec.md) §1。
 
 ## 3. `lang` 被写死为 `"en"`
 
@@ -159,29 +123,12 @@ typst compile --pages 1-2 main.typ "head-{p}.png"
 
 ## 11. 要把 PDF 对外分发 —— 先查字体
 
-Typst 编译 PDF 时会**内嵌并子集化**用到的字体。上游默认字体表里
-`Optima`、`Avenir Next`、`Menlo`、`Songti SC` 都是**商业专有字体**：
-本机一旦装了并被用上，这些字体的子集就会进到 PDF 里；再把该 PDF 发给别人或公开上传，
-就属于字体分发，多数商业字体 EULA 明确限制。
+两条链路的默认字体栈**已经是可再分发的**：STIX Two / Libertinus / 随包
+`Notes Kai SC` 与 `Notes Serif SC` / Noto / Source Han / DejaVu。商业专有字体
+（Optima / Avenir Next / Menlo / Songti SC / SimSun / Microsoft YaHei / Consolas）
+不在生效列表里；vendored `scholia` 的 `default-fonts` 也已 patch，`note` /
+`sidenote` / `label-it` 不再单独读上游商业字体。
 
-- **只是自己复习 / 存档**：不用管，回退到 Typst 内嵌的 Libertinus 即可。
-- **要对外分发**：把字体覆盖成 `STIX Two`（SIL OFL，可自由再分发）或 Typst 内嵌字体。
-
-```typst
-#show: scholia.with(
-  theme: "light",
-  fonts: (
-    body: ("STIX Two Text", "Libertinus Serif"),
-    math: ("STIX Two Math", "New Computer Modern Math"),
-    heading: ("STIX Two Text", "Libertinus Serif"),
-    sans: ("STIX Two Text", "Libertinus Serif"),
-  ),
-)
-```
-
-⚠️ `fonts:` 覆盖**进不了** `note` / `sidenote` / `label-it`（这三个直接读包内 `default-fonts`），
-所以只覆盖 `body` 并不能保证 PDF 里没有商业字体。要彻底可控就 vendor 包改 `src/fonts.typ`——
-vendor 时**必须**把上游 `LICENSE` 与版权声明一起带上（MIT 的硬性义务），
-见 [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)。
-
-检查某个 PDF 里嵌了什么字体：`pdffonts out.pdf`（poppler），或用任何 PDF 阅读器的「属性 → 字体」。
+对外分发前仍要核对一次：`pdffonts out.pdf`（poppler）或 PDF 阅读器的
+「属性 → 字体」。若看到上述商业字体，说明生僻字回退到了系统字体——换一份完整
+OFL 字体再排。完整口径见 [`typography-spec.md`](typography-spec.md) §1 与 §8。

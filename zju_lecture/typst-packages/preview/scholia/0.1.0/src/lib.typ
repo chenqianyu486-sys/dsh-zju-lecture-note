@@ -73,7 +73,7 @@
   #context {
     let p = active.get()
     set text(font: (..default-fonts.sans, ..default-fonts.cjk), size: 0.82em, fill: p.muted)
-    set par(leading: 0.5em)
+    set par(leading: 0.5em, spacing: 0.4em)
     if symbol != none { text(fill: p.thm, weight: "bold")[#symbol]; h(0.3em) }
     body
   }
@@ -170,10 +170,10 @@
     ]
   }
   show heading.where(level: 2): it => block(above: 11pt, below: 0.5em)[
-    #text(font: hfont, weight: "bold", fill: p.def)[#counter(heading).display() #it.body]
+    #text(font: hfont, weight: "bold", size: 12.5pt, fill: p.def)[#counter(heading).display() #it.body]
   ]
   show heading.where(level: 3): it => block(above: 8pt, below: 0.5em)[
-    #text(font: f.sans, weight: "bold", fill: p.thm)[#it.body]
+    #text(font: f.sans, weight: "bold", size: 11.5pt, fill: p.thm)[#it.body]
   ]
 
   show: theorem-rules

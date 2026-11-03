@@ -78,7 +78,7 @@ class TestMarkerDevices(unittest.TestCase):
 
     def test_knots_are_numbered_by_section(self):
         self.assertIn('#theorem("1.1", title: [留数定理])[', self.rendered.typst)
-        self.assertIn('#example("1.1")[', self.rendered.typst)
+        self.assertIn('#example("1.2")[', self.rendered.typst)
 
     def test_proof_practice_and_margin_notes(self):
         self.assertIn("#proof[", self.rendered.typst)

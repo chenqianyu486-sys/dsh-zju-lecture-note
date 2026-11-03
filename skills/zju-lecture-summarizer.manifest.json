@@ -1,13 +1,13 @@
 {
   "name": "zju-lecture-summarizer",
-  "version": "2.1.0",
-  "contentHash": "sha256:a3d112f948af9d884a6b356624fb1de86dd20181c79cd3c29ac83b0d9d4a42b6",
+  "version": "2.2.0",
+  "contentHash": "sha256:5362757dfb992451e9bcf6619e6460e49b12178ac9f8d2ae544f207d7124668c",
   "fileCount": 2,
   "files": [
     {
       "path": "SKILL.md",
-      "sha256": "a3d112f948af9d884a6b356624fb1de86dd20181c79cd3c29ac83b0d9d4a42b6",
-      "size": 19445,
+      "sha256": "5362757dfb992451e9bcf6619e6460e49b12178ac9f8d2ae544f207d7124668c",
+      "size": 19979,
       "mode": "0644"
     },
     {

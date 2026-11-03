@@ -131,14 +131,18 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 
 | 分层 | 工具 | 依赖 | 默认 |
 | :--- | :--- | :--- | :--- |
-| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） | 公开字幕接口 + 本地文件 + 可选 Typst | 始终开启 |
+| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_doctor` | 公开字幕接口 + 本地文件 + 可选 Typst | 始终开启 |
 | **填空笔记** | `zju_build_study_notes` + `scholia-notes` Skill | 本机 Typst | 关闭（`enableStudyNotes`） |
 | **投影抓取** | `zju_fetch_slides` | 登录态 + 截图下载 + PDF 合成 | 关闭（`enableSlides`） |
 | **投影插图** | （`zju_fetch_slides` 的子开关） | 依赖投影抓取 | 关闭（`embedSlideImages`） |
 | **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie` | 本机 Edge 或 `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 关闭（`enableLoginTools`） |
 
-- dsh 默认注册 **5** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
-  全开 **9** 个。
+- dsh 默认注册 **6** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
+  全开 **10** 个。
+- **`.volatile()` 字段是引用，不是布尔值**：dsh 把它们投影成 `{ get() }`，供插件在设置改动后
+  读取新值。`lib/index.js` 的 `readSetting()` 统一解包；直接写 `config.enableSlides === true`
+  会永远得到 `false`——2.1.1 修的「设置全开仍只有字幕」就是这个原因。新增设置项时务必走
+  `readSetting()`，并补一条 ref 形状的测试。
 - MCP 未设置新变量时保持旧行为（10 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（6 个）。
 - 关闭时：不注册对应工具、不加载对应模块、Skill 不追加对应附录；系统提示会说明
   「这个模块已关闭」，Agent 不会调用或假装调用。
@@ -196,16 +200,20 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
   不导出逐页 PNG——只有填空笔记需要。
 - **版式**：封面（标题 / 副题 / 日期）、目录（≥3 节时）、标题层级、正文、列表、三线表、
   公式、代码、引用、工作区图片。
-  - 版心不对称：左 2.4cm / 右 3.9cm，右侧 2.6cm 是边注栏；封面与目录不占页码，正文第一页从 1 起。
-  - 一级标题：灰蓝编号 + 蓝色标题 + 1.1pt 细线；方框淡彩底 + 左侧 2.2pt 竖线、无圆角；
+  - 版心、封面、边注栏、字号等**数值**统一见
+    [`typography-spec.md`](../skills/scholia-notes/references/typography-spec.md)；
+    本节只保留机制。
+  - 一级标题：灰蓝编号 + 蓝色标题 + 细线；方框淡彩底 + 左侧竖线、无圆角；
     证明以斜体 `Proof.` + 行末 qed。
-  - 正文参数：`leading 0.72em`、`spacing 0.95em`、段首 `#h(2em)` 顶首行、公式块 `1.6em`。
   - `par.first-line-indent` **不可靠**：它只在「前一个兄弟元素是段落」时生效，
-    标题 / 块 / 图 / 公式后的段落一律不缩进 ⇒ 改用行内 `#h(2em)`。
+    标题 / 块 / 图 / 公式后的段落一律不缩进 ⇒ 正文改用行内 `#h(2em)` 顶首行；
+    直觉块不缩进（块自身的左内边距已经分开）。
   - 块级公式的上下间距吃 `par.spacing`，压段间距会把公式压到下一段上 ⇒ 用
-    `#show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)` 解耦。
-  - 边注用 `box(width: 0pt, context { let p = here().position(); place(top + left, dx: page.width - p.x - 2.6cm - 0.6cm, …) })`：
-    直接 `context` + `place(top + right)` 会把边注甩到页面顶端。
+    `#show math.equation.where(block: true): set block(above: …, below: …)` 解耦
+    （数值见规范）。
+  - 边注用 `box(width: 0pt, context { let p = here().position(); place(top + left, dx: page.width - p.x - note-width - right-pad, …) })`：
+    `note-width` / `right-pad` 的数值见规范；直接 `context` + `place(top + right)`
+    会把边注甩到页面顶端。
 - **标记语法**（转义前处理；`____` 先于转义，否则会被变成 `#fillin` 后漏掉）：
 
   | 标记 | 装置 |
@@ -229,51 +237,34 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 
 ### 配色
 
-浅色 `soft-palette` 的**唯一权威来源**是 `zju_lecture/prelude.typ`：
-
-| role | 色值 | 对比度（对 `bg`） |
-| :--- | :--- | :--- |
-| `bg` | `#FDFDFB` | 1.00 |
-| `ink` | `#1A1A1C` | 17.06 |
-| `thm` | `#33609B` | 6.27 |
-| `def` / `tag` / `keyword` | `#20705F` | 5.82 |
-| `eg` | `#8F6218` | 5.25 |
-| `warn` | `#6350A8` | 6.36 |
-| `muted` | `#6F7683` | 4.49 |
-| `fillin` | `#8E97A3` | 2.90 |
-| `rule` | `#93A6C4` | 2.43 |
-| `hairline` | `#DBDFE6` | 1.31 |
+浅色 `soft-palette` 的**唯一权威来源**是 `zju_lecture/prelude.typ`；完整色表、
+对比度与「极差 1.11 是刻度跨度」的口径见
+[`typography-spec.md`](../skills/scholia-notes/references/typography-spec.md) §7。
+这里只保留机制：
 
 - `handout_prelude.typ` 的 `#let palette` 与 `handout._PALETTE` 是**生成副本**：
   改色只改 `prelude.typ`，再跑 `python tools/sync_palette.py`，
   `--check` 校验三处逐角色一致（`tests/test_palette_sync.py` 也会跑）。
 - 页面 `fill: palette.bg`；`handout._tint` 混向 `bg` 而不是纯白，才与 Typst `tint()` 同算法。
 - 深色主题（slate）由上游 scholia 自带，本项目不注入 `use-palette`。
-- 「极差 1.11」是四个强调色在对比度刻度上的**跨度**（6.36 − 5.25），不是比值；目标 ≤ 1.2。
 
 ### 字体与可再分发性
 
-Typst 会把用到的字体子集内嵌进 PDF。两条 PDF 链路都优先使用**随包自带的 OFL 字体**：
+完整的角色、回退链与许可列见
+[`typography-spec.md`](../skills/scholia-notes/references/typography-spec.md) §1。
+这里只保留机制：
 
-| role | 首选 | 回退 |
-| :--- | :--- | :--- |
-| body / heading | `STIX Two Text`（SIL OFL） | Typst 内嵌 `Libertinus Serif` |
-| math | `STIX Two Math` | `New Computer Modern Math` |
-| mono | `DejaVu Sans Mono` | `Consolas` |
-| 中文 | **`Notes Serif SC`（随包，OFL 子集）** | `Noto Serif SC` / `Source Han Serif SC`（OFL）→ `Songti SC` / `SimSun` |
-
-- `Notes Serif SC` 是 Noto Serif SC 的 GB2312 子集 + 常用符号（约 7.5k 字，5.7 MB），**保留了
-  `wght` 变量轴**，所以标题的 `weight: "bold"` 有真正的粗体面；生僻字逐字回退到系统字体。
-- **改名是刻意的**：与用户本机完整版同名时 Typst 选哪个字体面不确定，也避免让人误以为是完整字体、
-  避开 Noto / Source / ZJU 商标。
-- 许可是 SIL OFL 1.1（无 Reserved Font Name）：允许子集化与再分发，但必须随附 `OFL.txt` 与版权声明，
-  衍生字体继续以 OFL 分发，且不得单独售卖字体。相关文件在 `zju_lecture/fonts/`。
-- `Optima` / `Avenir Next` / `Menlo` 等专有字体**不在生效的字体栈里**，只以注释形式留在模板中
-  供本机还原上游观感；那种 PDF 不要再分发。
-- 填空笔记通过 `fonts: (cjk: (...))` 把随包字体插到首位；上游包的 `note` / `sidenote` / `label-it`
-  仍直接读包内字体表，改不到（已知限制）。
-- 对外分发 PDF 前用 `pdffonts out.pdf` 核对一次：若出现 `SimSun` / `Microsoft YaHei` 等系统商业字体，
-  说明生僻字回退到了它们，换一份完整 OFL 字体再排。
+- 两条链路默认都只用可再分发字体：STIX Two / Libertinus / 随包 `Notes Kai SC` 与
+  `Notes Serif SC` / Noto / Source Han / DejaVu；商业字体不在生效栈里。
+- `Notes Kai SC` 是 LXGW WenKai 的 GB2312 子集（OFL，上游有 Reserved Font Name，
+  因此**改名**）；`Notes Serif SC` 是 Noto Serif SC 的子集（OFL）。两者都随附
+  `OFL*.txt` 与 `FONT-NOTICE.md`。
+- 填空笔记的 vendored `scholia` 已 patch `src/fonts.typ` 的 `default-fonts`，
+  所以 `note` / `sidenote` / `label-it` 也跟随同一套字体；补丁由
+  `tools/vendor_typst_packages.py` 重放，记录在 `VENDORED.md`。
+- 对外分发 PDF 前用 `pdffonts out.pdf` 核对一次：若出现 `Optima` / `Avenir Next` /
+  `Menlo` / `Songti SC` / `SimSun` / `Microsoft YaHei`，说明命中了系统商业字体，
+  换一份完整 OFL 字体再排。
 
 ## 6. 填空笔记链路
 
@@ -410,14 +401,23 @@ Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语
 
 ### npm / dsh 插件包
 
-仓库根目录就是 npm 包（包名 `dsh-zju-lecture-note`），发布即发布这个仓库：
+仓库根目录就是 npm 包（包名 `dsh-zju-lecture-note`，当前版本见 `package.json`），发布即发布这个仓库：
 
 ```bash
-npm login                 # 首次发布前登录（交互式，需本人操作）
-npm pack --dry-run        # 先看一眼会打进包里的文件清单
-python tools/privacy_scan.py --tarball <生成的 .tgz>   # 发布前隐私闸门
-npm publish               # 发布到 npm registry
+npm login                                   # 首次发布前登录（交互式，需本人操作）
+python -m unittest discover -s tests        # 全量测试（prepublishOnly 会再跑一遍）
+npm pack --dry-run                          # 先看一眼会打进包里的文件清单
+npm pack                                    # 生成 dsh-zju-lecture-note-<version>.tgz
+python tools/privacy_scan.py --tarball dsh-zju-lecture-note-<version>.tgz
+npm publish --dry-run                       # 预演：不登录也能跑
+npm publish                                 # 正式发布；开了 2FA 加 --otp=<6 位码>
+npm view dsh-zju-lecture-note version       # 验证
 ```
+
+- `package.json` 的 `prepublishOnly` 已挂「全量测试 + 隐私扫描」，测试红了发不出去。
+- registry 必须是 `https://registry.npmjs.org/`：国内镜像只读，`npm publish` 会 403。
+- 版本号不能覆盖：每次发布前必须 bump（六处对齐，见下节）。
+- 发布后用户安装：`dsh plugin --profile desktop add dsh-zju-lecture-note`。
 
 `files` 字段是逐文件枚举的运行时清单（`lib/`、`mcp_server.py`、`zju_lecture/*.py`、`skills/`、
 `SECURITY.md`、`CHANGELOG.md`、`docs/technical.md`……），**不要**改成整目录——
@@ -493,7 +493,9 @@ PY
 
 其中与 PDF 模板直接相关的：
 
-- `@preview/scholia` 0.1.0（MIT，© Eric Yang）是填空笔记链路的排版引擎，
+- `@preview/scholia` 0.1.0（MIT，© Eric Yang）是**基于 Typst scholia 模板排版的
+  填空式学习笔记**的排版引擎；配色与段落规范由本项目定义，见 scholia-notes 规范
+  （`skills/scholia-notes/references/typography-spec.md`）。
   **已随本仓库分发（vendored）**在 `zju_lecture/typst-packages/`，逐包保留上游许可与 `typst.toml`；
 - 其余传递依赖（frame-it / marginalia / theoretic / showybox / noteworthy）同样随包分发，
   版本与许可见 `zju_lecture/typst-packages/VENDORED.md`；

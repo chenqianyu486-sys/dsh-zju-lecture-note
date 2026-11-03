@@ -3,6 +3,49 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
+## 2.2.0 — 2026-11-03
+
+- **两条 PDF 链路统一到同一套排版**：阅读版讲义与填空笔记现在共用 30pt 封面标题 /
+  10pt kicker / 13pt 副标题 / 11pt 作者 / 9pt 日期、15 / 12.5 / 11.5pt 三级标题、
+  2.4 / 3.9 / 2.0 / 2.3cm 版心、2.6cm 边注栏（与版心间距 0.7cm）、
+  0.82em / 0.5em 边注；直觉块首行**不缩进**（按参考图口径），正文段首仍空两格。
+  实测两份 PDF 的正文左/右边界与边注左边界一致（误差 ≤ 2pt）。
+- **随包 `Notes Kai SC`（OFL 楷体）**：`zju_lecture/fonts/NotesKaiSC-Subset.ttf`
+  是 LXGW WenKai（霞鹜文楷 v1.530）的 GB2312 子集，约 3.6MB；上游有 Reserved
+  Font Name，因此**改名**。两条链路的中文首选都是它，复现参考图的楷体观感，
+  且不再把 Windows 的 KaiTi 子集嵌进 PDF。`OFL-Kai.txt` 与 `FONT-NOTICE.md`
+  随包分发；`tools/build_font_subset.py` 现在可一次生成 Serif / Kai 两个子集。
+- **vendored scholia 打补丁**：`src/fonts.typ` 的 `default-fonts` 改为可再分发栈
+  （移除 Optima / Avenir Next / Menlo / Songti SC），`src/lib.typ` 统一二级/三级
+  标题字号与边注段距。补丁在 `tools/vendor_typst_packages.py` 里可重放，
+  `VENDORED.md` 如实记录；`--check` 会验证补丁已生效。
+- **规范去重**：重写 `skills/scholia-notes/references/typography-spec.md` 为
+  唯一排版真相源（含机器可读的 `typography-params` 块）；`format-spec.md` /
+  `style.md` / `api.md` / `docs/technical.md` / `SKILL.md` 的数值改为指向它。
+  新增 `tests/test_typography_unified.py`（规范 ↔ 实现 ↔ 渲染几何 ↔ `pdffonts`），
+  `test_palette_sync.py` / `test_deps_v210.py` 扩展到 Kai 字体与 vendored 字体表。
+- **文档口径**：填空式学习笔记统一表述为「基于 Typst scholia 模板排版的填空式学习笔记；
+  配色与段落规范由本项目定义，见 scholia-notes 规范」。README / ATTRIBUTION /
+  THIRD_PARTY_NOTICES / docs/technical / SKILL / typography-spec 已同步。
+- 版本 2.1.1 → 2.2.0（六处对齐，两个 Skill 清单重新生成）。
+
+## 2.1.1 — 2026-11-03
+
+- **修复「设置全开还是只有字幕」的根因**：dsh 把 `.volatile()` 的 `Config` 字段投影成
+  实时引用（`{ get() }`），插件却直接拿它和 `true` 比较——引用永远不等于 `true`，于是
+  `enableSlides` / `enableStudyNotes` / `enableLoginTools` / `embedSlideImages` 无论用户
+  怎么保存都读成 `false`（`renderPdf` 因为写的是 `!== false` 反而一直是开）。新增
+  `readSetting()` 统一解包引用，`featureFlags()`、`timeoutMs`、`python`、`registerSkill`
+  都走它；`tests/plugin_apply_smoke.mjs` 增加「ref 形状」用例，防止再退回。
+- **讲义默认按「复习版」写**：系统提示与 Skill 不再把增强内容写成「可选/需要时」——
+  例题按「题目 → 切入点 → 关键步骤 → 易错点」整理（本节没有就写「本节无例题」，
+  不编题），文末给 3–5 道自测题（答案折叠）与 5–10 条考点预测。
+- **开关打开即默认执行**：`enableSlides` → 写讲义前抓一次投影并挑 3–8 页；
+  `enableStudyNotes` → 写完讲义再出填空版。MCP 的 `initialize.instructions` 同步。
+- **设置页口径改成真话**：保存只对新建会话生效，当前会话的工具集在开始时已固定；
+  工具数标签从「本次会话注册」改为「当前配置注册」。
+- 版本 2.1.0 → 2.1.1（六处对齐，两个 Skill 清单重新生成）。
+
 ## 2.1.0 — 2026-11-03
 
 - **PDF 装完即用（Typst 自举）**：新增 `zju_lecture/deps.py`，把「本机没装 Typst」从静默的
@@ -34,6 +77,9 @@
   Apache-2.0 边界（不随包分发，若将来转分发需补 LICENSE / NOTICE 与内嵌字体许可）。
 - **测试**：新增 `tests/test_deps_v210.py`（清单 / 校验和 / 平台映射 / 恶意归档 / 字体改名 /
   vendor 许可 / doctor / 离线编译 / 打包清单）。
+- **npm 发布**：`package.json` 增 `prepublishOnly`（全量测试 + 隐私扫描，测试红了发不出去）；
+  README 把 npm 安装写成首选、GitHub 仓库安装降为备选；`docs/technical.md` §10 补齐发布顺序
+  （pack → 扫 tarball → publish --dry-run → publish）；README 行数闸门从 260 行放宽到 300 行。
 
 ## 2.0.2 — 2026-11-03
 

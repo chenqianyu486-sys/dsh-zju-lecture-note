@@ -13,19 +13,20 @@
 
 ## 2. 默认配色（`prelude.typ` 的 `soft-palette`）
 
-**按内容类型分色相**，不是随便挑四个好看的颜色。逻辑固定如下，全篇不变：
+**按内容类型分色相**，不是随便挑四个好看的颜色。逻辑固定如下，全篇不变
+（色值与对比度见 [`typography-spec.md`](typography-spec.md) §7）：
 
-| role | 值 | 语义 | 覆盖的内容 |
-|---|---|---|---|
-| `ink` | `#1A1A1C` | 正文 | 普通段落（主体） |
-| `thm` | `#33609B` | 蓝 · 结论推理 | theorem lemma proposition corollary conjecture claim · `proof` · qed 方块 · `@label` 回指 |
-| `def` | `#20705F` | 青绿 · 定义术语 | definition axiom assumption notation · `remark` · `mark-key` 术语 · `keyword` · `label-it` 标签 |
-| `eg` | `#8F6218` | 琥珀 · 例子练习 | `example` · `yourturn` · `TODO` 填空缺口 · `workspace` |
-| `warn` | `#6350A8` | 紫 · 易错警示 | `warn[…]`（本 skill 扩展，行内不加框） |
-| `muted` | `#6F7683` | 灰 · 次要 | 页码 · `recall`/`sidenote` 边注 · `aside` |
-| `fillin` | `#8E97A3` | 灰 | 填空线 —— **留给读者写**的地方，刻意不用 `ink`（黑色会看起来像印刷内容） |
-| `hairline` / `rule` | `#DBDFE6` / `#93A6C4` | 结构线 | `divider` · 标题横线 |
-| `bg` | `#FDFDFB` | 纸白 | — |
+| role | 语义 | 覆盖的内容 |
+|---|---|---|
+| `ink` | 正文 | 普通段落（主体） |
+| `thm` | 蓝 · 结论推理 | theorem lemma proposition corollary conjecture claim · `proof` · qed 方块 · `@label` 回指 |
+| `def` | 青绿 · 定义术语 | definition axiom assumption notation · `remark` · `mark-key` 术语 · `keyword` · `label-it` 标签 |
+| `eg` | 琥珀 · 例子练习 | `example` · `yourturn` · `TODO` 填空缺口 · `workspace` |
+| `warn` | 紫 · 易错警示 | `warn[…]`（本 skill 扩展，行内不加框） |
+| `muted` | 灰 · 次要 | 页码 · `recall`/`sidenote` 边注 · `aside` |
+| `fillin` | 灰 | 填空线 —— **留给读者写**的地方，刻意不用 `ink` |
+| `hairline` / `rule` | 结构线 | `divider` · 标题横线 |
+| `bg` | 纸白 | — |
 
 分组依据是**内容之间的关系**，不是色相好不好看：
 
@@ -36,26 +37,16 @@
   不会误读成另一种内容类型。
 - `remark` 归青绿：scholia 原生就把它渲染成定义族的斜体，保持一致。
 
-调色只改这一个 dict，不用 vendor 包：改 `references/prelude.typ` 里的 `soft-palette` 即可。
+调色只改 `zju_lecture/prelude.typ` 的 `soft-palette`（唯一权威副本），
+再跑 `tools/sync_palette.py` 与 `tools/sync_skill_assets.py`；不要手改生成副本。
 `warn` 是**扩展键**，scholia 原生只用 `thm`/`def`/`eg`/`tag`/`keyword`，
 多余键无害（已实测编译通过）。
 
 ### 「等权」是这套配色好看的关键
 
-四个强调色对纸白的 WCAG 对比度：
-
-| 色 | 对比度 |
-|---|---|
-| `thm` `#33609B` | 6.27 |
-| `warn` `#6350A8` | 6.36 |
-| `def` `#20705F` | 5.82 |
-| `eg` `#8F6218` | 5.25 |
-
-**极差 1.11**（6.36 − 5.25，即四个色在对比度刻度上的跨度）。这是「看起来是一套配色」
-而不是「一主两辅」的量化保证——四个色视觉重量接近，读者不会觉得某个类型被偏爱。
-
-改色时保持这个性质：算一遍四个色的对比度，**极差控制在 1.2 以内**。
-另外琥珀色有下限：对比度压到 4.6 以下就会开始发棕、失去「淡雅」的观感。
+四个强调色的对比度与「极差 ≤ 1.2」的量化口径见
+[`typography-spec.md`](typography-spec.md) §7.3。改色时按那里的公式重算，
+不要靠眼睛判断。
 
 ### 淡，但不能淡到看不见
 
@@ -94,29 +85,11 @@
    对比度要**等权**（极差 ≤ 1.2），且每色都 ≥ 4.5:1。
    改完算一遍对比度，渲染看一眼——只看数字可能被两个相近色相骗过。
 
-## 3. 视觉预算（每节，权威版本）
+## 3. 视觉预算（每节）
 
-`SKILL.md` 里那张表是摘要，这里是唯一权威口径。**两处不一致时以本表为准。**
-
-| 元素 | 每节上限 | 理由 |
-|---|---|---|
-| 黑字段落 | 不限 | 主体 |
-| `#accent` / `#mark-key` 行内强调 | 2～3 | 最轻的强调 |
-| `#divider` | 1～2 | 段落切分，比框轻 |
-| `#note` 带底色块 | **1** | 整节的直觉只讲一次 |
-| knot 方框，**全部类型合计** | **≤ 3** | 含 definition/theorem/lemma/example/… 所有带框项 |
-| `#yourturn` 练习块 | 1 | 要给用户留白 |
-| `#recall` / `#sidenote` 边注 | 不限 | 在右栏，不占正文版面 |
-
-计数口径：**knot 方框按「所有类型合计」计**，不是每种各 3 个。
-一节里出现 4 个及以上 knot 就是超预算，必须把其中非关键的一个降级成
-`#accent` 行内强调——除非它承担了 `@label` 回指职责，那就保留但合并其他。
-
-`example` 不在预算表外，它算在 knot 合计里。
-
-> 工具（`zju_build_study_notes(mode="compile")`）会按上面这张表统计每节的 knot 合计，
-> 超预算时在报告里点名是第几节、超了几个 —— 但它**不会自动降级**你的内容，
-> 降级是内容判断，仍然由你决定。
+**权威口径在 [`format-spec.md`](format-spec.md) §2.2**（每节框合计 ≤ 2、直觉块 1、
+练习块 1、边注 1～2、行内强调 2～3）。本节不再重复那张表；工具按 format-spec 的
+口径统计，超预算时点名是第几节、超了几个，但**不会自动降级**——降级是内容判断。
 
 ## 4. 强调手段的降级顺序
 
@@ -177,6 +150,8 @@ scholia 包装器写死了 `lang: "en"` **和 `justify: true`**。中文要加�
   只加 `lang: "zh"` 不够。
 
 两行都放在 `#show: use-palette` 之后（show 规则按书写顺序生效，后写的覆盖先写的）。
+行距、段距、缩进等数值见 [`typography-spec.md`](typography-spec.md) §3，不要在这里重复。
 
-- 中文默认字体不用配；真要指定就 `fonts: (cjk: ("Noto Serif SC",))`，
-  但它进不了 `note` / `sidenote` / `label-it`。
+字体不用在底稿里配：两条链路默认都用随包的 `Notes Kai SC` / `Notes Serif SC`
+（见 `typography-spec.md` §1）；`fonts:` 覆盖进不去 `note` / `sidenote` /
+`label-it`，这些已由 vendored `default-fonts` 统一。

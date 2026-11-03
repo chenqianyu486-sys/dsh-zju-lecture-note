@@ -42,6 +42,7 @@ from .study_notes import (
     _run_typst,
     find_typst,
     latex_to_typst,
+    strip_heading_number,
 )
 
 __all__ = [
@@ -266,15 +267,6 @@ _LABEL_RE = re.compile(r"\s*<([A-Za-z][A-Za-z0-9_.:-]*)>\s*$")
 _REF_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_.:-]*")
 #: 行内缺口（``[缺口: …]``）。
 _GAP_RE = re.compile(r"\[缺口\s*[:：]\s*([^\]]*)\]")
-#: 标题里手写的编号：渲染器自己编号，这里只负责剥掉。
-_HEADING_NUM_RES = (
-    # 中文序号：一、 / （二） / 三.
-    re.compile(r"^[（(]?[一二三四五六七八九十百零〇]+[）)]?[、.．,，:：)）]\s*"),
-    # 带点分层的阿拉伯编号：2.1 / 2.1.3（必须整体剥掉，否则会剩一个「1」）
-    re.compile(r"^\d+(?:\.\d+)+"),
-    # 单层阿拉伯编号：1. / 2、 / 3（后面必须有分隔符或空格）
-    re.compile(r"^\d{1,2}(?:[、.．,，:：)）]|\s+)"),
-)
 #: 会编号、也占「方框预算」的装置。
 _KNOT_CALLS: Dict[str, Tuple[str, str]] = {
     "theorem": ("Theorem", "thm"),
@@ -318,18 +310,6 @@ def _tint(hex_color: str, strength: float = 0.09) -> str:
         for channel, base in zip(channels(hex_color), paper)
     ]
     return "#%02X%02X%02X" % tuple(mixed)
-
-
-def _strip_heading_number(title: str) -> str:
-    """剥掉标题里手写的编号（``一、`` / ``1.2`` / ``3 ``）。
-
-    渲染器会给标题自动编号；手写编号会叠成「1 1.」，见 format-spec.md §3。
-    """
-    for pattern in _HEADING_NUM_RES:
-        stripped = pattern.sub("", title, count=1).strip()
-        if stripped and stripped != title.strip():
-            return stripped
-    return title.strip()
 
 
 def _extract_label(text: str) -> Tuple[str, str]:
@@ -838,8 +818,8 @@ def _collect_refs(lines: Sequence[str]) -> Dict[str, str]:
         call, _shape = MARKERS[name]
         if call not in _KNOT_CALLS:
             continue
-        counts[call] = counts.get(call, 0) + 1
-        number = (str(section) + "." if section else "") + str(counts[call])
+        counts["knot"] = counts.get("knot", 0) + 1
+        number = (str(section) + "." if section else "") + str(counts["knot"])
         _, label = _extract_label(marker.group(2))
         if label:
             refs[label] = number
@@ -879,7 +859,7 @@ def _render_body(
         if heading:
             level = len(heading.group(1))
             title, label = _extract_label(heading.group(2).strip())
-            title = _strip_heading_number(title)
+            title = strip_heading_number(title)
             # 讲义标题已进封面；正文从 H2 开始，H2 映射成 Typst 一级标题。
             if level <= 2:
                 section += 1
@@ -921,8 +901,8 @@ def _render_body(
             call, shape = MARKERS[name]
             number = ""
             if call in _KNOT_CALLS:
-                counts[call] = counts.get(call, 0) + 1
-                number = (str(section) + "." if section else "") + str(counts[call])
+                counts["knot"] = counts.get("knot", 0) + 1
+                number = (str(section) + "." if section else "") + str(counts["knot"])
                 boxes_by_section[section_name] = boxes_by_section.get(section_name, 0) + 1
             out.append(
                 _render_marker_block(name, body, number, warnings, image_resolver, refs)
