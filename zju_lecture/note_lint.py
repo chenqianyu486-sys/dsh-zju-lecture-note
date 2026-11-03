@@ -345,13 +345,22 @@ def _fix_table_pipes(line: str) -> tuple:
 
 
 def _normalize_math(text: str) -> tuple:
-    """``\\dfrac`` -> ``\\frac`` and ``\\frac12`` -> ``\\frac{1}{2}``."""
-    count = 0
-    if "\\dfrac" in text:
-        count += text.count("\\dfrac")
-        text = text.replace("\\dfrac", "\\frac")
-    text, frac_count = _fix_fracs(text)
-    return text, count + frac_count
+    """``\\dfrac`` -> ``\\frac`` and ``\\frac12`` -> ``\\frac{1}{2}``.
+
+    Inline-code spans are left alone: a note that shows ``\\frac12`` in backticks
+    documents the wrong form on purpose, so rewriting it would turn the
+    documentation into the finished form and hide the mistake.
+    """
+
+    def _segment(segment: str) -> tuple:
+        count = 0
+        if "\\dfrac" in segment:
+            count += segment.count("\\dfrac")
+            segment = segment.replace("\\dfrac", "\\frac")
+        segment, frac_count = _fix_fracs(segment)
+        return segment, count + frac_count
+
+    return _apply_outside_code(text, _segment)
 
 
 def _apply_outside_code(line: str, func) -> tuple:
@@ -359,27 +368,36 @@ def _apply_outside_code(line: str, func) -> tuple:
 
     Backtick code spans are documentation about the rules, not formulas that
     obey them: a note saying ``frac12`` is wrong must keep saying so after an
-    autofix. Returns ``(new_line, number_of_changes)``.
+    autofix. A span is delimited by a *run* of backticks, the way Markdown reads
+    it, so ```frac12``` and ``a ` b`` stay intact. Returns
+    ``(new_line, number_of_changes)``.
     """
     out = []
     changes = 0
     pos = 0
     in_code = False
-    open_at = 0
-    for idx, ch in enumerate(line):
-        if ch != "`":
+    fence = 0
+    idx = 0
+    length = len(line)
+    while idx < length:
+        if line[idx] != "`":
+            idx += 1
             continue
+        run_end = idx
+        while run_end < length and line[run_end] == "`":
+            run_end += 1
+        run = run_end - idx
         if not in_code:
             piece, count = func(line[pos:idx])
             out.append(piece)
             changes += count
-            in_code = True
-            open_at = idx
-            pos = idx
-        else:
-            out.append(line[open_at:idx + 1])
-            pos = idx + 1
-            in_code = False
+            out.append(line[idx:run_end])
+            in_code, fence, pos = True, run, run_end
+        elif run == fence:
+            out.append(line[pos:run_end])
+            pos = run_end
+            in_code, fence = False, 0
+        idx = run_end
     if in_code:
         # Unclosed backtick: the rest is code, never rewrite it.
         out.append(line[pos:])
@@ -591,8 +609,9 @@ def fix_markdown(text: str) -> tuple:
 
         # ``\dfrac`` -> ``\frac``; ``\frac12`` -> ``\frac{1}{2}``.
         # Inline-code spans are left alone: they document the rule, they do not
-        # violate it.
-        line, count = _apply_outside_code(line, _normalize_math)
+        # violate it. The skip lives inside ``_normalize_math`` so every caller
+        # gets it.
+        line, count = _normalize_math(line)
         math_fixed += count
 
         # Bare pipes inside table-cell formulas.

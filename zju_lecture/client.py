@@ -110,11 +110,20 @@ def ssl_context_health() -> Dict[str, Any]:
 
 
 def _proxy_env() -> str:
+    """Describe the proxy environment, naming the variables to inspect.
+
+    "未设置" on its own does not tell the user which variable to look at, so the
+    unset case spells the names out. Returns a phrase without brackets: the
+    callers already wrap it in （）.
+    """
+    found = []
     for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         value = os.environ.get(key)
         if value:
-            return f"{key}={value}"
-    return "(未设置)"
+            found.append(f"{key}={value}")
+    if found:
+        return "，".join(found)
+    return "HTTPS_PROXY / HTTP_PROXY 均未设置"
 
 
 def describe_network_error(error: BaseException) -> str:
