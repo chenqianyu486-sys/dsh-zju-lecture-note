@@ -45,6 +45,9 @@ edge-cookies-*
 *填空底稿*.pdf
 /.zju-lecture/
 
+# 维护者脚本的本地缓存：下载的 Typst Release 归档（只用于生成校验和清单）。
+/.cache/
+
 # 填空式学习笔记的中间产物（zju_build_study_notes 生成）：
 # 填空底稿是可编辑的半成品，Typst 项目目录里是编译产物（PDF/PNG）。
 *填空底稿*.md
