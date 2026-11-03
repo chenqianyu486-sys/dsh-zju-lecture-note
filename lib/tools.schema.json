@@ -12,7 +12,7 @@
   },
   {
     "name": "zju_fetch_transcript",
-    "description": "抓取智云课堂某节课的语音识别字幕。该接口为浙大公开接口，无需登录或 Cookie 即可获取整节课的语音识别文本。支持按分钟/秒切片、分块输出以及字符上限截断。",
+    "description": "抓取智云课堂某节课的语音识别字幕（公开接口，无需登录）。默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用。",
     "parameters": {
       "url_or_sub_id": {
         "description": "回放 URL 或 sub_id",
@@ -52,7 +52,7 @@
   },
   {
     "name": "zju_fetch_slides",
-    "description": "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。本工具属于可选的「投影抓取」模块：dsh 插件设置 enableSlides / 环境变量 ZJU_ENABLE_SLIDES 关闭时不会注册本工具（默认关闭）。是否把截图引用进讲义由插件设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES 控制（默认关闭，节省下载时间与 token）。接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。抓不到时返回具体诊断，流水线可降级为纯字幕总结。",
+    "description": "（可选投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF（省略时跟随 enableSlides / embedSlideImages，即 ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides 关闭时本工具不注册。",
     "parameters": {
       "url_or_sub_id": {
         "description": "回放 URL（通常含 course_id）或 sub_id",
@@ -101,7 +101,7 @@
   },
   {
     "name": "zju_get_video_url",
-    "description": "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态；服务端自动使用缓存的登录态 / ZJU_COOKIE / 本机 Edge，本工具不接受也不回显 Cookie。",
+    "description": "解析回放视频的 MP4 直链（本地下载或 Whisper 重识别）。需要登录态；服务端自动使用缓存 / ZJU_COOKIE / 本机 Edge，不接受也不回显 Cookie。",
     "parameters": {
       "url_or_sub_id": {
         "description": "回放 URL 或 sub_id",
@@ -121,7 +121,7 @@
   },
   {
     "name": "zju_check_note",
-    "description": "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。报告按问题类型聚合（同类问题只打印一次，附行号与示例），长讲义也不会刷屏。传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、块级公式前后缺空行、\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。回写前会先把原文件备份到备份目录（ZJU_BACKUP_DIR，默认系统临时目录），报告里给出备份绝对路径。相对路径按当前工作区解析。建议在写完讲义后、交付给用户前调用一次。",
+    "description": "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。fix=true 自动修正机械问题并先备份；报告按问题类型聚合。pdf=true 时检查后重新排版一份同名 PDF。",
     "parameters": {
       "file_path": {
         "description": "讲义 Markdown 文件的绝对路径，或相对当前工作区的路径",
@@ -137,12 +137,16 @@
         "description": "每类问题最多列出几个行号示例（默认 3，0 表示只报数量）",
         "default": 3,
         "type": "integer"
+      },
+      "pdf": {
+        "description": "检查后是否重新排版同名 PDF（默认 false；write_note 已自动排版）",
+        "type": "boolean"
       }
     }
   },
   {
     "name": "zju_write_note",
-    "description": "写入讲义 Markdown。文件名由你依据「上课时间 + 本节课内容」起名（如 知识总结-2026-10-28-复变函数-保角映射），不同讲次不会互相覆盖；不传 name 时才回退到 知识总结-<sub_id>[-<课程简称>].md。默认拒绝覆盖同名文件（返回 exists，让人决定改名还是覆盖），覆盖前自动备份。写入前自动修正可机械修复的公式问题，写入后立即返回渲染规范检查报告——也就是把「写文件」和「zju_check_note」两步合成一次调用。只写工作区（当前工作区或 ZJU_WORKSPACE）内的 .md 文件。",
+    "description": "写入讲义 Markdown：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、写前修正公式、写后返回规范检查，并按设置自动排版同名 PDF——写文件、检查、出 PDF 一次完成。只写工作区内的 .md 文件。",
     "parameters": {
       "sub_id": {
         "description": "课程回放的 sub_id，用于追溯（不传 name 时也参与文件名）",
@@ -180,12 +184,81 @@
         "description": "检查报告中每类问题最多列出几个行号示例（默认 3）",
         "default": 3,
         "type": "integer"
+      },
+      "pdf": {
+        "description": "写入后是否排版同名 PDF（默认跟随插件设置 renderPdf；显式 true/false 可覆盖）",
+        "type": "boolean"
       }
     }
   },
   {
     "name": "zju_read_browser_cookie",
-    "description": "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的域级 Cookie，智云的 _token 在那里），并缓存在 MCP 服务端内存中供其他工具使用。只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
+    "description": "读取本机 Edge 的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的 _token）到服务端内存；只返回名称与长度，绝不回显明文，无参数。",
     "parameters": {}
+  },
+  {
+    "name": "zju_build_study_notes",
+    "description": "把讲义变成 scholia 填空式学习笔记（Typst → PDF）。mode=draft 生成填空底稿（你补内容）；mode=compile 编译成 out.pdf + 逐页 PNG，并报告编译错误、方框预算与改不动的数学。需要本机 Typst（≥0.13）。只写工作区内的文件。",
+    "parameters": {
+      "mode": {
+        "description": "draft=讲义转填空底稿（只搬运与改公式，不做内容判断）；compile=底稿转 Typst 并编译成 PDF",
+        "default": "draft",
+        "type": "string",
+        "enum": [
+          "draft",
+          "compile"
+        ]
+      },
+      "note_path": {
+        "description": "讲义 Markdown 的路径（mode=draft 必填）",
+        "type": "string"
+      },
+      "draft_path": {
+        "description": "填空底稿 Markdown 的路径（mode=compile 必填）",
+        "type": "string"
+      },
+      "output_dir": {
+        "description": "输出目录，相对当前工作区（默认与源文件同目录；源文件在工作区外时写到工作区的 notes/ 下）",
+        "type": "string"
+      },
+      "title": {
+        "description": "封面标题（mode=draft；默认取讲义的第一个一级标题）",
+        "type": "string"
+      },
+      "subtitle": {
+        "description": "封面副标题（mode=draft，可选）",
+        "type": "string"
+      },
+      "author": {
+        "description": "封面作者（mode=draft，可选）",
+        "type": "string"
+      },
+      "date": {
+        "description": "封面日期（mode=draft，可选，例如 2026-11-02）",
+        "type": "string"
+      },
+      "kicker": {
+        "description": "封面上方的小字行（mode=draft，可选，例如课程代码）",
+        "type": "string"
+      },
+      "theme": {
+        "description": "配色主题（mode=compile，默认 light 淡彩极简）",
+        "default": "light",
+        "type": "string",
+        "enum": [
+          "light",
+          "dark"
+        ]
+      },
+      "make_png": {
+        "description": "是否同时导出逐页 PNG（mode=compile，默认 true）。knot 的内容块数量错位不会报错，只能靠看图发现，所以建议保持开启",
+        "default": true,
+        "type": "boolean"
+      },
+      "pages": {
+        "description": "只导出指定页的 PNG，例如 1-3（mode=compile，可选）",
+        "type": "string"
+      }
+    }
   }
 ]

@@ -21,6 +21,7 @@ Design notes:
 
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -50,7 +51,9 @@ from zju_lecture.note_lint import (
 from zju_lecture.paths import (
     artifact_dir,
     describe_attempts,
+    is_inside_workspace,
     note_target,
+    primary_workspace,
     resolve_path,
 )
 from zju_lecture.formatter import (
@@ -70,9 +73,19 @@ from zju_lecture.security import (
     guard_local_file,
     sanitize_cookie_header,
 )
+from zju_lecture.study_notes import (
+    KNOT_BUDGET_PER_SECTION,
+    KNOT_RATIO_TARGET,
+    KNOT_RATIO_TOO_MANY,
+    StudyNotesError,
+    build_draft,
+    compile_project,
+    find_typst,
+    render_typst,
+)
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "1.5.1"
+SERVER_VERSION = "2.0.2"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -93,17 +106,49 @@ EMBED_SLIDES_ENV = "ZJU_EMBED_SLIDES"
 #: exports 0/1 from its own setting; plain MCP hosts keep the pre-1.5.1
 #: behaviour (enabled) unless they explicitly set 0.
 SLIDES_ENABLED_ENV = "ZJU_ENABLE_SLIDES"
+#: Optional fill-in study-note workflow (``zju_build_study_notes``). dsh gates
+#: it from its own setting; plain MCP hosts keep the previous behaviour.
+STUDY_NOTES_ENABLED_ENV = "ZJU_ENABLE_STUDY_NOTES"
+#: Login helpers (``zju_get_video_url`` / ``zju_read_browser_cookie``). They
+#: are independent of the projection module: turning slides off must not
+#: silently remove the ability to resolve a video URL, and turning these off
+#: must not affect slides (which resolve the cookie themselves).
+LOGIN_TOOLS_ENABLED_ENV = "ZJU_ENABLE_LOGIN_TOOLS"
+#: Automatic typesetting of a written note into a reading PDF. Default off
+#: for plain MCP hosts (Typst is optional and may be absent); the dsh plugin
+#: sets 1 from its own setting.
+RENDER_PDF_ENV = "ZJU_RENDER_PDF"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
-#: Tools that depend on the projection pipeline. They are left out of
+#: Tools that depend on an optional module. They are left out of
 #: ``tools/list`` when the feature is off, so a transcript-only host never
 #: sees a tool it cannot use (or its login/cookie requirement).
 SLIDES_TOOL_NAMES = ("zju_fetch_slides",)
+STUDY_TOOL_NAMES = ("zju_build_study_notes",)
+LOGIN_TOOL_NAMES = ("zju_get_video_url", "zju_read_browser_cookie")
 
 
 class SlidesDisabledError(Exception):
     """Raised when a projection tool is called while the feature is off."""
+
+
+class StudyNotesDisabledError(Exception):
+    """Raised when the fill-in study-note tool is called while it is off."""
+
+
+class LoginToolsDisabledError(Exception):
+    """Raised when a login helper is called while the login module is off."""
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read one 0/1-style environment switch, falling back to ``default``."""
+    raw = str(os.environ.get(name, "")).strip().lower()
+    if raw in _TRUE_VALUES:
+        return True
+    if raw in _FALSE_VALUES:
+        return False
+    return default
 
 
 def slides_enabled() -> bool:
@@ -112,19 +157,36 @@ def slides_enabled() -> bool:
     The transcript pipeline is always available and never consults this
     switch; only ``zju_fetch_slides`` and the slide-image embedding are gated.
     """
-    raw = str(os.environ.get(SLIDES_ENABLED_ENV, "")).strip().lower()
-    if raw in _TRUE_VALUES:
-        return True
-    if raw in _FALSE_VALUES:
-        return False
-    return True  # MCP default: keep the pre-1.5.1 behaviour
+    return _env_flag(SLIDES_ENABLED_ENV, True)
+
+
+def study_notes_enabled() -> bool:
+    """Whether the optional fill-in study-note workflow is enabled."""
+    return _env_flag(STUDY_NOTES_ENABLED_ENV, True)
+
+
+def login_tools_enabled() -> bool:
+    """Whether the login helper tools are registered."""
+    return _env_flag(LOGIN_TOOLS_ENABLED_ENV, True)
+
+
+def render_pdf_enabled() -> bool:
+    """Whether writing a note should also try to typeset a reading PDF."""
+    return _env_flag(RENDER_PDF_ENV, False)
 
 
 def available_tools() -> List[Dict[str, Any]]:
     """TOOLS after feature gates, as advertised by ``tools/list``."""
-    if slides_enabled():
+    hidden = set()
+    if not slides_enabled():
+        hidden.update(SLIDES_TOOL_NAMES)
+    if not study_notes_enabled():
+        hidden.update(STUDY_TOOL_NAMES)
+    if not login_tools_enabled():
+        hidden.update(LOGIN_TOOL_NAMES)
+    if not hidden:
         return TOOLS
-    return [tool for tool in TOOLS if tool["name"] not in SLIDES_TOOL_NAMES]
+    return [tool for tool in TOOLS if tool["name"] not in hidden]
 
 
 def embed_slides_enabled() -> bool:
@@ -152,30 +214,60 @@ def slide_image_mode_text() -> str:
     )
 
 
+def _pdf_mode_text() -> str:
+    if render_pdf_enabled():
+        return (
+            "zju_write_note 写入后会自动把讲义排成同名 PDF（需要本机 Typst；"
+            "ZJU_RENDER_PDF=0 可关闭）；无需再调用别的工具来出 PDF。"
+        )
+    return "讲义 PDF 自动排版已关闭（ZJU_RENDER_PDF=0）；需要时在插件设置里打开。"
+
+
 def server_instructions() -> str:
-    """MCP initialize instructions, reflecting the current feature gate."""
+    """MCP initialize instructions, reflecting the current feature gates."""
+    parts = [
+        "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取。"
+        "字幕接口公开免登录。",
+        "主链路：把链接或 sub_id 直接交给 zju_fetch_transcript（默认 per_minute；"
+        "长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用）"
+        "→ 可选 zju_extract_courseware → zju_write_note（自动命名、拒绝静默覆盖、"
+        "写前修正、写后校验）。zju_write_note 已包含检查，不要为同一份讲义再调 "
+        "zju_check_note；它只用于修复已有文件。相对路径按 ZJU_WORKSPACE 解析。"
+        + _pdf_mode_text(),
+    ]
     if slides_enabled():
-        slides_boundary = (
-            "投影截图（可下载并合成 PDF）与视频直链需要登录态（Cookie 需含 _token）；"
+        parts.append(
+            "投影截图（可下载并合成 PDF）需要登录态（Cookie 需含 _token）；"
             "投影抓取可用 ZJU_ENABLE_SLIDES=0 关闭。"
         )
     else:
-        slides_boundary = (
-            "投影抓取已关闭（ZJU_ENABLE_SLIDES=0）：本次只提供「语音字幕 + 本地课件」链路，"
-            "不读取登录态、不下载投影截图，zju_fetch_slides 也不会出现在工具列表里。"
-            "需要投影截图时，在 dsh 插件设置里打开「启用 PPT 投影抓取」（enableSlides），"
-            "或给 MCP server 设置环境变量 ZJU_ENABLE_SLIDES=1 后重启。"
+        parts.append(
+            "投影抓取已关闭（ZJU_ENABLE_SLIDES=0）：不读取登录态、不下载投影截图，"
+            "zju_fetch_slides 不在工具列表里。需要时在 dsh 插件设置里打开"
+            "「启用 PPT 投影抓取」（enableSlides），或设置 ZJU_ENABLE_SLIDES=1 后重启。"
         )
-    return (
-        "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取，"
-        "可选提供投影 PPT 截图。字幕接口公开免登录。"
-        + slides_boundary
-        + "登录 Cookie 只在服务端内存中使用，任何工具都不会回显明文，也不接受 cookie 参数。"
-        "长课程请使用 view_format=chunked 分批处理。"
-        "讲义写入用 zju_write_note（统一命名、拒绝静默覆盖、写后自动检查），"
-        "相对路径按当前工作区（ZJU_WORKSPACE）解析。"
+    if study_notes_enabled():
+        parts.append(
+            "要把 STEM 讲义变成可填空的复习笔记，用 zju_build_study_notes："
+            "mode=draft 生成填空底稿（你补内容），mode=compile 编译成 PDF。"
+        )
+    else:
+        parts.append(
+            "填空笔记已关闭（ZJU_ENABLE_STUDY_NOTES=0）：zju_build_study_notes 不在工具列表里；"
+            "普通讲义 PDF 不受影响。"
+        )
+    if login_tools_enabled():
+        parts.append("视频直链与浏览器登录态工具已注册；登录 Cookie 只在服务端内存，不回显。")
+    else:
+        parts.append(
+            "登录辅助工具已关闭（ZJU_ENABLE_LOGIN_TOOLS=0）：视频直链与浏览器登录态工具不注册；"
+            "投影抓取仍会自行解析登录态。"
+        )
+    parts.append(
+        "任何工具都不接受也不回显 Cookie 明文；登录态只能来自本地配置或本机 Edge。"
         + slide_image_mode_text()
     )
+    return "".join(parts)
 
 # Cookies read from the local browser are kept here instead of being handed
 # back to the model as plaintext.
@@ -315,8 +407,9 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_transcript",
         "description": (
-            "抓取智云课堂某节课的语音识别字幕。该接口为浙大公开接口，无需登录或 Cookie 即可获取整节课的语音识别文本。"
-            "支持按分钟/秒切片、分块输出以及字符上限截断。"
+            "抓取智云课堂某节课的语音识别字幕（公开接口，无需登录）。"
+            "默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，"
+            "per_segment 仅在确实需要秒级时间戳时用。"
         ),
         "inputSchema": {
             "type": "object",
@@ -365,16 +458,11 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_slides",
         "description": (
-            "抓取智云课堂该节课的投影 PPT 截图清单。search-ppt 接口返回的是"
-            "投影画面截图（pptimgurl），不是文字层或 OCR；需要阅读幻灯片内容时"
-            "请设置 download=true 下载截图并合成 PDF（可用支持视觉的模型查看）。"
-            "本工具属于可选的「投影抓取」模块：dsh 插件设置 enableSlides / "
-            "环境变量 ZJU_ENABLE_SLIDES 关闭时不会注册本工具（默认关闭）。"
-            "是否把截图引用进讲义由插件设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES 控制"
-            "（默认关闭，节省下载时间与 token）。"
-            "接口需要登录态且 Cookie 中必须包含 _token：服务端会依次尝试内存缓存、"
-            "ZJU_COOKIE 环境变量、ZJU_COOKIE_FILE 与本机 Edge；本工具不接受也不回显 Cookie。"
-            "抓不到时返回具体诊断，流水线可降级为纯字幕总结。"
+            "（可选投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是"
+            "投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF（省略时跟随 "
+            "enableSlides / embedSlideImages，即 ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）。"
+            "需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。"
+            "抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides 关闭时本工具不注册。"
         ),
         "inputSchema": {
             "type": "object",
@@ -451,8 +539,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_get_video_url",
         "description": (
-            "解析回放视频的 MP4 直链（用于本地下载或 Whisper 增强重识别）。需要有效登录态；"
-            "服务端自动使用缓存的登录态 / ZJU_COOKIE / 本机 Edge，本工具不接受也不回显 Cookie。"
+            "解析回放视频的 MP4 直链（本地下载或 Whisper 重识别）。需要登录态；"
+            "服务端自动使用缓存 / ZJU_COOKIE / 本机 Edge，不接受也不回显 Cookie。"
         ),
         "inputSchema": {
             "type": "object",
@@ -478,14 +566,10 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_check_note",
         "description": (
-            "检查已生成的讲义 Markdown 是否符合公式书写规范、能否正常渲染。"
-            "静态检查，不联网：捕获表格列被裸竖线截断、行内公式未闭合、"
-            "块级公式未独立成行、\\frac 缺花括号、单行 <details> 等会破坏渲染的问题。"
-            "报告按问题类型聚合（同类问题只打印一次，附行号与示例），长讲义也不会刷屏。"
-            "传 fix=true 时会先自动修正可机械修复的问题（单行 $$ 块、块级公式前后缺空行、"
-            "\\dfrac、\\frac 缺花括号、表格公式内的裸竖线、单行 <details>）并回写文件，再报告剩余问题。"
-            "回写前会先把原文件备份到备份目录（ZJU_BACKUP_DIR，默认系统临时目录），报告里给出备份绝对路径。"
-            "相对路径按当前工作区解析。建议在写完讲义后、交付给用户前调用一次。"
+            "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。"
+            "write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。"
+            "fix=true 自动修正机械问题并先备份；报告按问题类型聚合。"
+            "pdf=true 时检查后重新排版一份同名 PDF。"
         ),
         "inputSchema": {
             "type": "object",
@@ -506,6 +590,10 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "每类问题最多列出几个行号示例（默认 3，0 表示只报数量）",
                     "default": 3,
                 },
+                "pdf": {
+                    "type": "boolean",
+                    "description": "检查后是否重新排版同名 PDF（默认 false；write_note 已自动排版）",
+                },
             },
             "required": ["file_path"],
         },
@@ -513,13 +601,9 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_write_note",
         "description": (
-            "写入讲义 Markdown。文件名由你依据「上课时间 + 本节课内容」起名（如 "
-            "知识总结-2026-10-28-复变函数-保角映射），不同讲次不会互相覆盖；"
-            "不传 name 时才回退到 知识总结-<sub_id>[-<课程简称>].md。"
-            "默认拒绝覆盖同名文件（返回 exists，让人决定改名还是覆盖），覆盖前自动备份。"
-            "写入前自动修正可机械修复的公式问题，写入后立即返回渲染规范检查报告——"
-            "也就是把「写文件」和「zju_check_note」两步合成一次调用。"
-            "只写工作区（当前工作区或 ZJU_WORKSPACE）内的 .md 文件。"
+            "写入讲义 Markdown：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、"
+            "写前修正公式、写后返回规范检查，并按设置自动排版同名 PDF——"
+            "写文件、检查、出 PDF 一次完成。只写工作区内的 .md 文件。"
         ),
         "inputSchema": {
             "type": "object",
@@ -565,6 +649,10 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "检查报告中每类问题最多列出几个行号示例（默认 3）",
                     "default": 3,
                 },
+                "pdf": {
+                    "type": "boolean",
+                    "description": "写入后是否排版同名 PDF（默认跟随插件设置 renderPdf；显式 true/false 可覆盖）",
+                },
             },
             "required": ["sub_id", "content"],
         },
@@ -572,16 +660,90 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_read_browser_cookie",
         "description": (
-            "从本机 Microsoft Edge 读取已登录的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的域级 Cookie，"
-            "智云的 _token 在那里），并缓存在 MCP 服务端内存中供其他工具使用。"
-            "只返回 Cookie 名称与长度，绝不回显明文；本工具没有任何参数。"
-            "注意：Edge 正在运行时会锁住 Cookie 数据库；若本机 Edge 启用了应用绑定加密（ABE），"
-            "退出 Edge 也无法在本地解密，应改用 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。"
+            "读取本机 Edge 的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的 _token）"
+            "到服务端内存；只返回名称与长度，绝不回显明文，无参数。"
         ),
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
             "properties": {},
+        },
+    },
+    {
+        "name": "zju_build_study_notes",
+        "description": (
+            "把讲义变成 scholia 填空式学习笔记（Typst → PDF）。"
+            "mode=draft 生成填空底稿（你补内容）；mode=compile 编译成 out.pdf + 逐页 PNG，"
+            "并报告编译错误、方框预算与改不动的数学。需要本机 Typst（≥0.13）。"
+            "只写工作区内的文件。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["draft", "compile"],
+                    "description": (
+                        "draft=讲义转填空底稿（只搬运与改公式，不做内容判断）；"
+                        "compile=底稿转 Typst 并编译成 PDF"
+                    ),
+                    "default": "draft",
+                },
+                "note_path": {
+                    "type": "string",
+                    "description": "讲义 Markdown 的路径（mode=draft 必填）",
+                },
+                "draft_path": {
+                    "type": "string",
+                    "description": "填空底稿 Markdown 的路径（mode=compile 必填）",
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": (
+                        "输出目录，相对当前工作区（默认与源文件同目录；"
+                        "源文件在工作区外时写到工作区的 notes/ 下）"
+                    ),
+                },
+                "title": {
+                    "type": "string",
+                    "description": "封面标题（mode=draft；默认取讲义的第一个一级标题）",
+                },
+                "subtitle": {
+                    "type": "string",
+                    "description": "封面副标题（mode=draft，可选）",
+                },
+                "author": {
+                    "type": "string",
+                    "description": "封面作者（mode=draft，可选）",
+                },
+                "date": {
+                    "type": "string",
+                    "description": "封面日期（mode=draft，可选，例如 2026-11-02）",
+                },
+                "kicker": {
+                    "type": "string",
+                    "description": "封面上方的小字行（mode=draft，可选，例如课程代码）",
+                },
+                "theme": {
+                    "type": "string",
+                    "enum": ["light", "dark"],
+                    "description": "配色主题（mode=compile，默认 light 淡彩极简）",
+                    "default": "light",
+                },
+                "make_png": {
+                    "type": "boolean",
+                    "description": (
+                        "是否同时导出逐页 PNG（mode=compile，默认 true）。"
+                        "knot 的内容块数量错位不会报错，只能靠看图发现，所以建议保持开启"
+                    ),
+                    "default": True,
+                },
+                "pages": {
+                    "type": "string",
+                    "description": "只导出指定页的 PNG，例如 1-3（mode=compile，可选）",
+                },
+            },
         },
     },
 ]
@@ -713,8 +875,252 @@ def _segments_payload(
     return payload if len(payload) <= max_chars else _hard_truncate(payload, max_chars)
 
 
+def _study_notes_output_dir(source_path: str, output_dir: str) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve the directory generated study-note files go into.
+
+    An explicit ``output_dir`` wins (and must stay inside the workspace).
+    Otherwise the source file's own directory is used when that directory is
+    inside the workspace; a source living outside falls back to ``notes/``,
+    so a new file is never written outside the workspace.
+    """
+    raw = str(output_dir or "").strip()
+    if raw:
+        return artifact_dir(raw, default="notes")
+    parent = os.path.dirname(source_path)
+    if parent and is_inside_workspace(parent):
+        return parent, None
+    return artifact_dir("", default="notes")
+
+
+def _study_notes_sections(knots: List[Dict[str, Any]]) -> str:
+    """Summarise knot counts per section: ``第一节 3 个；第二节 1 个``."""
+    counts: Dict[str, int] = {}
+    for knot in knots:
+        name = str(knot.get("section") or "")
+        counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return "无"
+    return "；".join(f"{name or '(未命名)'} {count} 个" for name, count in counts.items())
+
+
+def _note_cover_meta(note_path: str, note_text: str) -> Tuple[str, str]:
+    """Derive the cover title/date for a reading PDF.
+
+    The lecture note's first H1 is the title; the date comes from the file
+    name (``知识总结-2026-10-28-…``) when present. Neither is guessed — an
+    absent field simply stays empty.
+    """
+    stem = os.path.splitext(os.path.basename(note_path))[0]
+    heading = re.search(r"^#\s+(.+?)\s*$", note_text, re.MULTILINE)
+    fallback = re.sub(r"^知识总结-", "", stem).replace("-", " ").strip()
+    title = heading.group(1).strip() if heading else (fallback or stem)
+    date_match = re.search(r"(\d{4}-\d{2}-\d{2})", stem)
+    return title, date_match.group(1) if date_match else ""
+
+
+def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
+    """Typeset the written note into a reading PDF; never raises.
+
+    Returns 0–2 short lines for the tool result. A missing Typst or a
+    rendering error must not turn a successful Markdown write into a failure:
+    the Markdown is the deliverable, the PDF is an enhancement.
+    """
+    if not is_inside_workspace(note_path):
+        return ["PDF 跳过: 讲义在工作区外，未写 PDF（避免越界写入）"]
+    title, date = _note_cover_meta(note_path, note_text)
+    try:
+        from zju_lecture.handout import compile_handout_file
+
+        result = compile_handout_file(
+            note_path,
+            note_text,
+            title=title,
+            date=date,
+            workspace_root=primary_workspace(),
+        )
+    except Exception as exc:  # noqa: BLE001 - PDF is an enhancement
+        return [f"PDF 跳过: {exc}"]
+    if result.ok:
+        pages = f"（{result.pages} 页）" if result.pages else ""
+        return [f"PDF: {result.pdf_path}{pages}"]
+    detail = "；".join(result.errors[:2]) or "未知原因"
+    if "找不到 typst" in detail:
+        # Keep the common "Typst is not installed" case to one short line:
+        # this string is paid on every note write while the feature is on.
+        detail = "未找到 typst（Markdown 已保存；装 Typst 或在设置里关 renderPdf）"
+    if len(detail) > 220:
+        detail = detail[:219] + "…"
+    return [f"PDF 跳过: {detail}"]
+
+
+def _build_study_notes(arguments: Dict[str, Any]) -> str:
+    """Handle ``zju_build_study_notes``: 讲义 → 填空底稿 → Typst → PDF."""
+    mode = str(arguments.get("mode") or "draft").strip().lower()
+    if mode not in ("draft", "compile"):
+        return "错误: mode 只能是 draft 或 compile"
+
+    if mode == "draft":
+        note_path = str(arguments.get("note_path") or "").strip()
+        if not note_path:
+            return "错误: mode=draft 需要 note_path（讲义 Markdown 的路径）"
+        resolved, tried = resolve_path(note_path)
+        if resolved is None:
+            return f"错误: 找不到讲义文件: {note_path}{describe_attempts(tried)}"
+        try:
+            resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="讲义文件")
+        except LocalFileError as exc:
+            return f"错误: {exc}"
+        try:
+            with open(resolved, "r", encoding="utf-8") as handle:
+                note_text = handle.read()
+        except UnicodeDecodeError:
+            return f"错误: 讲义文件不是 UTF-8 编码: {resolved}"
+        except OSError as exc:
+            return f"错误: 读取讲义文件失败: {exc}"
+
+        draft = build_draft(
+            note_text,
+            title=str(arguments.get("title") or ""),
+            subtitle=str(arguments.get("subtitle") or ""),
+            author=str(arguments.get("author") or ""),
+            date=str(arguments.get("date") or ""),
+            kicker=str(arguments.get("kicker") or ""),
+        )
+
+        target_dir, target_error = _study_notes_output_dir(
+            resolved, str(arguments.get("output_dir") or "")
+        )
+        if target_error:
+            return f"错误: {target_error}"
+        stem = os.path.splitext(os.path.basename(resolved))[0]
+        target = os.path.join(target_dir, f"{stem}-填空底稿.md")
+        try:
+            write_atomic(target, draft.text)
+        except OSError as exc:
+            return f"错误: 写入填空底稿失败: {target}（{exc}）"
+
+        lines = [
+            "=== 已生成填空底稿 ===",
+            f"路径: {target}",
+            f"来源: {resolved} | 章节: {draft.sections} | 字数: {len(draft.text)}",
+            "",
+            "请编辑底稿：把 [直觉]/[练习]/[边注] 补成内容；[定义]/[定理]/[证明] "
+            "只在「后面会被回引」时才用（每节框合计 ≤ "
+            f"{KNOT_BUDGET_PER_SECTION} 个），其余写成普通段落。",
+            "公式直接写 LaTeX，工具会转成 Typst；转不动的会点名。",
+            f'下一步: zju_build_study_notes(mode="compile", draft_path="{target}")',
+        ]
+        if draft.warnings:
+            lines.append("")
+            lines.append("无法机械转换的数学片段（请手工改）:")
+            lines.extend(f"- {item}" for item in sorted(set(draft.warnings))[:10])
+        return "\n".join(lines)
+
+    draft_path = str(arguments.get("draft_path") or "").strip()
+    if not draft_path:
+        return "错误: mode=compile 需要 draft_path（填空底稿的路径）"
+    resolved, tried = resolve_path(draft_path)
+    if resolved is None:
+        return f"错误: 找不到填空底稿: {draft_path}{describe_attempts(tried)}"
+    try:
+        resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="填空底稿")
+    except LocalFileError as exc:
+        return f"错误: {exc}"
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            draft_text = handle.read()
+    except UnicodeDecodeError:
+        return f"错误: 填空底稿不是 UTF-8 编码: {resolved}"
+    except OSError as exc:
+        return f"错误: 读取填空底稿失败: {exc}"
+
+    theme = str(arguments.get("theme") or "light").strip().lower()
+    try:
+        rendered = render_typst(draft_text, theme=theme)
+    except StudyNotesError as exc:
+        return f"错误: {exc}"
+
+    target_dir, target_error = _study_notes_output_dir(
+        resolved, str(arguments.get("output_dir") or "")
+    )
+    if target_error:
+        return f"错误: {target_error}"
+    stem = os.path.splitext(os.path.basename(resolved))[0]
+    project_dir = os.path.join(target_dir, f"{stem}-typst")
+
+    try:
+        result = compile_project(
+            project_dir,
+            rendered.typst,
+            make_png=bool(arguments.get("make_png", True)),
+            pages=str(arguments.get("pages") or "").strip(),
+        )
+    except StudyNotesError as exc:
+        return f"错误: {exc}"
+
+    lines = [
+        "=== 填空笔记编译结果 ===",
+        f"主题: {'淡彩极简（light）' if theme == 'light' else '深色（dark）'}",
+        f"底稿: {resolved}",
+        f"项目目录: {project_dir}",
+        "",
+        "=== 格式规范检查（正文优先，框框克制）===",
+        f"正文段落: {rendered.paragraphs} | 方框: {rendered.knot_count} | "
+        f"方框:正文 = {rendered.ratio_text()}（1:{KNOT_RATIO_TARGET} 以内较稳，"
+        f"超过 1:{KNOT_RATIO_TOO_MANY} 判为滥用）",
+        f"逐节方框: {_study_notes_sections(rendered.knots)}（每节上限 {KNOT_BUDGET_PER_SECTION} 个）",
+        "装置使用: "
+        + (", ".join(f"{name} {count}" for name, count in sorted(rendered.devices.items())) or "无"),
+        "格式规范: skills/scholia-notes/references/format-spec.md（规范性文件）",
+    ]
+    if result.ok:
+        lines.append(f"PDF: {result.pdf_path}")
+        if result.png_paths:
+            lines.append(
+                "逐页 PNG: " + ", ".join(os.path.basename(path) for path in result.png_paths)
+            )
+            lines.append(
+                "请抽查 PNG：knot 内容块错位不会让编译报错（退出码仍是 0）。"
+                "只看与内容块/图相关的页，不必逐页全看。"
+            )
+    else:
+        lines.append("编译失败，没有产出 PDF。")
+    if rendered.warnings:
+        lines.append("")
+        lines.append("警告:")
+        lines.extend(f"- {item}" for item in rendered.warnings)
+    if result.errors:
+        lines.append("")
+        lines.append("错误:")
+        lines.extend(f"- {item}" for item in result.errors)
+    if result.warnings:
+        lines.append("")
+        lines.append("编译告警:")
+        lines.extend(f"- {item}" for item in result.warnings[:20])
+    return "\n".join(lines)
+
+
+def _ensure_tool_enabled(name: str) -> None:
+    """Explain a gated tool call instead of silently treating it as unknown."""
+    if name in STUDY_TOOL_NAMES and not study_notes_enabled():
+        raise StudyNotesDisabledError(
+            "填空笔记未启用（插件设置 enableStudyNotes=false / ZJU_ENABLE_STUDY_NOTES=0）："
+            "本次不注册 zju_build_study_notes。需要时在 dsh 插件设置里打开"
+            "「填空式学习笔记」，或给 MCP server 设置 ZJU_ENABLE_STUDY_NOTES=1 后重启。"
+        )
+    if name in LOGIN_TOOL_NAMES and not login_tools_enabled():
+        raise LoginToolsDisabledError(
+            "登录辅助工具未启用（插件设置 enableLoginTools=false / ZJU_ENABLE_LOGIN_TOOLS=0）："
+            "本次不注册 zju_get_video_url / zju_read_browser_cookie。"
+            "需要时在 dsh 插件设置里打开「登录辅助工具」，"
+            "或给 MCP server 设置 ZJU_ENABLE_LOGIN_TOOLS=1 后重启。"
+        )
+
+
 def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Execute the tool function and return the raw response payload."""
+    _ensure_tool_enabled(name)
+
     if name == "zju_parse_url":
         parsed = parse_lecture_url(str(arguments.get("url", "")))
         return json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -973,6 +1379,8 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             if backup_path:
                 applied_block += f"\n- 原文件已备份到 {backup_path}"
             report = f"=== 已自动修复 ===\n{applied_block}\n\n{report}"
+        if arguments.get("pdf") is True:
+            report = report + "\n\n" + "\n".join(_render_note_pdf(file_path, note_text))
         return report
 
     if name == "zju_write_note":
@@ -1045,6 +1453,10 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             header.extend(f"- {item}" for item in applied)
         if backup_path:
             header.append(f"原文件已备份到 {backup_path}")
+        pdf_override = arguments.get("pdf")
+        should_pdf = render_pdf_enabled() if pdf_override is None else bool(pdf_override)
+        if should_pdf:
+            header.extend(_render_note_pdf(target, fixed_text))
         return "\n".join(header) + "\n\n" + report
 
     if name == "zju_read_browser_cookie":
@@ -1068,6 +1480,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             ensure_ascii=False,
             indent=2,
         )
+
+    if name == "zju_build_study_notes":
+        return _build_study_notes(arguments)
 
     raise ValueError(f"Unknown tool: {name}")
 
@@ -1139,7 +1554,14 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         tool_args = params.get("arguments") or {}
         try:
             payload = handle_tool_call(tool_name, tool_args)
-        except (ZJUAPIError, CoursewareError, CookieAccessError, SlidesDisabledError) as exc:
+        except (
+            ZJUAPIError,
+            CoursewareError,
+            CookieAccessError,
+            SlidesDisabledError,
+            StudyNotesDisabledError,
+            LoginToolsDisabledError,
+        ) as exc:
             message_text = REDACTOR.redact(str(exc))
             _log(f"{tool_name}: {message_text}")
             return {"jsonrpc": "2.0", "id": req_id, "result": _tool_error(message_text)}

@@ -15,7 +15,8 @@
 
 ## 2. 调用方式
 
-1. 先用 `zju_parse_url` 拿到 `sub_id` / `course_id`。
+1. 优先把**完整回放 URL** 直接传给 `zju_fetch_slides`（它会自动解析 `sub_id` / `course_id`）；
+   只有手里是纯 `sub_id` 时，才用 `zju_parse_url` 补一次 `course_id`。
 2. 再调用：
 
    ```
@@ -72,7 +73,8 @@
 - 若本机 Edge 正在运行，Cookie 数据库会被独占锁定：提示用户**完全退出 Edge**（含后台驻留进程）后重试，
   或在宿主配置里设置 `ZJU_COOKIE` / `ZJU_COOKIE_FILE`；
 - **不要让用户把 Cookie 粘贴进对话**，也不要把 Cookie 写进讲义或命令参数；
-- 工具不接受 cookie 参数，也不会回显明文；`zju_read_browser_cookie` 只返回名称与长度。
+- 工具不接受 cookie 参数，也不会回显明文；登录辅助模块开启时，`zju_read_browser_cookie`
+  也只返回名称与长度。
 
 ## 6. 抓不到时
 

@@ -9,9 +9,12 @@
       ],
       "env": {
         "ZJU_ENABLE_SLIDES": "0",
-        "ZJU_EMBED_SLIDES": "0"
+        "ZJU_EMBED_SLIDES": "0",
+        "ZJU_ENABLE_STUDY_NOTES": "0",
+        "ZJU_ENABLE_LOGIN_TOOLS": "0",
+        "ZJU_RENDER_PDF": "0"
       },
-      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放。投影 PPT 截图抓取是可选的独立模块：设置 ZJU_ENABLE_SLIDES=1 才会启用 zju_fetch_slides（默认 0，纯字幕链路不需要登录态）；再设 ZJU_EMBED_SLIDES=1 可让 Agent 在讲义中引用投影截图（默认 0，节省 token）。",
+      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放；dsh 插件默认会自动排版同名 PDF，MCP 这里默认关闭（ZJU_RENDER_PDF=1 开启，需要本机 Typst）。投影截图（ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）、填空笔记（ZJU_ENABLE_STUDY_NOTES）与登录辅助（ZJU_ENABLE_LOGIN_TOOLS）都是独立可选模块，默认 0。",
       "timeout": 120000
     }
   }

@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "zju-lecture",
   "displayName": "浙大智云课堂讲义",
-  "version": "1.5.1",
-  "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放，可选启用投影 PPT 截图抓取（默认关闭，dsh 设置 enableSlides / MCP 环境变量 ZJU_ENABLE_SLIDES=1 开启）；产出带时间戳、LaTeX 公式与考点预测的结构化讲义。字幕接口公开免登录；登录 Cookie 只在本地内存中使用，工具不回显明文。",
+  "version": "2.0.2",
+  "description": "以「语音字幕 + 本地课件 + 自动 PDF」为主链路整理浙大智云课堂回放：写完讲义自动排版同名 PDF；投影截图、填空笔记与登录辅助都是可选模块（dsh 设置 / MCP 环境变量开关）。产出带时间戳、LaTeX 公式与考点预测的结构化讲义。字幕接口公开免登录；登录 Cookie 只在本地内存中使用，工具不回显明文。",
   "author": "chenqianyu486",
   "icon": "icon.png",
   "darkIcon": "icon-dark.png",
@@ -18,6 +18,7 @@
     "zju-lecture.mcp.json"
   ],
   "skills": [
-    "skills/zju-lecture-summarizer/SKILL.md"
+    "skills/zju-lecture-summarizer/SKILL.md",
+    "skills/scholia-notes/SKILL.md"
   ]
 }

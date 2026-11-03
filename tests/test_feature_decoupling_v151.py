@@ -208,6 +208,9 @@ class TestPluginWiring(unittest.TestCase):
         env = config["mcpServers"]["zju-lecture"]["env"]
         self.assertEqual(env["ZJU_ENABLE_SLIDES"], "0")
         self.assertEqual(env["ZJU_EMBED_SLIDES"], "0")
+        self.assertEqual(env["ZJU_ENABLE_STUDY_NOTES"], "0")
+        self.assertEqual(env["ZJU_ENABLE_LOGIN_TOOLS"], "0")
+        self.assertEqual(env["ZJU_RENDER_PDF"], "0")
 
     def test_core_skill_is_transcript_only_and_slides_are_appended(self):
         core = read_text("skills", "zju-lecture-summarizer", "SKILL.md")
@@ -225,7 +228,7 @@ class TestPluginWiring(unittest.TestCase):
             encoding="utf-8",
         ) as handle:
             manifest = json.load(handle)
-        self.assertEqual(manifest["version"], "1.5.1")
+        self.assertEqual(manifest["version"], "2.0.2")
         paths = [item["path"] for item in manifest["files"]]
         self.assertEqual(paths, ["SKILL.md", "SLIDES.md"])
         self.assertEqual(manifest["fileCount"], 2)
@@ -250,7 +253,13 @@ class TestGuiSettingsPage(unittest.TestCase):
     def test_projection_fields_are_editable_in_the_ui(self):
         """dsh-settings only projects `.volatile()` Config fields into forms."""
         source = read_text("lib", "index.js")
-        for field in ("enableSlides", "embedSlideImages"):
+        for field in (
+            "renderPdf",
+            "enableStudyNotes",
+            "enableSlides",
+            "embedSlideImages",
+            "enableLoginTools",
+        ):
             self.assertRegex(
                 source,
                 rf"{field}:[\s\S]*?\.volatile\(\)",

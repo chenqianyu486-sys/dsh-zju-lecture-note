@@ -87,12 +87,24 @@ class TestToolDefinitions(unittest.TestCase):
         payload = json.loads(result.stdout.strip())
         self.assertTrue(payload.get("ok"), payload)
         if not payload.get("skipped"):
-            # v1.5.1: the projection module is opt-in, so the default
-            # configuration registers the transcript core only.
-            self.assertEqual(len(payload["tools"]), len(TOOLS) - 1)
-            self.assertNotIn("zju_fetch_slides", payload["tools"])
+            # v2.0.1: every optional module is opt-in, so the default
+            # configuration registers only the five-tool transcript core.
+            self.assertEqual(len(payload["tools"]), 5)
+            for optional in (
+                "zju_fetch_slides",
+                "zju_build_study_notes",
+                "zju_get_video_url",
+                "zju_read_browser_cookie",
+            ):
+                self.assertNotIn(optional, payload["tools"])
             self.assertEqual(len(payload["toolsWithSlides"]), len(TOOLS))
             self.assertIn("zju_fetch_slides", payload["toolsWithSlides"])
+            self.assertIn("zju_build_study_notes", payload["toolsWithStudy"])
+            self.assertEqual(payload["skills"], ["zju-lecture-summarizer"])
+            self.assertEqual(
+                payload["skillsWithStudy"],
+                ["zju-lecture-summarizer", "scholia-notes"],
+            )
             self.assertTrue(payload["skillHasSlides"])
             self.assertEqual(payload["skill"], "zju-lecture-summarizer")
             self.assertIn("123456", payload["result"])
@@ -169,7 +181,7 @@ class TestPackage(unittest.TestCase):
         with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["name"], "dsh-zju-lecture-note")
-        self.assertEqual(manifest["version"], "1.5.1")
+        self.assertEqual(manifest["version"], "2.0.2")
         self.assertEqual(manifest["type"], "module")
         self.assertEqual(manifest["icon"], "icon.png")
         self.assertEqual(manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")

@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成 Skill 的文件清单（sha256 审计用）。
+"""生成各 Skill 的文件清单（sha256 审计用）。
+
+插件现在随包分发两个 Skill，清单脚本要能一次覆盖它们 —— 清单是
+「装到用户机器上的那份」与「仓库里这份」是否一致的凭据，少一个就少一个
+可核对的地方。
+
+清单里有两个版本相关的字段：
+
+* ``version`` —— 跟插件主版本一致（``package.json`` 的 version），
+  插件升级时清单跟着升，Agent 才能从清单看出装的是哪一版；
+* ``contentHash`` —— ``SKILL.md`` 本身的 sha256，用来发现「Skill 改了但
+  清单没重新生成」这种漂移。
 
 用法：
     python tools/build_skill_manifest.py
@@ -12,13 +23,21 @@ import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SKILL_NAME = "zju-lecture-summarizer"
-SKILL_DIR = os.path.join(ROOT, "skills", SKILL_NAME)
-MANIFEST = os.path.join(ROOT, "skills", f"{SKILL_NAME}.manifest.json")
-PACKAGE_JSON = os.path.join(ROOT, "package.json")
+
+#: 随包分发的 Skill。清单里的版本号统一取插件主版本，不再各写各的。
+SKILLS = (
+    "zju-lecture-summarizer",
+    "scholia-notes",
+)
 
 EXCLUDED_DIRS = {".git", "__pycache__", "node_modules"}
 EXCLUDED_FILES = {".DS_Store", "README.en.md"}
+
+
+def package_version():
+    """The plugin's version — the one every shipped artifact agrees on."""
+    with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+        return json.load(handle)["version"]
 
 
 def sha256(path):
@@ -29,15 +48,16 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def collect():
+def collect(skill_name):
+    skill_dir = os.path.join(ROOT, "skills", skill_name)
     files = []
-    for root, dirs, names in os.walk(SKILL_DIR):
+    for root, dirs, names in os.walk(skill_dir):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
         for name in sorted(names):
             if name in EXCLUDED_FILES or name.endswith(".pyc"):
                 continue
             path = os.path.join(root, name)
-            rel = os.path.relpath(path, SKILL_DIR).replace(os.sep, "/")
+            rel = os.path.relpath(path, skill_dir).replace(os.sep, "/")
             files.append({
                 "path": rel,
                 "sha256": sha256(path),
@@ -47,32 +67,31 @@ def collect():
     return sorted(files, key=lambda item: item["path"])
 
 
-def package_version() -> str:
-    """Keep the Skill manifest in step with the published plugin version."""
-    with open(PACKAGE_JSON, encoding="utf-8") as handle:
-        return str(json.load(handle).get("version") or "0.0.0")
-
-
-def main() -> int:
-    files = collect()
-    # A SKILL.md front matter carries only name/description — there is no
-    # version field to compare, so an installed copy can silently drift from
-    # the plugin (and an old copy can still advise users to hand over a
-    # cookie). The content hash is the only reliable drift signal, so publish
-    # it explicitly instead of burying it in files[].sha256.
-    skill_hash = next((item["sha256"] for item in files if item["path"] == "SKILL.md"), "")
+def build(skill_name, version):
+    files = collect(skill_name)
+    skill_file = os.path.join(ROOT, "skills", skill_name, "SKILL.md")
     manifest = {
-        "name": SKILL_NAME,
-        "version": package_version(),
-        "contentHash": f"sha256:{skill_hash}",
+        "name": skill_name,
+        "version": version,
+        "contentHash": f"sha256:{sha256(skill_file)}",
         "fileCount": len(files),
         "files": files,
     }
-    with open(MANIFEST, "w", encoding="utf-8", newline="\n") as handle:
+    path = os.path.join(ROOT, "skills", f"{skill_name}.manifest.json")
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(manifest, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
-    print(f"已生成 Skill 清单: {len(files)} 个文件 -> {MANIFEST}")
-    print(f"SKILL.md contentHash: sha256:{skill_hash[:12]}…")
+    return path, len(files)
+
+
+def main() -> int:
+    version = package_version()
+    for skill_name in SKILLS:
+        path, count = build(skill_name, version)
+        print(
+            f"已生成 Skill 清单: {skill_name} v{version} {count} 个文件 "
+            f"-> {os.path.relpath(path, ROOT)}"
+        )
     return 0
 
 
