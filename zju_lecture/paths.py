@@ -252,6 +252,25 @@ def note_target(
     return target, None
 
 
+def is_inside_workspace(path: str) -> bool:
+    """Whether ``path`` lies inside one of the workspace roots.
+
+    Used to decide where generated files may be written: a *source* file can
+    live anywhere on disk (the user may point at a note in another folder),
+    but a *new* file is only ever written inside the workspace.
+    """
+    if not path:
+        return False
+    try:
+        candidate = os.path.abspath(os.path.expanduser(str(path)))
+    except (OSError, ValueError):
+        return False
+    for root in workspace_roots():
+        if _is_inside(root, candidate):
+            return True
+    return False
+
+
 def artifact_dir(
     subdir: str = "",
     default: str = "artifacts",

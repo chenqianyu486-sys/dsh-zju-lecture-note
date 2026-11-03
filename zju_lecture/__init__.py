@@ -48,6 +48,16 @@ from .security import (
     mask_cookie_header,
     sanitize_cookie_header,
 )
+from .study_notes import (
+    CompileResult,
+    DraftResult,
+    RenderResult,
+    StudyNotesError,
+    build_draft,
+    compile_project,
+    find_typst,
+    render_typst,
+)
 
 # The projection pipeline is an optional feature: importing this package (for
 # example just to fetch a transcript) must not load the screenshot/PDF module.
@@ -58,6 +68,13 @@ _LAZY_EXPORTS = {
     "SlideError": ".slides",
     "build_slides_pdf": ".slides",
     "download_slides": ".slides",
+    # The reading-PDF pipeline is only needed after a note is written; a
+    # transcript-only process should never pay for loading it.
+    "HandoutResult": ".handout",
+    "HandoutCompileResult": ".handout",
+    "render_handout": ".handout",
+    "compile_handout": ".handout",
+    "compile_handout_file": ".handout",
 }
 
 
@@ -87,6 +104,11 @@ __all__ = [
     "secure_zju_url",
     "download_slides",
     "build_slides_pdf",
+    "HandoutResult",
+    "HandoutCompileResult",
+    "render_handout",
+    "compile_handout",
+    "compile_handout_file",
     "extract_courseware_text",
     "check_markdown",
     "fix_markdown",
@@ -115,4 +137,12 @@ __all__ = [
     "guard_local_file",
     "mask_cookie_header",
     "sanitize_cookie_header",
+    "StudyNotesError",
+    "DraftResult",
+    "RenderResult",
+    "CompileResult",
+    "build_draft",
+    "render_typst",
+    "compile_project",
+    "find_typst",
 ]
