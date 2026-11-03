@@ -40,20 +40,26 @@
 // 商业专有字体；Typst 会把命中的字体子集内嵌进 PDF，那份 PDF 就不适合再分发。
 // 所以这里默认用 SIL OFL 的 STIX Two，再退到 Typst 运行时内嵌的 Libertinus /
 // New Computer Modern / DejaVu —— 任何机器都出字，且产物可以对外分享。
-// 中文优先 Noto Serif SC / Source Han Serif SC（OFL），最后才 Songti SC / SimSun
-// （仅作本机兜底；缺失时 Typst 会自动跳过）。
+//
+// 中文第一顺位是插件自带的 **Notes Serif SC**（Noto Serif SC 的 GB2312 子集，
+// OFL，见 zju_lecture/fonts/FONT-NOTICE.md）：它保证任何机器都有中文、且标题
+// 有真正的粗体面。生僻字不在子集里时，Typst 会继续往后回退到 Noto Serif SC /
+// Source Han / Songti SC / SimSun（后者仅本机兜底，其子集不宜随 PDF 对外分发）。
 // 本机想看上游原味：把注释里的 local 版换进来 —— 只限自用，别分发那种 PDF。
 #let fonts = (
   body: (
     "STIX Two Text", "Libertinus Serif",
+    "Notes Serif SC",
     "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun",
   ),
   heading: (
     "STIX Two Text", "Libertinus Serif",
+    "Notes Serif SC",
     "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun",
   ),
   sans: (
     "STIX Two Text", "Libertinus Serif",
+    "Notes Serif SC",
     "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei",
   ),
   mono: ("DejaVu Sans Mono", "Consolas"),

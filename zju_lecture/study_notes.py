@@ -1246,9 +1246,15 @@ def render_typst(
     body_text = "\n".join(lines_out).strip()
 
     cover = _render_cover(normalized)
+    # 中文字体族：插件自带的 Notes Serif SC（OFL 子集）排第一，保证任何机器
+    # 都有中文与真正的粗体面；生僻字继续回退到系统字体。
+    cjk_fonts = (
+        '"Notes Serif SC", "Noto Serif SC", "Source Han Serif SC", '
+        '"Songti SC", "SimSun"'
+    )
     setup = [
         '#import "prelude.typ": *',
-        f'#show: scholia.with(theme: "{theme}", prose: "notes")',
+        f'#show: scholia.with(theme: "{theme}", prose: "notes", fonts: (cjk: ({cjk_fonts})))',
     ]
     if theme == "light":
         # 深色主题下 `use-palette` 会把内置 dark 卡覆盖回浅色，所以只给浅色用。
@@ -1562,31 +1568,14 @@ _TYPST_ENV = "ZJU_TYPST_BIN"
 
 
 def find_typst() -> Optional[str]:
-    """找到 ``typst`` 可执行文件。找不到返回 ``None``。"""
-    override = os.environ.get(_TYPST_ENV, "").strip()
-    if override:
-        if os.path.isfile(override):
-            return override
-        found = shutil.which(override)
-        if found:
-            return found
+    """找到 ``typst`` 可执行文件（含插件自举的缓存副本）。找不到返回 ``None``。
 
-    found = shutil.which("typst")
-    if found:
-        return found
+    真正的查找顺序在 :mod:`zju_lecture.deps` 里：``ZJU_TYPST_BIN`` → 插件缓存
+    → PATH → 常见安装目录。这里保留同名函数，是为了不打断既有调用方与测试。
+    """
+    from .deps import find_typst as _find
 
-    candidates = [
-        os.path.expanduser("~/.cargo/bin/typst.exe"),
-        os.path.expanduser("~/.cargo/bin/typst"),
-        os.path.expanduser("~/AppData/Local/Programs/typst/typst.exe"),
-        os.path.expanduser("~/.local/bin/typst"),
-        "/usr/local/bin/typst",
-        "/opt/homebrew/bin/typst",
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    return _find()
 
 
 def _prelude_text() -> str:
@@ -1629,12 +1618,17 @@ def compile_project(
 
     会生成 ``main.typ`` / ``prelude.typ`` / ``out.pdf``（以及可选的 ``page-N.png``）。
     """
-    typst = find_typst()
-    if not typst:
+    from .deps import auto_install_enabled, compile_args, probe
+
+    info = probe(auto_install=auto_install_enabled())
+    if not info.ok or not info.path:
+        detail = "；".join(info.notes) if info.notes else "原因未识别"
         raise StudyNotesError(
-            "本机找不到 typst 可执行文件。请先安装 Typst（https://typst.app）"
-            f"（需要 ≥ 0.13.0），或用环境变量 {_TYPST_ENV} 指定可执行文件路径。"
+            f"Typst 不可用（{detail}）。运行 zju_doctor(install=true) 可自动安装，"
+            f"或手动安装后设置 {_TYPST_ENV}。"
         )
+    typst = info.path
+    shared = compile_args(project_dir)
 
     os.makedirs(project_dir, exist_ok=True)
     main_path = os.path.join(project_dir, "main.typ")
@@ -1645,7 +1639,7 @@ def compile_project(
         handle.write(_prelude_text())
 
     pdf_path = os.path.join(project_dir, "out.pdf")
-    args = ["compile", "--root", project_dir, "main.typ", "out.pdf"]
+    args = ["compile", *shared, "--root", project_dir, "main.typ", "out.pdf"]
     code, output = _run_typst(typst, args, project_dir, timeout)
 
     errors = [line for line in output.splitlines() if "error:" in line]
@@ -1665,7 +1659,7 @@ def compile_project(
         result.errors.append(f"typst 退出码 {code}（输出见下）")
 
     if result.ok and make_png:
-        png_args = ["compile", "--root", project_dir]
+        png_args = ["compile", *shared, "--root", project_dir]
         if pages:
             png_args += ["--pages", pages]
         png_args += ["main.typ", "page-{p}.png"]

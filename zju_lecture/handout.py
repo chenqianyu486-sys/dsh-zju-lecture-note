@@ -1236,15 +1236,23 @@ def compile_handout(
     ``.zju-lecture/handout/<输出名>/`` 下。PDF 先编译到构建目录，再原子替换
     目标文件，避免编译失败时留下半个 PDF。
     """
-    typst = find_typst()
-    if not typst:
+    # Typst 自举：环境变量 → 插件缓存 → PATH；缺失时按设置自动下载。
+    # 失败只影响 PDF（Markdown 已保存），所以返回结果而不是抛异常。
+    from .deps import auto_install_enabled, compile_args, probe
+
+    root = os.path.abspath(workspace_root or os.getcwd())
+    info = probe(auto_install=auto_install_enabled())
+    if not info.ok or not info.path:
+        detail = "；".join(info.notes) if info.notes else "原因未识别"
         return HandoutCompileResult(
             ok=False,
             errors=[
-                "本机找不到 typst 可执行文件：讲义 Markdown 已保存，PDF 跳过。"
-                "安装 Typst（≥ 0.13.0）或设置 ZJU_TYPST_BIN 后重试。"
+                f"找不到 typst：{detail}。Markdown 已保存；"
+                "运行 zju_doctor(install=true) 自动安装，或设置 ZJU_TYPST_BIN 后重试。"
             ],
         )
+    typst = info.path
+    shared = compile_args(root)
 
     root = os.path.abspath(workspace_root or os.getcwd())
     output_pdf = os.path.abspath(output_pdf)
@@ -1265,7 +1273,7 @@ def compile_handout(
     built_pdf = os.path.join(build_dir, "out.pdf")
     code, output = _run_typst(
         typst,
-        ["compile", "--root", root, "main.typ", "out.pdf"],
+        ["compile", *shared, "--root", root, "main.typ", "out.pdf"],
         build_dir,
         timeout,
     )
