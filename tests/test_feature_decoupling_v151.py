@@ -228,7 +228,9 @@ class TestPluginWiring(unittest.TestCase):
             encoding="utf-8",
         ) as handle:
             manifest = json.load(handle)
-        self.assertEqual(manifest["version"], "2.0.2")
+        with open(os.path.join(ROOT, "package.json"), encoding="utf-8") as handle:
+            package = json.load(handle)
+        self.assertEqual(manifest["version"], package["version"])
         paths = [item["path"] for item in manifest["files"]]
         self.assertEqual(paths, ["SKILL.md", "SLIDES.md"])
         self.assertEqual(manifest["fileCount"], 2)

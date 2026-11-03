@@ -27,6 +27,7 @@ from zju_lecture.handout import (  # noqa: E402
     compile_handout,
     render_handout,
 )
+from zju_lecture.deps import TypstInfo  # noqa: E402
 from zju_lecture.study_notes import find_typst  # noqa: E402
 
 
@@ -155,7 +156,10 @@ class TestCompileHandout(unittest.TestCase):
         )
 
     def test_missing_typst_is_reported_not_raised(self):
-        with mock.patch("zju_lecture.handout.find_typst", return_value=None):
+        with mock.patch(
+            "zju_lecture.deps.probe",
+            return_value=TypstInfo(notes=["未找到 Typst"]),
+        ):
             result = compile_handout("#import \"prelude.typ\": *\n", "/tmp/x.pdf", "/tmp")
         self.assertFalse(result.ok)
         self.assertIn("找不到 typst", result.errors[0])
@@ -287,7 +291,8 @@ class TestAutoPdfOnWrite(unittest.TestCase):
             "ZJU_RENDER_PDF": "1",
         }
         with mock.patch.dict(os.environ, env, clear=False), mock.patch(
-            "zju_lecture.handout.find_typst", return_value=None
+            "zju_lecture.deps.probe",
+            return_value=TypstInfo(notes=["未找到 Typst"]),
         ):
             output = mcp_server.handle_tool_call(
                 "zju_write_note",
@@ -335,9 +340,10 @@ class TestFeatureGates(unittest.TestCase):
         with mock.patch.dict(os.environ, base, clear=False):
             return [tool["name"] for tool in mcp_server.available_tools()]
 
-    def test_default_has_five_tools(self):
+    def test_default_has_six_tools(self):
         names = self.names()
-        self.assertEqual(len(names), 5)
+        # 核心链路 5 个 + 依赖自检 zju_doctor（PDF 出问题时先查它）。
+        self.assertEqual(len(names), 6)
         self.assertEqual(
             names,
             [
@@ -346,6 +352,7 @@ class TestFeatureGates(unittest.TestCase):
                 "zju_extract_courseware",
                 "zju_check_note",
                 "zju_write_note",
+                "zju_doctor",
             ],
         )
 
@@ -368,7 +375,7 @@ class TestFeatureGates(unittest.TestCase):
             ZJU_ENABLE_LOGIN_TOOLS="1",
             ZJU_ENABLE_SLIDES="1",
         )
-        self.assertEqual(len(everything), 9)
+        self.assertEqual(len(everything), 10)
 
     def test_disabled_tool_call_is_an_actionable_error(self):
         env = {
@@ -397,7 +404,7 @@ class TestFeatureGates(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, env, clear=True):
             names = [tool["name"] for tool in mcp_server.available_tools()]
-            self.assertEqual(len(names), 9)
+            self.assertEqual(len(names), 10)
             self.assertFalse(mcp_server.render_pdf_enabled())
 
 

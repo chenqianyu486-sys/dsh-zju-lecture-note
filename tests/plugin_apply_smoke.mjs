@@ -7,7 +7,7 @@
  *   - 最后通过桥接真实调用一次 Python 核心
  *
  * 同时验证 v2.0.1 的功能解耦：
- *   - 默认配置：字幕核心 5 个工具 + 自动 PDF，可选模块全部不注册；
+ *   - 默认配置：字幕核心 6 个工具 + 自动 PDF，可选模块全部不注册；
  *   - 打开填空笔记：额外注册 zju_build_study_notes，并加载 scholia-notes Skill；
  *   - 打开投影/登录辅助：额外注册对应工具，Skill 追加 SLIDES.md 附录。
  *
@@ -106,14 +106,14 @@ try {
   const names = core.tools.map((tool) => tool.name);
   const namesWithStudy = study.tools.map((tool) => tool.name);
   const namesFull = full.tools.map((tool) => tool.name);
-  if (names.length !== 5) throw new Error(`expected 5 core tools, got ${names.length}: ${names}`);
+  if (names.length !== 6) throw new Error(`expected 6 core tools, got ${names.length}: ${names}`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (names.includes(optional)) throw new Error(`core mode registered optional tool ${optional}`);
   }
-  if (namesWithStudy.length !== 6 || !namesWithStudy.includes("zju_build_study_notes")) {
+  if (namesWithStudy.length !== 7 || !namesWithStudy.includes("zju_build_study_notes")) {
     throw new Error(`study mode tools are wrong: ${namesWithStudy}`);
   }
-  if (namesFull.length !== 9) throw new Error(`expected 9 tools with every module, got ${namesFull.length}`);
+  if (namesFull.length !== 10) throw new Error(`expected 10 tools with every module, got ${namesFull.length}`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (!namesFull.includes(optional)) throw new Error(`full mode missing ${optional}`);
   }
