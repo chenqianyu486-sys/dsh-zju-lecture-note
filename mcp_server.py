@@ -85,7 +85,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.0.2"
+SERVER_VERSION = "2.1.0"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -746,6 +746,26 @@ TOOLS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "zju_doctor",
+        "description": (
+            "检查本机依赖并给出可执行结论：Python、Typst（版本 / 路径 / 来源 / 是否满足 ≥0.13）、"
+            "随包中文字体与离线 Typst 包、缓存目录。install=true 时下载并校验安装 Typst"
+            "（SHA256 固定，仅官方 Release；可用 ZJU_TYPST_AUTO_INSTALL=0 关闭自动安装）。"
+            "PDF 失败或用户问「为什么没有 PDF」时先跑它。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "install": {
+                    "type": "boolean",
+                    "description": "缺少 Typst 时是否立即下载安装（默认否；安装约 20 MB）",
+                    "default": False,
+                },
+            },
+        },
+    },
 ]
 
 
@@ -918,6 +938,49 @@ def _note_cover_meta(note_path: str, note_text: str) -> Tuple[str, str]:
     return title, date_match.group(1) if date_match else ""
 
 
+def _doctor_report(install: bool) -> str:
+    """``zju_doctor``：依赖快照；``install`` 为真时先自举 Typst。"""
+    from zju_lecture import deps
+
+    auto = deps.auto_install_enabled()
+    if install:
+        result = deps.install(force=True)
+        if not result.ok:
+            return "Typst 安装未完成：\n- " + "\n- ".join(result.notes or ["原因未识别"])
+
+    workspace = primary_workspace()
+    info = deps.describe(workspace, auto_install=False)
+    lines = [
+        "=== 环境自检 ===",
+        f"Python: {info['version']}（{info['platform']}）",
+    ]
+
+    if info["typst_ok"]:
+        lines.append(
+            f"Typst: {info['typst_version']} ✓（来源 {info['typst_source']}）"
+        )
+        lines.append(f"  路径: {info['typst_path']}")
+    else:
+        lines.append(f"Typst: 不可用 ✗（要求 ≥ {info['typst_min']}）")
+        for note in info["typst_notes"]:
+            lines.append(f"  - {note}")
+
+    lines.append(f"  随包版本: {info['typst_bundled_version'] or '缺失'}")
+    lines.append(
+        "随包字体: " + ("Notes Serif SC 子集（OFL）" if info["fonts"] else "缺失")
+    )
+    lines.append(
+        "Typst 包: " + ("已 vendor（填空笔记离线可用）" if info["packages"] else "缺失")
+    )
+    lines.append(f"汇编缓存: {info['compile_cache'] or '(未指定工作区)'}")
+    lines.append(f"自动安装: {'开' if auto else '关'}（ZJU_TYPST_AUTO_INSTALL）")
+    if info["mirror"]:
+        lines.append(f"下载镜像: {info['mirror']}")
+    if not info["typst_ok"]:
+        lines.append("修复: 运行 zju_doctor(install=true)，或设置 ZJU_TYPST_BIN 指向已安装的 typst。")
+    return "\n".join(lines)
+
+
 def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
     """Typeset the written note into a reading PDF; never raises.
 
@@ -947,7 +1010,7 @@ def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
     if "找不到 typst" in detail:
         # Keep the common "Typst is not installed" case to one short line:
         # this string is paid on every note write while the feature is on.
-        detail = "未找到 typst（Markdown 已保存；装 Typst 或在设置里关 renderPdf）"
+        detail = "未找到 typst（Markdown 已保存；运行 zju_doctor(install=true) 自动安装，或在设置里关 renderPdf）"
     if len(detail) > 220:
         detail = detail[:219] + "…"
     return [f"PDF 跳过: {detail}"]
@@ -1120,6 +1183,9 @@ def _ensure_tool_enabled(name: str) -> None:
 def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     """Execute the tool function and return the raw response payload."""
     _ensure_tool_enabled(name)
+
+    if name == "zju_doctor":
+        return _doctor_report(bool(arguments.get("install")))
 
     if name == "zju_parse_url":
         parsed = parse_lecture_url(str(arguments.get("url", "")))
