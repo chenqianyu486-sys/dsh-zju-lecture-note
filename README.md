@@ -1,13 +1,23 @@
 # 浙大智云课堂讲义插件（ZJU Lecture Agent Plugin）
 
-> 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：
-> 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。
-> 字幕接口公开免登录；登录 Cookie 只在本机进程内存里使用，工具不收、不回显、不落盘。
-> 核心只用 Python 标准库；PDF 排版用的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备
-> （PDF 课件另需可选的 `pypdf`）。**非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
-
+由 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-) 改编的 DeepSeek Harness 原生插件，提供开箱即用的体验。
 面向 **DeepSeek Harness（dsh）** 与任意 **MCP 宿主**（Claude Code / Cursor / Cline / MiniMax Code…）。
-两种形态共用同一份 Python 核心，工具名、参数、返回值完全一致。
+
+> 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：  
+> - 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。  
+> - 字幕接口公开免登录；登录 Cookie 只在本机进程内存里使用，工具不收、不回显、不落盘。  
+> - 核心只用 Python 标准库；PDF 排版用的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备（PDF 课件另需可选的 `pypdf`）。  
+> - **非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
+
+## 开始使用
+
+- 安装 DeepSeek Harness
+- 进入插件→添加插件，复制仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
+- 安装并启用插件
+- 在新会话中键入 /zju-lecture-summarizer 即可使用插件总结课堂内容，例：  
+```text
+/zju-lecture-summarizer 帮我总结课程内容 https://classroom.zju.edu.cn/livingroom?course_id=87517&sub_id=1988617&tenant_code=112
+```
 
 ## 功能特色
 
@@ -36,8 +46,6 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 - **装完 / 更新后完全重启 DeepSeek Harness**（不是刷新页面）：设置页的
   「浙大智云课堂讲义」一栏要重启后才会出现。原因见 [技术细节](docs/technical.md#2-安装形态与依赖)。
 - 不要只解压 zip 让 dsh 加载（peer 依赖由 pnpm 在 `dsh plugin add` 时安装）。
-- 插件市场收录审核中：PR [#11087](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/11087)
-  仍 open，**合并前在 market 里搜不到是预期行为**。
 
 装好后直接说：
 
