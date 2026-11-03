@@ -63,6 +63,8 @@ PACKAGE_FILES = [
     "ATTRIBUTION.md",
     "SECURITY.md",
     "README.md",
+    "CHANGELOG.md",
+    "docs/technical.md",
     "skills/zju-lecture-summarizer/SKILL.md",
     "skills/zju-lecture-summarizer/SLIDES.md",
 ]

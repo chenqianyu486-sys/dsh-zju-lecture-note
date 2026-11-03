@@ -5,9 +5,10 @@
 
 > 一句话承诺：**Cookie 只进内存，不回显、不落盘、不写日志；本地文件工具不碰凭据与浏览器数据。**
 >
-> v1.5.1 起投影抓取是**可选模块**（dsh 设置 `enableSlides` 默认 `false`；MCP 环境变量
-> `ZJU_ENABLE_SLIDES=0`）：关闭时插件不注册 `zju_fetch_slides`、不加载截图模块、不读取浏览器
-> Cookie，只保留公开免登录的字幕主链路。未开启投影抓取时，本文件中与截图下载相关的边界不适用。
+> v2.0.1 起除「字幕 → 讲义 → PDF」主链路外，所有模块都是可选的（dsh 默认全部关闭）：
+> `enableStudyNotes` / `enableSlides` / `embedSlideImages` / `enableLoginTools`。
+> 关闭时不注册对应工具、不加载对应代码、不追加 Skill 附录，也不读取浏览器 Cookie。
+> 本文件中与截图下载、填空笔记、登录辅助相关的边界，只在对应模块开启时适用。
 
 ---
 
@@ -49,13 +50,21 @@
 ## 3. 本地文件边界
 
 `zju_extract_courseware` 与 `zju_check_note` 是唯一读本地文件的工具，
-`zju_write_note` 与 `zju_fetch_slides(download=true)` 是仅有的写本地文件工具
-（后者仅在投影抓取模块开启时存在）：
+`zju_write_note` / `zju_check_note(pdf=true)` 与 `zju_fetch_slides(download=true)` 是仅有的
+写本地文件工具（后两者仅在对应模块开启/显式请求时存在）：
 
 - **写入范围**：`zju_write_note` 只能写当前工作区（`ZJU_WORKSPACE` / cwd）内的 `.md`，
   文件名由 Agent 按「上课日期 + 本节内容」指定（`name`，如 `知识总结-2026-10-28-复变函数-保角映射.md`），
   缺省才回退到 `知识总结-<sub_id>-<课程简称>.md`；`directory` 参数跳出工作区会被拒绝；单次内容上限 2 MiB；
   同名文件默认**不覆盖**，覆盖必须显式 `overwrite=true` 且先备份。写入走临时文件 + 原子重命名。
+- **PDF 写入范围**：`renderPdf` 开启时，`zju_write_note` 会在讲义同目录写同名 `.pdf`，
+  并在 `<工作区>/.zju-lecture/handout/<文件名>/` 写可重建的 `main.typ`；两者都不离开工作区。
+  讲义在运行 `zju_check_note(pdf=true)` 时若位于工作区外，插件会跳过 PDF，避免越界写入。
+  PDF 不包含 Cookie、浏览器数据或课程账号信息；只包含讲义正文与工作区内引用的图片。
+- **Typst 是本机子进程**：插件用 `subprocess` 调用 `typst compile`，只读讲义/模板/工作区内图片，
+  输出到工作区。讲义阅读版使用**自包含模板**，不访问 Typst 包注册表；可选的填空笔记
+  （`zju_build_study_notes`）使用 `@preview/scholia`，首次编译时 Typst 可能访问
+  `https://typst.app` 拉取该包（包缓存在本机 Typst 数据目录）。
 - **截图/PDF 写入范围**：`zju_fetch_slides(download=true)` 只写工作区内的 `ppt-assets/<sub_id>/`
   （或 `output_dir` 指定的工作区内目录）；最多 2000 张、单张 ≤32 MiB，只落盘通过魔数校验的 JPEG/PNG。
   非浙大主机或非 HTTPS 的截图地址会被拒绝，不会变成任意 URL 下载器。
@@ -79,9 +88,12 @@
 - 无遥测、无统计、无自动更新、无后台常驻进程。
 - 网络请求只发往 `https://classroom.zju.edu.cn`（字幕、投影列表、视频直链）与
   `https://*.zju.edu.cn` 图片主机（仅投影截图下载，且只在该模块开启时）。
+  例外：可选的填空笔记链路首次编译时，Typst 可能从 `https://typst.app` 拉取
+  `@preview/scholia` 包；讲义阅读版 PDF 使用自包含模板，不需要联网。
 - 不读取 `~/.dsh`、不写 `~/.dsh`、不写 `~/.minimax`。
-- **浏览器半边不碰课程数据**：`lib/client.js` 只在设置页读写 `enableSlides` / `embedSlideImages`
-  两个布尔值（经 dsh 的 `configForms` 写入 profile 配置），不发起网络请求、不读 Cookie、不扫描页面内容。
+- **浏览器半边不碰课程数据**：`lib/client.js` 只在设置页读写 `renderPdf` / `enableStudyNotes` /
+  `enableSlides` / `embedSlideImages` / `enableLoginTools` 五个布尔值（经 dsh 的 `configForms`
+  写入 profile 配置），不发起网络请求、不读 Cookie、不扫描页面内容。
 - 唯一会"离开本机"的数据是**你主动处理的课程材料**：字幕/课件文本会作为工具结果进入宿主模型上下文，
   由你选择的模型提供方按其条款处理——这是"用大模型整理讲义"的固有代价，不是插件额外收集。
 - `zju_get_video_url` 返回的 MP4 直链可能带有时效签名，属于会话凭证；不要粘贴到公开场合。

@@ -17,7 +17,7 @@
 
 ## 本插件新增的部分
 
-- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 8 个工具定义；
+- 标准 MCP stdio 服务器（JSON-RPC 2.0）与 9 个工具定义（dsh 默认按开关注册 5 个）；
 - `server.mjs` 启动器：运行时解析 Python 解释器，跨平台统一用 `node` 启动；
 - Skill 化的工作流 SOP；
 - 协议级回归测试、FIPS-197 AES 已知向量测试、Edge Cookie 失败原因分类；
@@ -49,13 +49,83 @@ v1.5.0 的智云投影 PPT 管线与「讲义插图」开关参考了以下项�
 - [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-)：最初的抓取框架与讲义模板，本插件的起点。
 - [`PeiPei233/zju-learning-assistant`](https://github.com/PeiPei233/zju-learning-assistant)：把智云课堂 API 流程完整跑通的桌面端实现。
 - [`8eoyw/zju-learning-cli`](https://github.com/8eoyw/zju-learning-cli)：把 PPT 鉴权、分页与 PDF 合成写成可脚本化 CLI，直接启发了本插件 v1.5.0 的修复。
+- [`Typst`](https://typst.app)（Apache-2.0）：阅读版讲义与填空笔记两条 PDF 链路的排版编译器。
+- [`@preview/scholia`](https://typst.app/universe/package/scholia)（MIT © Eric Yang）：填空笔记的排版引擎；阅读版讲义模板在视觉上参考其浅色 notes 主题。详见下方 v1.6.0 / v2.0.1 两节。
 - [`certifi`](https://github.com/certifi/python-certifi) 与 [Mozilla CA Certificate Program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/)：随包 CA 信任库。
 - 所有为本插件提交 issue、做实地运行反馈、审查代码与文档的同学：真实课堂里的复现步骤和原始输出，是这些修复能落地的原因。
 
 > 上述参考项目的版权归各自作者所有；若后续需要拷贝其中任何代码，将按其 MIT 许可证保留版权声明与许可文本。
 
-## 第三方数据：随包 CA 证书库
+## v2.0.1 新增：讲义阅读版 PDF（`zju_lecture/handout.py`）
 
+`zju_lecture/handout.py` 与 `zju_lecture/handout_prelude.typ` 是本项目原创的
+Markdown → Typst 直排模板，**不 import 任何 Typst Universe 包**，也不拷贝上游模板代码。
+它只依赖 Typst 可执行文件与系统字体；封面、目录、标题、表格、代码、引用等样式由本项目实现。
+许可随本仓库 MIT。
+
+> 讲义阅读版 PDF 与填空笔记 PDF 是两条不同的链路；后者才使用下面的
+> `@preview/scholia`，且只在 `enableStudyNotes` 打开时注册。
+>
+> v2.0.2 起，阅读版 PDF 的配色与装置语义（蓝/青绿/琥珀、note / knot / proof / 边注）
+> 与 scholia 保持一致，作为两条链路统一的视觉规范；实现仍是本项目自己的 Typst
+> 模板（`handout_prelude.typ`），**未拷贝上游源码**。
+>
+> 这里的「参考 scholia」指**视觉与信息结构**：浅色 notes 主题的配色角色
+> （`thm` / `def` / `eg` / `warn` / `muted`）、命题—证明—边注的装置语义、
+> 右侧 Tufte 边注与三线表。模板代码由本项目独立编写，不 import 上游包，
+> 也不复制其 `src/`；色值本身（`soft-palette`）是本项目自定义的（见文末「配色方面」）。
+
+## v1.6.0 新增：填空式学习笔记链路（`skills/scholia-notes/`）
+
+| 项目 | 许可 | 版权人 | 说明 |
+| :--- | :--- | :--- | :--- |
+| [`@preview/scholia`](https://typst.app/universe/package/scholia) | MIT | [Eric Yang](https://github.com/Eryc123Y)（杨星宇） | 填空式学习笔记的排版引擎（knot / note / 右边栏 / 封面）。**编译期由 Typst 包注册表拉取，未随本仓库分发**，因此不构成分发。 |
+| [`@preview/frame-it`](https://typst.app/universe/package/frame-it) | MIT | Marc Thieme | scholia 的 knot 底层（figure + 原生 label 交叉引用）。同上，未随本仓库分发。 |
+| [`@preview/marginalia`](https://typst.app/universe/package/marginalia) | UNLICENSE | 公有领域 | scholia 的右边栏边注。同上，未随本仓库分发。 |
+| [`loom-notes`](https://github.com/Polaris-Aeterna/loom-notes) | MIT | 北极甜虾（Polaris） | 上游 `scholia` 作者声明其实现是受该项目**设计启发**的独立重写，未复用其源码；本仓库亦未分发其代码。 |
+
+> **本仓库没有 vendor 任何上游 Typst 包源码**，所以 MIT 的「保留版权声明」义务目前不触发。
+> 若将来把 `@preview/scholia` 源码拷进仓库（例如为了改 `src/fonts.typ`），
+> **必须**同时保留上游 `LICENSE` 与版权声明原文。
+
+本插件与 `@preview/scholia` 的作者**没有隶属关系，也未获其背书**；
+「scholia」一词仅用于指代所依赖的 Typst 包（指示性使用），不主张任何商标权利。
+
+`skills/scholia-notes/` 目录里的一切（工作流 SOP、淡彩 palette 与五个助手、
+`api` / `mapping` / `style` / `troubleshooting` 文档）是本项目原创，以 MIT 发布，
+见该目录下的 [`LICENSE`](skills/scholia-notes/LICENSE) 与
+[`THIRD_PARTY_NOTICES.md`](skills/scholia-notes/THIRD_PARTY_NOTICES.md)。
+
+`skills/scholia-notes/references/prelude.typ` 是**生成副本**，唯一权威副本是
+`zju_lecture/prelude.typ`（随 Python 包分发，编译时写进项目目录）；
+`tools/sync_skill_assets.py` 同步两者，`tests/test_study_notes.py` 校验逐字节一致。
+
+### 字体：影响产物的可再分发性
+
+Typst 编译 PDF 时会内嵌并子集化用到的字体。上游 `scholia` 的 `default-fonts`
+把 `Optima`、`Avenir Next`、`Menlo`、`Songti SC` 放在首选位 —— **商业专有字体**；
+`STIX Two` 为 SIL OFL，`Libertinus Serif` / `New Computer Modern` / `DejaVu Sans Mono`
+由 Typst 运行时内嵌。字体文件不随本仓库分发，但**会进入生成的 PDF**。
+
+本仓库的处理：
+
+- **阅读版讲义**（`handout_prelude.typ`，默认 PDF 链路）**默认就用可再分发的字体栈**：
+  `STIX Two Text` → Typst 内嵌的 `Libertinus Serif`，标题同理，mono 用
+  `DejaVu Sans Mono`，中文优先 `Noto Serif SC` / `Source Han Serif SC`（皆 OFL）。
+  默认产物不内嵌任何商业字体，可以直接对外分享。想在本机还原上游观感，
+  模板里留了一份注释掉的 local 字体栈 —— 那种 PDF 不要再分发。
+- **填空笔记**走上游包：`fonts:` 覆盖能改 `body` / `math` / `heading` / `sans`，
+  但进不去 `note` / `sidenote` / `label-it`（这三个直接读包内 `default-fonts`）。
+  所以 `zju_build_study_notes` 的 PDF 里嵌了哪些字体，取决于本机装了什么；
+  要彻底可控只能 vendor 上游包并改 `src/fonts.typ`（届时须保留上游 MIT 声明）。
+  `skills/scholia-notes/SKILL.md` 与 `references/troubleshooting.md` 给出了
+  「对外分发前换成 STIX Two」的覆盖写法与 `pdffonts` 核对方法。
+
+配色方面：**浅色主题（`soft-palette`）是本项目自定义的**，色值由
+`zju_lecture/prelude.typ` 定义、`tools/sync_palette.py` 同步到讲义模板与 Python 侧；
+深色主题由上游 `scholia` 自带。配色不改变上述任何 MIT 归属。
+
+## 第三方数据：随包 CA 证书库
 | 文件 | 来源 | 许可 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `zju_lecture/cacert.pem` | [`certifi`](https://github.com/certifi/python-certifi) 的 `cacert.pem`，其上游是 [Mozilla CA Certificate Program](https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/) 根证书库 | Mozilla Public License 2.0 | 原样复制（仅在文件头追加来源注释），作为 `certifi` 缺失时的信任库兜底。dsh 自带的 Python 解释器不含 certifi，没有这份文件时在根证书不全的机器上会 `CERTIFICATE_VERIFY_FAILED`。刷新方式见 `tools/refresh_ca_bundle.py`。 |
