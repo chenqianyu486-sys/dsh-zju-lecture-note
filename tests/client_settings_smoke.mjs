@@ -96,7 +96,10 @@ const ctx = {
 
 module.apply(ctx)
 
-const settingsSlot = registered.find((entry) => entry.kind === 'slot')
+const slotEntries = registered.filter((entry) => entry.kind === 'slot')
+const slotByName = (name) => slotEntries.find((entry) => entry.registration.name === name)
+
+const settingsSlot = slotByName('settings.section')
 if (!settingsSlot) throw new Error('settings.section was not registered')
 if (settingsSlot.registration.name !== 'settings.section') throw new Error('wrong slot name')
 if (settingsSlot.registration.id !== 'zju-lecture') throw new Error('wrong settings section id')
@@ -104,8 +107,37 @@ if (settingsSlot.registration.order !== 25) throw new Error('wrong settings sect
 if (typeof settingsSlot.registration.label !== 'function') throw new Error('settings section label must be localized')
 if (typeof settingsSlot.registration.locale !== 'string') throw new Error('settings section has no locale')
 
+// The left column: one rail row and the global panel it opens, under one id.
+const panelSlot = slotByName('main')
+if (!panelSlot) throw new Error('the main panel behind the sidebar row was not registered')
+if (panelSlot.registration.key !== 'zju-lecture') throw new Error('wrong main panel key')
+if (panelSlot.registration.key !== settingsSlot.registration.id) {
+  throw new Error('the sidebar row and its panel must share one id')
+}
+if (typeof panelSlot.registration.locale !== 'string') throw new Error('the panel has no locale')
+
+const rowSlot = slotByName('sidebar.panellist')
+if (!rowSlot) throw new Error('the sidebar.panellist row was not registered')
+if (rowSlot.registration.id !== panelSlot.registration.key) throw new Error('row id and panel key must agree')
+if (rowSlot.registration.order !== 30) throw new Error('wrong sidebar row order')
+if (typeof rowSlot.registration.label !== 'function') throw new Error('the sidebar row label must be localized')
+if (rowSlot.registration.label() !== 'panelLabel') throw new Error('the sidebar row label must come from the dictionary')
+
+const icon = rowSlot.component({ size: 18, active: false })
+if (icon.type !== 'svg') throw new Error('the sidebar row must draw its own svg glyph')
+if (!icon.props || !icon.props['aria-hidden']) throw new Error('the glyph must be hidden from assistive tech')
+
 const face = settingsSlot.registration.inject()
 if (!face || !face.settings) throw new Error('settings row inject face is missing the controller')
+
+const panelFace = panelSlot.registration.inject()
+if (!panelFace || panelFace.settings !== face.settings) {
+  throw new Error('the panel must reuse the settings controller, not open a second one')
+}
+const page = panelSlot.component({ t: (key) => key, ...panelFace })
+if (!page || page.type !== 'div' || page.props?.className !== 'zju-panel') {
+  throw new Error('the panel did not render its page shell')
+}
 
 const initial = face.settings.getSnapshot()
 if (initial.status !== 'ready') throw new Error(`unexpected initial status: ${initial.status}`)
@@ -132,6 +164,10 @@ process.stdout.write(`${JSON.stringify({
   slot: settingsSlot.registration.name,
   rowId: settingsSlot.registration.id,
   order: settingsSlot.registration.order,
+  panelKey: panelSlot.registration.key,
+  sidebarRow: rowSlot.registration.id,
+  sidebarOrder: rowSlot.registration.order,
+  slots: slotEntries.map((entry) => entry.registration.name),
   calls: formCalls,
   writable: initial.writable,
 })}\n`)
