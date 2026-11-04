@@ -3,6 +3,52 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
+## 2.2.1 — 2026-11-04
+
+修一次真实上课（sub_id 1990049，89 步）暴露的**自相矛盾**：工具和文档各说各话，
+Agent 只好拿 50 步去猜；同批把方框标签的字体层次找回来。回归钉在
+`tests/test_session_d0cfd0ac.py` 与 `tests/test_box_style_v221.py`。
+
+- **底稿契约统一成「纯 Markdown + LaTeX」**：`zju_build_study_notes(mode=draft)`
+  以前会把公式改写成 Typst（`frac(…)` / `cal(…)`）、把表格写成 `#table(…)`、
+  把有序列表写成 `+`，而工具自己的提示、`SKILL.md`、`format-spec.md` 都说
+  「公式写 LaTeX，工具会转」——模型照着文档补 LaTeX，第二次转换就把已经转好的
+  `frac` / `cal` 逐字母拆成 `f r a c` / `c a l`，编译报 `unknown variable`。
+  现在 `draft` 只搬运结构，**转换只在 `compile` 做一次**。
+- **LaTeX → Typst 转换变成幂等的**：`_plain_word` 认识转换器自己会产出的名字
+  （`frac` / `cal` / `sum` / `quad` / `cdots`…），引号串（`"Res"`、`"d"`）原样搬运。
+  以前 `latex_to_typst(latex_to_typst(x)) ≠ latex_to_typst(x)`，一次误转就毁一份公式。
+- **补齐 Markdown 结构映射**：`render_typst` 新增 GFM 表格（→ `#table(…)`）、
+  无序/有序列表（→ Typst 列表）、`**粗体**`（→ `*粗体*`）三个分支。
+  此前表格只在 `draft` 转、`render_typst` 不认，底稿里的 `#table(` 会被当正文
+  转义成 `\[…\]`；`**` 会触发 `warning: no text within stars`，加粗失效。
+- **行内代码不再转义**：`` `[00:20]` `` 曾变成 `` `\[00:20\]` `` 印在 PDF 里；
+  反引号在 Typst 是 raw，内容原样输出才对。
+- **补上掉的数学符号**：`\triangleq`（Typst 没有这个符号，曾让整份 PDF 失败）→ `≙`；
+  `\not\to` / `\not=` 等前缀否定 → `↛` / `≠`（以前直接印成 "not →"）。
+- **「检查通过」和「PDF 能编译」不再打架**：`note_lint` 新增 `latex_unmapped` 规则，
+  命令表取自转换器自己的 `supported_latex_commands()`，行内与块级公式都查。
+  `zju_write_note` 返回 `PDF 跳过` 时多给一句可执行下一步（改完再
+  `zju_check_note(pdf=true)` 重排一次）。
+- **填空笔记 PDF 落在底稿同目录**：以前只在 `*-typst/out.pdf`，Agent 每次得手动
+  `cp` 才交得出来；现在同时写 `<底稿名去掉 -填空底稿>.pdf`，工具直接返回该路径。
+- **方框标签换成无衬线（两条链路一起）**：`Definition 1.1` / `Theorem 2.1` /
+  `Example` / `Your turn.` 原先用的是 `heading`（衬线 + 楷体），和正文糊在一起，
+  看不出「这是一个框」。现在标签走 `sans`：`Noto Sans` → `Liberation Sans` →
+  `DejaVu Sans`，中文仍回 `Notes Kai SC`。上游用 Optima（也是无衬线），这条是
+  把被字体补丁改丢的层次找回来。**没有**把 `Noto Sans SC` 放进栈里：本机那份是
+  可变字体，Typst 只取到 Thin（`pdffonts` 里是 `NotoSansSC-Thin`），中文会发灰。
+- **「伪方框」检查**：`note_lint` 新增 `pseudo_box`。把例题/定理/证明写成
+  `#### 例 1：…` 或 `**证明（…）**` 时，PDF 里只会是小标题/粗体 —— 实测一份
+  3.5 万字的讲义因此整页没有一个框。现在检查器会点名，并给出 `[例] 标题 —— 正文`
+  的改法；讲义 Skill 与系统提示同步补了对照表。
+- **填空笔记不再覆盖阅读版 PDF**：`<讲义名>-填空底稿.md` 编译出的 PDF 曾落到
+  `<讲义名>.pdf`，正好把刚排好的阅读版覆盖掉；现在自动底稿输出
+  `<讲义名>-填空.pdf`，手写底稿保持同名。
+- 系统提示与 `SKILL.md` / `format-spec.md` / `docs/technical.md` 同步口径：
+  底稿只补占位符、不要重写全文，公式保持 LaTeX。
+- 版本 2.2.0 → 2.2.1（六处对齐，两个 Skill 清单重新生成）。
+
 ## 2.2.0 — 2026-11-03
 
 - **两条 PDF 链路统一到同一套排版**：阅读版讲义与填空笔记现在共用 30pt 封面标题 /

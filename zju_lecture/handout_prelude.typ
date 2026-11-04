@@ -39,6 +39,7 @@
 // 上游 scholia 的 heading / sans / mono 首选 Optima / Avenir Next / Menlo 是
 // 商业专有字体；Typst 会把命中的字体子集内嵌进 PDF，那份 PDF 就不适合再分发。
 // 所以这里默认用 SIL OFL 的 STIX Two，再退到 Typst 运行时内嵌的 Libertinus /
+// sans 角色（直觉块、方框标签、边注）用 Noto Sans / Liberation / DejaVu + Noto Sans SC：
 // New Computer Modern / DejaVu —— 任何机器都出字，且产物可以对外分享。
 //
 // 中文第一顺位是插件自带的 **Notes Kai SC**（LXGW WenKai 的 GB2312 子集，
@@ -59,9 +60,8 @@
     "Noto Serif SC", "Source Han Serif SC",
   ),
   sans: (
-    "STIX Two Text", "Libertinus Serif",
-    "Notes Kai SC", "Notes Serif SC",
-    "Noto Sans SC", "Source Han Sans SC",
+    "Noto Sans", "Liberation Sans", "DejaVu Sans",
+    "Notes Kai SC", "Notes Serif SC", "Noto Serif SC", "Source Han Serif SC",
   ),
   mono: ("DejaVu Sans Mono", "Notes Kai SC", "Notes Serif SC"),
 )
@@ -138,11 +138,11 @@
   below: 10pt,
   {
     set align(left)
-    text(font: fonts.heading, weight: "bold", fill: _knot-color(tone))[#label #number]
+    text(font: fonts.sans, weight: "bold", fill: _knot-color(tone))[#label #number]
     if title != none {
       text(font: fonts.heading, style: "italic", fill: palette.ink)[ (#title)]
     }
-    text(font: fonts.heading, weight: "bold", fill: _knot-color(tone))[.]
+    text(font: fonts.sans, weight: "bold", fill: _knot-color(tone))[.]
     h(0.4em)
     body
   },
@@ -194,7 +194,7 @@
   below: 9pt,
   {
     set align(left)
-    text(font: fonts.heading, weight: "bold", fill: palette.eg)[Your turn.]
+    text(font: fonts.sans, weight: "bold", fill: palette.eg)[Your turn.]
     h(0.3em)
     body
     workspace(n: 3)

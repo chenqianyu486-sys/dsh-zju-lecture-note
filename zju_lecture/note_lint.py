@@ -46,6 +46,16 @@ _IMAG_CMD_RE = re.compile(r"\\mathrm\{[ij]\}")
 
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
+#: 「本该是方框、却被写成小标题或粗体」。这类写法在 PDF 里只是小标题 / 粗体，
+#: 拿不到方框的编号、配色与左侧竖线 —— 实测一份 3.5 万字的讲义里 10 处「例 N」
+#: 全写成 `#### 例 N：…`，导出后整页没有一个框。
+_PSEUDO_BOX_HEADING_RE = re.compile(
+    r"^#{2,6}\s*(?:例|例题|定理|定义|引理|推论|命题|证明)\s*[\d一二三四五六七八九十]*\s*[：:.、]"
+)
+_PSEUDO_BOX_BOLD_RE = re.compile(
+    r"^\*\*(?:例|例题|定理|定义|引理|推论|命题|证明)[^*]{0,24}\*\*"
+)
+
 
 class Issue(NamedTuple):
     """One lint finding."""
@@ -67,6 +77,30 @@ def _iter_inline_math(line: str):
     """Yield ``(start_offset, math_body)`` for each inline formula."""
     for match in _INLINE_MATH_RE.finditer(line):
         yield match.start(1), match.group(1)
+
+
+_LATEX_CMD_RE = re.compile(r"\\([A-Za-z]+)")
+
+
+def unmapped_latex_commands(text: str, known=None) -> List[str]:
+    """公式里出现、但 Typst 侧**没有对应写法**的 LaTeX 命令。
+
+    以前这类命令（``\\triangleq``、``\\not``、``\\overset`` …）只有等到
+    自动排版 PDF 时才会以 ``unknown variable: triangleq`` 的形式炸出来，
+    而 Markdown 规范检查同时报「通过 —— 未发现问题」—— 两句话互相打脸，
+    Agent 只能自己 grep 源码猜是哪个命令。
+
+    判断口径直接取 :mod:`zju_lecture.study_notes` 的转换表，所以不会
+    和实际渲染能力漂移：那张表里没有的，PDF 一定转不动。
+    """
+    if known is None:
+        from .study_notes import supported_latex_commands
+
+        known = supported_latex_commands()
+    return sorted(
+        {f"\\{match.group(1)}" for match in _LATEX_CMD_RE.finditer(text)
+         if match.group(1) not in known}
+    )
 
 
 def check_markdown(text: str) -> List[Issue]:
@@ -112,6 +146,14 @@ def check_markdown(text: str) -> List[Issue]:
             continue
 
         if in_display:
+            for command in unmapped_latex_commands(stripped):
+                issues.append(Issue(
+                    idx, WARN, "latex_unmapped",
+                    f"块级公式里的 `{command}` 没有 Typst 对应写法",
+                    "换成等价写法或删掉；留在文中会让自动排版的 PDF 整份编译失败"
+                    "（Markdown 本身不受影响）。",
+                    _excerpt(stripped),
+                ))
             continue
 
         # Inline code spans are not math.
@@ -129,6 +171,17 @@ def check_markdown(text: str) -> List[Issue]:
             probe = re.sub(r"\$\$(.+?)\$\$", r"$\1$", probe)
 
         is_table_row = probe.lstrip().startswith("|")
+
+        pseudo = _PSEUDO_BOX_HEADING_RE.match(stripped) or _PSEUDO_BOX_BOLD_RE.match(stripped)
+        if pseudo:
+            issues.append(Issue(
+                idx, WARN, "pseudo_box",
+                "这几行写成了小标题/粗体，PDF 里不会排成方框",
+                "改成 `[例] 例 1：标题 —— 正文`（`[定义]` / `[定理]` / `[证明]` 同理）："
+                "方框才有编号、主题色与左侧竖线，读者一眼能认出这是哪一类内容。",
+                _excerpt(stripped),
+            ))
+
 
         # Per-formula checks.
         for offset, body in _iter_inline_math(probe):
@@ -163,6 +216,15 @@ def check_markdown(text: str) -> List[Issue]:
                     line_no, WARN, "dfrac_used",
                     "使用了 `\\dfrac`",
                     "行内与独立公式统一用 `\\frac`；行内 `\\dfrac` 会被放大、行距失控。",
+                    _excerpt(stripped),
+                ))
+
+            for command in unmapped_latex_commands(body_stripped):
+                issues.append(Issue(
+                    line_no, WARN, "latex_unmapped",
+                    f"公式里的 `{command}` 没有 Typst 对应写法",
+                    "换成等价写法或删掉；自动排版的 PDF 会因为它整份编译失败"
+                    "（Markdown 本身不受影响）。",
                     _excerpt(stripped),
                 ))
 

@@ -52,7 +52,7 @@
     width: 100%, breakable: true, fill: tint(p, p.eg),
     stroke: (left: 2pt + p.eg), above: 9pt, below: 9pt,
     inset: (left: 11pt, right: 10pt, top: 7pt, bottom: 8pt),
-  )[#text(font: default-fonts.heading, weight: "bold", fill: p.eg)[Your turn.] #h(0.3em)#body]
+  )[#text(font: default-fonts.sans, weight: "bold", fill: p.eg)[Your turn.] #h(0.3em)#body]
 }
 
 #let workspace(n: 3) = context {

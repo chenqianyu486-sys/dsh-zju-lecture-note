@@ -76,12 +76,16 @@ divider.stroke = 0.4pt
 | 角色 | 用途 | 回退链（首选 → 兜底） | 许可 | 实现位置 |
 | :--- | :--- | :--- | :--- | :--- |
 | `body` | 正文 | `STIX Two Text` → `Libertinus Serif` → `Notes Kai SC` → `Notes Serif SC` → `Noto Serif SC` → `Source Han Serif SC` | OFL / OFL / OFL / OFL / OFL / OFL | 阅读版 `handout_prelude.typ`；填空版 vendored `src/fonts.typ` + `src/lib.typ` |
-| `heading` | 各级标题、封面标题、证明标签 | 同 `body` | 同上 | 同上 |
-| `sans` | 直觉块、边注、页码、封面副标题/作者/日期 | `STIX Two Text` → `Libertinus Serif` → `Notes Kai SC` → `Notes Serif SC` → `Noto Sans SC` → `Source Han Sans SC` | OFL / OFL / OFL / OFL / OFL / OFL | 同上 |
+| `heading` | 各级标题、封面标题、证明标签、方框标题（`(标题)` 括号里那段斜体） | 同 `body` | 同上 | 同上 |
+| `sans` | **方框标签**（Definition / Theorem / Example / Your turn）、直觉块、边注、页码、封面副标题/作者/日期 | `Noto Sans` → `Liberation Sans` → `DejaVu Sans` → `Notes Kai SC` → `Notes Serif SC` → `Noto Serif SC` → `Source Han Serif SC` | OFL / OFL / 自由 / OFL / OFL / OFL / OFL | 同上 |
 | `math` | 行内 / 块级公式 | `STIX Two Math` → `New Computer Modern Math` | OFL / OFL（Typst 内嵌） | 同上 |
 | `mono` | 行内 / 块级代码 | `DejaVu Sans Mono` → `Notes Kai SC` → `Notes Serif SC` | 自由 / OFL / OFL | 同上 |
 | `cjk` | 中文回退（追加在 `body` / `sans` 之后） | `Notes Kai SC` → `Notes Serif SC` → `Noto Serif SC` → `Source Han Serif SC` | OFL | 同上 |
 
+- `sans` **必须是另一族字形**：正文是衬线 + 楷体，方框标签若也用衬线会糊进正文，
+  没有「这是一个框」的层次感（上游用 Optima，同样是无衬线）。
+- `sans` 里**不排 `Noto Sans SC`**：本机那份是可变字体，Typst 只取到 Thin，
+  中文会发灰发轻；中文继续用随包 `Notes Kai SC`。
 - `STIX Two` 与 `Notes Kai SC` / `Notes Serif SC` 由本插件随包或由用户安装；
   `Libertinus Serif`、`New Computer Modern`、`DejaVu Sans Mono` 由 **Typst 运行时内嵌**，
   任何机器都有。

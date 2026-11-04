@@ -24,8 +24,9 @@
 
 | 文件 | 修改 |
 | :--- | :--- |
-| `src/fonts.typ` | 字体表改为可再分发栈：STIX Two / Libertinus / 随包 Notes Kai SC、Notes Serif SC / Noto / Source Han；移除 Optima / Avenir Next / Menlo / Songti SC |
-| `src/lib.typ` | 二级/三级标题字号统一为 12.5pt / 11.5pt；边注段距补 0.4em |
+| `src/fonts.typ` | 字体表改为可再分发栈：`body`/`heading` 用 STIX Two + 随包 Notes Kai SC、Notes Serif SC；`sans` 用 Noto Sans / Liberation Sans / DejaVu Sans（中文回 Notes Kai SC）；移除 Optima / Avenir Next / Menlo / Songti SC |
+| `src/theorems.typ` | 方框标签（`Theorem` / `Definition` / `Example`）改用 `default-fonts.sans`，标签末尾句点同步 |
+| `src/lib.typ` | `Your turn.` 标签改用 `sans`；二级/三级标题字号统一为 12.5pt / 11.5pt；边注段距补 0.4em |
 
   除上述补丁外，其余代码、`typst.toml` 与许可文件保持上游原样。
 

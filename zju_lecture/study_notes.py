@@ -171,6 +171,8 @@ _LABEL_RE = re.compile(r"\s*<([A-Za-z][A-Za-z0-9_.:-]*)>\s*$")
 
 #: 原生交叉引用：`@def:xxx`
 _REF_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_.:-]*")
+#: 行内代码 span（`` `…` ``）。Typst 的反引号是 raw，内容原样输出。
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 
 #: 独占一行的公式：``$ … $``。
 #:
@@ -180,6 +182,8 @@ _DISPLAY_MATH_RE = re.compile(r"^\$([^$]+)\$$")
 
 #: Markdown 有序列表 → Typst 的 ``+ ``
 _OL_RE = re.compile(r"^(\s*)\d+[.)]\s+")
+#: 无序列表项。`**粗体**` 不会被误判（`*` 后面紧跟的是 `*`，不是空白）。
+_BULLET_RE = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 
 #: Markdown 表格行
 _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
@@ -235,6 +239,12 @@ _LATEX_SYMBOLS: Dict[str, str] = {
     "implies": "⟹", "impliedby": "⟸", "iff": "⟺",
     # 复合
     "circ": "compose",
+    # 定义号：Typst **没有** `triangleq` 这个符号（会报 unknown variable），
+    # 只能退到 Unicode。讲义里「记作」「定义作」常用它，漏掉就整份 PDF 挂。
+    "triangleq": "≙",
+    # `\not` 单独走一条分支（见 latex_to_typst），这里只收它拆不动的近亲。
+    "nrightarrow": "↛", "nleftarrow": "↚",
+    "nRightarrow": "⇏", "nLeftarrow": "⇍", "nleftrightarrow": "↮",
     # 双曲函数
     "sinh": "sinh", "cosh": "cosh", "tanh": "tanh", "coth": "coth",
     "arcsin": "arcsin", "arccos": "arccos", "arctan": "arctan",
@@ -285,6 +295,25 @@ _TYPST_UPRIGHT_WORDS = frozenset({
     "SVD", "LU", "QR", "FFT", "LHS", "RHS",
 })
 
+#: 在 Typst 数学里**可以裸写**的名字（函数 / 符号）。
+#:
+#: 这张表存在的唯一理由是让 :func:`latex_to_typst` **幂等**：
+#: 转换器自己会产出 ``frac(…)``、``cal(L)``、``sum_(…)``、``quad``、``"Res"``，
+#: 如果第二次再跑转换，这些名字会被 :func:`_plain_word` 当成「多字母变量」
+#: 逐字母拆成 ``f r a c`` / ``s u m`` —— 编译报 ``unknown variable``，
+#: 而 Agent 只会看到一份「莫名其妙坏掉」的公式。实测（Typst 0.15.1）这些
+#: 名字裸写都能编译；``triangleq`` 不能，所以它走 Unicode。
+_TYPST_BARE_NAMES = (
+    _TYPST_MATH_FUNCTIONS
+    | frozenset(w for w in _LATEX_SYMBOLS.values() if re.fullmatch(r"[A-Za-z]+", w))
+    | frozenset({
+        "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op",
+        "mat", "cases", "quad", "product", "integral", "sum", "dots",
+        "overbrace", "underbrace", "overline", "underline",
+        "hat", "tilde", "bar", "vec", "dot", "ddot", "compose",
+    })
+)
+
 #: 矩阵类环境 → Typst ``mat`` 的分隔符（``None`` 表示不画括号）。
 _MATRIX_DELIMS: Dict[str, Optional[str]] = {
     "pmatrix": "(",
@@ -303,6 +332,33 @@ _ALIGN_ENVS = frozenset({
     "gathered", "split", "multline", "multline*", "eqnarray", "eqnarray*",
 })
 
+
+
+#: Typst 侧**有对应写法**的 LaTeX 命令。
+#:
+#: 给 :mod:`zju_lecture.note_lint` 用：讲义里出现这张表以外的命令，说明
+#: 自动排版 PDF 时这一份会整份编译失败 —— 以前这种问题只在写完 PDF 才暴露，
+#: 而 Markdown 规范检查还报「通过」，两句话互相打脸。
+_SUPPORTED_LATEX_COMMANDS = frozenset(
+    set(_LATEX_SYMBOLS)
+    | set(_LATEX_FUNCTIONS)
+    | set(_LATEX_FRACTIONS)
+    | set(_LATEX_OPERATORNAME)
+    | set(_MATRIX_DELIMS)
+    | set(_ALIGN_ENVS)
+    | {
+        "left", "right", "begin", "end", "sqrt", "not",
+        "mathrm", "mathit", "mathsf", "mathtt", "mathbb",
+        "mathcal", "mathscr", "mathfrak", "mathbf", "boldsymbol",
+        "overbrace", "underbrace", "hspace",
+        "text", "textbf", "textit",
+    }
+)
+
+
+def supported_latex_commands() -> "frozenset[str]":
+    """返回 Typst 侧有对应写法的 LaTeX 命令集合（不含反斜杠）。"""
+    return _SUPPORTED_LATEX_COMMANDS
 
 
 def _read_group(text: str, index: int) -> Tuple[Optional[str], int]:
@@ -378,13 +434,18 @@ def _plain_word(word: str) -> str:
     Typst 的数学模式把 ``AC`` / ``st`` / ``BVP`` 当成**未知变量**（编译直接失败），
     LaTeX 却把 ``AC`` 排成 ``A C``。规则尽量贴近 LaTeX 的原语义：
 
-    - Typst 已有的函数名（``sin`` / ``lim`` …）原样放行；
+    - Typst 里能裸写的函数/符号（``sin`` / ``lim`` / ``frac`` / ``sum`` / ``cal`` …）原样放行；
     - 常见算子/缩写（``Res`` / ``diag`` / ``BVP`` …）转成直立文本；
     - 两个大写字母（``4AC`` 里的 ``AC``）按乘积拆成 ``A C``；
     - 纯小写词（``e^{-st}`` 里的 ``st``）同样逐字母拆开；
     - 其余（三个以上大写、混合大小写）按缩写处理成直立文本。
+
+    第一条规则是**幂等**的关键：``frac``/``sum``/``quad`` 这些名字是转换器
+    自己吐出来的，第二次转换必须原样放行，否则公式会被拆成一地字母。
     """
     if len(word) == 1:
+        return word
+    if word in _TYPST_BARE_NAMES:
         return word
     if word in _TYPST_MATH_FUNCTIONS:
         return word
@@ -485,6 +546,16 @@ def latex_to_typst(expression: str) -> Tuple[str, List[str]]:
     while index < length:
         char = expression[index]
 
+        # 引号串已经是 Typst 文本（`"Res"` / `"d"` / `upright("Re")`），原样搬运。
+        # 不这么做的话，第二次转换会把 `"Res"` 里的字母再跑一遍 `_plain_word`，
+        # 变成 `"upright("Res")"` —— 引号嵌套错位，编译直接挂。
+        if char == '"':
+            close_quote = expression.find('"', index + 1)
+            if close_quote != -1:
+                out.append(expression[index:close_quote + 1])
+                index = close_quote + 1
+                continue
+
         if char == "\\":
             match = _LATEX_COMMAND_RE.match(expression, index)
             if not match:
@@ -493,6 +564,30 @@ def latex_to_typst(expression: str) -> Tuple[str, List[str]]:
                 continue
             command = match.group(1)
             index = match.end()
+
+            if command == "not":
+                # `\not` 是个前缀：它否定的是**后面那个**符号。
+                # 原来直接吐一个裸词 `not`，PDF 里就印成 "F(s) not → 0"，
+                # 语义全反了。这里吃掉紧跟的符号换成否定的 Unicode 字符。
+                negated = {
+                    "=": "≠", "to": "↛", "rightarrow": "↛", "in": "∉",
+                    "ni": "∌", "subset": "⊄", "supset": "⊅",
+                    "equiv": "≢", "approx": "≉", "sim": "≁",
+                    "le": "≰", "leq": "≰", "ge": "≱", "geq": "≱",
+                    "lt": "≮", "gt": "≯", "exists": "∄",
+                }
+                following = _LATEX_COMMAND_RE.match(expression, index)
+                if following and following.group(1) in negated:
+                    _emit(negated[following.group(1)], following.end())
+                    index = following.end()
+                    continue
+                if index < length and expression[index] in negated:
+                    _emit(negated[expression[index]], index + 1)
+                    index += 1
+                    continue
+                warnings.append("\\not")
+                _emit("¬", index)
+                continue
 
             if command in ("left", "right"):
                 # `\left\{` / `\right\}` 是花括号字面量，必须保留转义。
@@ -852,11 +947,19 @@ def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str
     if not text:
         return ""
 
-    protected, kept_math = _protect(text, _math_pattern(), lambda m: m.group(0))
+    # 行内代码优先保护：反引号里在 Typst 是 raw，**不转义才对**。
+    # 此前把 `` `[00:20]` `` 转成 `` `\\[00:20\\]` ``，PDF 里就带着反斜杠念出来。
+    protected, kept_code = _protect(text, _INLINE_CODE_RE, lambda m: m.group(0))
+    protected, kept_math = _protect(protected, _math_pattern(), lambda m: m.group(0))
     protected, kept_helper = _protect_helpers(protected)
     protected, kept_fill = _protect(
         protected, _FILLIN_RE, lambda m: "#fillin(width: 2.2cm)"
     )
+
+    # Markdown 的 `**粗体**` 在 Typst 里是 `*粗体*`：两边的星号直接投过去
+    # 会触发 `warning: no text within stars`，加粗失效、还多一行告警。
+    # 只认成对的 `**`，单个 `*` 不动（它可能是正文里的乘号或脚注）。
+    protected = re.sub(r"\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*", r"*\1*", protected)
 
     if known_labels is None:
         protected, kept_ref = _protect(protected, _REF_RE, lambda m: m.group(0))
@@ -882,7 +985,8 @@ def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str
     protected = protected.replace(">", "\\>")
     protected = protected.replace("@", "\\@")
 
-    restored = _restore(protected, kept_math)
+    restored = _restore(protected, kept_code)
+    restored = _restore(restored, kept_math)
     restored = _restore(restored, kept_helper)
     restored = _restore(restored, kept_fill)
     restored = _restore(restored, kept_ref)
@@ -1199,8 +1303,13 @@ def render_typst(
     def _count(name: str) -> None:
         devices[name] = devices.get(name, 0) + 1
 
-    for raw_line in normalized.split("\n"):
+    # 逐行解析，但表格要一次吃完连续几行，所以用游标而不是 for。
+    input_lines = normalized.split("\n")
+    cursor = 0
+    while cursor < len(input_lines):
+        raw_line = input_lines[cursor]
         stripped = raw_line.strip()
+        cursor += 1
 
         if not stripped:
             lines_out.append("")
@@ -1253,6 +1362,36 @@ def render_typst(
                 ">" + BODY_INDENT + escape_typst(raw_line.strip()[1:], known_labels)
             )
             _count("quote")
+            continue
+
+        # GFM 表格 → Typst `table`。底稿里保持 `| a | b |` 这种人人能读的写法，
+        # 转换只发生在这一步（`build_draft` 不再产出 `#table(…)`）。
+        if _TABLE_ROW_RE.match(raw_line):
+            rows = [raw_line]
+            while cursor < len(input_lines) and _TABLE_ROW_RE.match(input_lines[cursor]):
+                rows.append(input_lines[cursor])
+                cursor += 1
+            lines_out.extend(_convert_table(rows, warnings))
+            _count("table")
+            continue
+
+        # 无序列表：`-` / `*` / `+` 在 Typst 里统一是 `-`。
+        bullet = _BULLET_RE.match(raw_line)
+        if bullet:
+            indent = bullet.group(1).replace("\t", "  ")
+            lines_out.append(
+                indent + "- " + escape_typst(bullet.group(2), known_labels)
+            )
+            _count("list")
+            continue
+
+        # 有序列表：Markdown 的 `1.` 在 Typst 里是 `+`（自动编号）。
+        ordered = _OL_RE.match(raw_line)
+        if ordered:
+            indent = ordered.group(1).replace("\t", "  ")
+            body = raw_line[ordered.end():].strip()
+            lines_out.append(indent + "+ " + escape_typst(body, known_labels))
+            _count("list")
             continue
 
         # 独占一行的公式：Typst 只有在 `$` 之后有空白时，才把它当**块级公式**
@@ -1379,28 +1518,6 @@ def _render_cover(draft_text: str) -> str:
 
 
 # ----------------------------------------------------------------- 讲义 → 底稿
-
-
-def _convert_math_spans(text: str, warnings: List[str]) -> str:
-    """把文本里的 ``$…$`` 数学改写成 Typst 语法。"""
-    result: List[str] = []
-    index = 0
-    length = len(text)
-    while index < length:
-        if text[index] != "$":
-            result.append(text[index])
-            index += 1
-            continue
-        close = text.find("$", index + 1)
-        if close == -1:
-            result.append(text[index:])
-            break
-        inner = text[index + 1:close]
-        converted, issues = latex_to_typst(inner)
-        warnings.extend(issues)
-        result.append("$" + converted + "$")
-        index = close + 1
-    return "".join(result)
 
 
 def _convert_table(rows: Sequence[str], warnings: List[str]) -> List[str]:
@@ -1539,52 +1656,19 @@ def build_draft(
 
 
 def _convert_block(lines: Sequence[str], warnings: List[str]) -> List[str]:
-    """转换一段普通行：公式、表格、列表、普通段落。"""
-    out: List[str] = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
+    """原样搬运一段正文。
 
-        # 块级公式 $$ … $$
-        if line.strip().startswith("$$"):
-            buffer = [line.strip()[2:]]
-            index += 1
-            closed = "$$" in buffer[0]
-            while index < len(lines) and not closed:
-                buffer.append(lines[index].strip())
-                closed = "$$" in buffer[-1]
-                index += 1
-            joined = "\n".join(buffer)
-            joined = joined.replace("$$", "")
-            converted, issues = latex_to_typst(joined)
-            warnings.extend(issues)
-            out.append("$" + converted + "$")
-            continue
+    底稿的契约是**纯 Markdown + LaTeX 数学**（`references/format-spec.md` §1）：
+    这里**不**把公式改写成 Typst、**不**把表格改成 ``#table(…)``、**不**把
+    有序列表改成 ``+``。
 
-        # Markdown 表格
-        if _TABLE_ROW_RE.match(line):
-            table_rows = []
-            while index < len(lines) and _TABLE_ROW_RE.match(lines[index]):
-                table_rows.append(lines[index])
-                index += 1
-            out.extend(_convert_table(table_rows, warnings))
-            continue
-
-        # 有序列表 → Typst 的 `+`
-        ordered = _OL_RE.match(line)
-        if ordered:
-            out.append(ordered.group(1) + "+ " + line[ordered.end():])
-            index += 1
-            continue
-
-        stripped = line.rstrip()
-        if not stripped.strip():
-            out.append("")
-        else:
-            out.append(_convert_math_spans(stripped, warnings))
-        index += 1
-
-    return out
+    为什么曾经改过又改回来：转换只在 :func:`render_typst` 里做一次就够了。
+    两处都转的话，模型按文档在底稿里继续写 LaTeX 时，第二次转换会把上一次
+    已经转好的 ``frac(…)`` / ``cal(…)`` 当成多字母变量逐字母拆成 ``f r a c``、
+    ``c a l`` —— 编译报 ``unknown variable``，而人看到的只是「公式莫名其妙坏了」。
+    实测一次课为此白跑了 40 多个工具调用。
+    """
+    return list(lines)
 
 
 # ------------------------------------------------------------------ 编译

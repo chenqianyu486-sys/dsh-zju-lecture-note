@@ -134,8 +134,9 @@ marginalia 页边距（inner far 6mm/width 12mm，outer far 6mm/width 26mm）、
 > **下表是上游 0.1.0 的默认值，不是本项目实际生效的值。** 本项目的 vendored
 > 副本（`zju_lecture/typst-packages/preview/scholia/0.1.0/`）由
 > `tools/vendor_typst_packages.py` patch 过 `src/fonts.typ`：把 `Optima` /
-> `Avenir Next` / `Menlo` / `Songti SC` 换成可再分发栈（STIX Two / Libertinus /
-> 随包 `Notes Kai SC` / `Notes Serif SC` / Noto / Source Han）。实际生效的字体表
+> `Avenir Next` / `Menlo` / `Songti SC` 换成可再分发栈：`body`/`heading` 用
+> STIX Two + 随包 `Notes Kai SC`；`sans`（方框标签、直觉块）用 `Noto Sans` /
+> `Liberation Sans` / `DejaVu Sans`，中文仍回到 `Notes Kai SC`。实际生效的字体表
 > 与许可列见 [`typography-spec.md`](typography-spec.md) §1，修改记录见
 > `zju_lecture/typst-packages/VENDORED.md`。
 

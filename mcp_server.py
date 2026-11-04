@@ -22,6 +22,7 @@ Design notes:
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import traceback
@@ -85,7 +86,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.2.0"
+SERVER_VERSION = "2.2.1"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -1025,7 +1026,12 @@ def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
         detail = "未找到 typst（Markdown 已保存；运行 zju_doctor(install=true) 自动安装，或在设置里关 renderPdf）"
     if len(detail) > 220:
         detail = detail[:219] + "…"
-    return [f"PDF 跳过: {detail}"]
+    # 这是「同一份讲义要不要再查一次」的唯一例外：上面报的是渲染错误，
+    # 不改文件永远好不了。给一句可执行的下一步，Agent 就不必自己猜。
+    return [
+        f"PDF 跳过: {detail}",
+        "Markdown 已写好；按上面的错误改掉对应公式后，调用 zju_check_note(pdf=true) 重排一次。",
+    ]
 
 
 def _build_study_notes(arguments: Dict[str, Any]) -> str:
@@ -1149,7 +1155,29 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
         "格式规范: skills/scholia-notes/references/format-spec.md（规范性文件）",
     ]
     if result.ok:
-        lines.append(f"PDF: {result.pdf_path}")
+        # Typst 工程目录里的 `out.pdf` 不是「交付物位置」：讲义链路的 PDF
+        # 一直和 .md 同目录，填空笔记却落在 `<stem>-typst/out.pdf` 里，
+        # Agent 每次都得再 `cp` 一次才交得出来。这里直接放一份到同目录。
+        #
+        # 命名要避开**阅读版**那份 `<讲义名>.pdf`：自动生成的底稿叫
+        # `<讲义名>-填空底稿.md`，去掉后缀正好等于讲义名，直接落 `<stem>.pdf`
+        # 会把刚排好的阅读版 PDF 覆盖掉（实测覆盖过）。所以自动底稿统一叫
+        # `<讲义名>-填空.pdf`；手写底稿（如 `填空笔记-XXX.md`）保持同名。
+        deliverable_pdf = result.pdf_path
+        if stem.endswith("-填空底稿"):
+            public_stem = stem[: -len("-填空底稿")] + "-填空"
+        else:
+            public_stem = stem
+        sibling = os.path.join(target_dir, f"{public_stem}.pdf")
+        try:
+            if os.path.abspath(sibling) != os.path.abspath(result.pdf_path):
+                shutil.copyfile(result.pdf_path, sibling)
+                deliverable_pdf = sibling
+        except OSError:
+            pass
+        lines.append(f"PDF: {deliverable_pdf}")
+        if deliverable_pdf != result.pdf_path:
+            lines.append(f"Typst 工程: {project_dir}（out.pdf 是同一份）")
         if result.png_paths:
             lines.append(
                 "逐页 PNG: " + ", ".join(os.path.basename(path) for path in result.png_paths)

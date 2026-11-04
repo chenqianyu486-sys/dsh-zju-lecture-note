@@ -59,10 +59,10 @@
       inset: (left: 12pt, right: 11pt, top: 8pt, bottom: 8pt),
       above: 10pt, below: 10pt,
       {
-        text(font: default-fonts.heading, weight: "bold", fill: a)[#supplement #number]
+        text(font: default-fonts.sans, weight: "bold", fill: a)[#supplement #number]
         if title != none { text(font: default-fonts.heading, style: "italic", fill: p.ink)[ (#title)] }
         for tag in tags { h(0.5em); label-it(tag) }
-        text(font: default-fonts.heading, weight: "bold", fill: a)[.]
+        text(font: default-fonts.sans, weight: "bold", fill: a)[.]
         h(0.4em)
         body
       },

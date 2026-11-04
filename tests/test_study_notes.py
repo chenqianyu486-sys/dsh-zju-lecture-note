@@ -152,9 +152,18 @@ class TestBuildDraft(unittest.TestCase):
         self.assertIn("[练习]", self.draft.text)
         self.assertIn("[边注]", self.draft.text)
 
-    def test_math_is_converted(self):
-        self.assertIn("sum_(n = -\u221e)", self.draft.text)
-        self.assertNotIn("\\sum", self.draft.text)
+    def test_math_is_kept_as_latex(self):
+        # 底稿的契约是「纯 Markdown + LaTeX 数学」（format-spec.md §1）。
+        # 公式在 build_draft 阶段**不改写**：转换只在 render_typst 里做一次，
+        # 否则模型按文档继续写 LaTeX 时会被二次转换拆成 `f r a c`。
+        self.assertIn(r"\sum_{n=-\infty}^{\infty}", self.draft.text)
+        self.assertNotIn("sum_(n = -∞)", self.draft.text)
+        self.assertNotIn("#table(", self.draft.text)
+
+    def test_math_is_converted_at_render_time(self):
+        rendered = render_typst(self.draft.text)
+        self.assertIn("sum_(n = -∞)", rendered.typst)
+        self.assertNotIn(r"\sum", rendered.typst)
 
     def test_sections_are_counted(self):
         self.assertEqual(self.draft.sections, 2)
