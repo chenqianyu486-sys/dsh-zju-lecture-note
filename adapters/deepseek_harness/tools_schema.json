@@ -276,7 +276,7 @@
     "type": "function",
     "function": {
       "name": "zju_build_study_notes",
-      "description": "把讲义变成 scholia 填空式学习笔记（Typst → PDF）。mode=draft 生成填空底稿（你补内容）；mode=compile 编译成 out.pdf + 逐页 PNG，并报告编译错误、方框预算与改不动的数学。需要本机 Typst（≥0.13）。只写工作区内的文件。",
+      "description": "把讲义变成 scholia 填空式学习笔记（Typst → PDF）。mode=draft 生成填空底稿（你补内容）；mode=patch 用 edits 一次写回多处挖空/标记；mode=compile 编译成 out.pdf + 逐页 PNG，并报告编译错误、方框预算与改不动的数学。需要本机 Typst（≥0.13）。只写工作区内的文件。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -285,10 +285,37 @@
             "type": "string",
             "enum": [
               "draft",
+              "patch",
               "compile"
             ],
-            "description": "draft=讲义转填空底稿（只搬运与改公式，不做内容判断）；compile=底稿转 Typst 并编译成 PDF",
+            "description": "draft=讲义转填空底稿（只搬运与改公式，不做内容判断）；patch=按 edits 一次写回底稿（批量挖空，省掉十几次单条编辑）；compile=底稿转 Typst 并编译成 PDF",
             "default": "draft"
+          },
+          "edits": {
+            "type": "array",
+            "description": "mode=patch 的修改列表：每项 {old, new}，old 必须在底稿里恰好出现一次（重复时加长上下文，或加 all=true 全部替换）。一次最多 80 条",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "old": {
+                  "type": "string",
+                  "description": "原文（精确匹配，含标点）"
+                },
+                "new": {
+                  "type": "string",
+                  "description": "替换成的新文本"
+                },
+                "all": {
+                  "type": "boolean",
+                  "description": "原文出现多次时是否全部替换（默认 false）"
+                }
+              },
+              "required": [
+                "old",
+                "new"
+              ]
+            }
           },
           "note_path": {
             "type": "string",
@@ -296,7 +323,7 @@
           },
           "draft_path": {
             "type": "string",
-            "description": "填空底稿 Markdown 的路径（mode=compile 必填）"
+            "description": "填空底稿 Markdown 的路径（mode=patch / compile 必填）"
           },
           "output_dir": {
             "type": "string",

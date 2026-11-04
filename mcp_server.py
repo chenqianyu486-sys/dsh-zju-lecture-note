@@ -79,6 +79,7 @@ from zju_lecture.study_notes import (
     KNOT_RATIO_TARGET,
     KNOT_RATIO_TOO_MANY,
     StudyNotesError,
+    apply_draft_edits,
     build_draft,
     compile_project,
     find_typst,
@@ -86,7 +87,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.2.1"
+SERVER_VERSION = "2.2.3"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -344,7 +345,12 @@ def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str], Opti
         return _remember_cookie(cookie), None, "edge", None
     if error is None:
         return None, f"未能从本机 Microsoft Edge 读取到 {DEFAULT_DOMAIN} 的登录 Cookie。", None, "no_credentials"
-    return None, str(error), None, error.reason
+    # 只回「是什么问题」这一句：修复办法由下面的 COOKIE_FAILURE_ACTIONS 给出。
+    # 以前把 ``str(error)``（message + hint）整段塞进「说明」，再跟一行
+    # 「唯一可行动作」——同一句 ZJU_COOKIE_FILE 在一段 5 行的报错里出现两次，
+    # 模型只能照抄给用户（实地会话 session-5415d8a5）。
+    message = getattr(error, "message", "") or str(error)
+    return None, message, None, error.reason
 
 
 #: One concrete next step per cookie-failure reason.
@@ -677,9 +683,9 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "zju_build_study_notes",
         "description": (
             "把讲义变成 scholia 填空式学习笔记（Typst → PDF）。"
-            "mode=draft 生成填空底稿（你补内容）；mode=compile 编译成 out.pdf + 逐页 PNG，"
-            "并报告编译错误、方框预算与改不动的数学。需要本机 Typst（≥0.13）。"
-            "只写工作区内的文件。"
+            "mode=draft 生成填空底稿（你补内容）；mode=patch 用 edits 一次写回多处挖空/标记；"
+            "mode=compile 编译成 out.pdf + 逐页 PNG，并报告编译错误、方框预算与改不动的数学。"
+            "需要本机 Typst（≥0.13）。只写工作区内的文件。"
         ),
         "inputSchema": {
             "type": "object",
@@ -687,12 +693,34 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["draft", "compile"],
+                    "enum": ["draft", "patch", "compile"],
                     "description": (
                         "draft=讲义转填空底稿（只搬运与改公式，不做内容判断）；"
+                        "patch=按 edits 一次写回底稿（批量挖空，省掉十几次单条编辑）；"
                         "compile=底稿转 Typst 并编译成 PDF"
                     ),
                     "default": "draft",
+                },
+                "edits": {
+                    "type": "array",
+                    "description": (
+                        "mode=patch 的修改列表：每项 {old, new}，old 必须在底稿里"
+                        "恰好出现一次（重复时加长上下文，或加 all=true 全部替换）。"
+                        "一次最多 80 条"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "old": {"type": "string", "description": "原文（精确匹配，含标点）"},
+                            "new": {"type": "string", "description": "替换成的新文本"},
+                            "all": {
+                                "type": "boolean",
+                                "description": "原文出现多次时是否全部替换（默认 false）",
+                            },
+                        },
+                        "required": ["old", "new"],
+                    },
                 },
                 "note_path": {
                     "type": "string",
@@ -700,7 +728,7 @@ TOOLS: List[Dict[str, Any]] = [
                 },
                 "draft_path": {
                     "type": "string",
-                    "description": "填空底稿 Markdown 的路径（mode=compile 必填）",
+                    "description": "填空底稿 Markdown 的路径（mode=patch / compile 必填）",
                 },
                 "output_dir": {
                     "type": "string",
@@ -1034,11 +1062,71 @@ def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
     ]
 
 
+def _patch_draft(arguments: Dict[str, Any]) -> str:
+    """``mode=patch``：按 ``edits`` 一次写回底稿（批量挖空 / 补标记）。"""
+    draft_path = str(arguments.get("draft_path") or "").strip()
+    if not draft_path:
+        return "错误: mode=patch 需要 draft_path（填空底稿的路径）"
+    raw_edits = arguments.get("edits")
+    if not isinstance(raw_edits, list) or not raw_edits:
+        return "错误: mode=patch 需要非空的 edits（每项 {old, new}）"
+
+    resolved, tried = resolve_path(draft_path)
+    if resolved is None:
+        return f"错误: 找不到填空底稿: {draft_path}{describe_attempts(tried)}"
+    try:
+        resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="填空底稿")
+    except LocalFileError as exc:
+        return f"错误: {exc}"
+    try:
+        with open(resolved, "r", encoding="utf-8") as handle:
+            draft_text = handle.read()
+    except UnicodeDecodeError:
+        return f"错误: 填空底稿不是 UTF-8 编码: {resolved}"
+    except OSError as exc:
+        return f"错误: 读取填空底稿失败: {exc}"
+
+    try:
+        result = apply_draft_edits(draft_text, raw_edits)
+    except StudyNotesError as exc:
+        return f"错误: {exc}"
+
+    if result.applied:
+        try:
+            write_atomic(resolved, result.text)
+        except OSError as exc:
+            return f"错误: 写入填空底稿失败: {resolved}（{exc}）"
+
+    summary = f"应用: {result.applied}/{len(raw_edits)} 处"
+    if result.skipped:
+        summary += f"（跳过 {result.skipped} 处 old 与 new 相同）"
+    lines = ["=== 已修改填空底稿 ===", f"路径: {resolved}", summary]
+    if result.failures:
+        lines.append("")
+        lines.append(f"未应用 {len(result.failures)} 处:")
+        lines.extend(f"- {item}" for item in result.failures[:12])
+        if len(result.failures) > 12:
+            lines.append(f"- …另有 {len(result.failures) - 12} 处")
+        lines.append("")
+        lines.append("已应用的部分已经写回文件，不必重发；修正上面几条后再 compile。")
+        lines.append(
+            f'下一步: zju_build_study_notes(mode="compile", draft_path="{resolved}")'
+        )
+    else:
+        lines.append(
+            f'下一步: zju_build_study_notes(mode="compile", draft_path="{resolved}")'
+        )
+    return "\n".join(lines)
+
+
 def _build_study_notes(arguments: Dict[str, Any]) -> str:
     """Handle ``zju_build_study_notes``: 讲义 → 填空底稿 → Typst → PDF."""
     mode = str(arguments.get("mode") or "draft").strip().lower()
-    if mode not in ("draft", "compile"):
-        return "错误: mode 只能是 draft 或 compile"
+    if mode not in ("draft", "patch", "compile"):
+        return "错误: mode 只能是 draft / patch / compile"
+
+    if mode == "patch":
+        return _patch_draft(arguments)
 
     if mode == "draft":
         note_path = str(arguments.get("note_path") or "").strip()
@@ -1085,10 +1173,12 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
             f"路径: {target}",
             f"来源: {resolved} | 章节: {draft.sections} | 字数: {len(draft.text)}",
             "",
-            "请编辑底稿：把 [直觉]/[练习]/[边注] 补成内容；[定义]/[定理]/[证明] "
-            "只在「后面会被回引」时才用（每节框合计 ≤ "
-            f"{KNOT_BUDGET_PER_SECTION} 个），其余写成普通段落。",
+            "底稿已搬运完成：按内容补 [直觉]/[练习]/[边注]（可选，不需要就别加）"
+            "与正文里的 ____ 挖空；[定义]/[定理]/[证明] 只在「后面会被回引」时才用"
+            f"（每节框合计 ≤ {KNOT_BUDGET_PER_SECTION} 个），其余写成普通段落。",
             "公式直接写 LaTeX，工具会转成 Typst；转不动的会点名。",
+            "挖空别一处一处改：把全部 {old, new} 交给 "
+            'zju_build_study_notes(mode="patch", draft_path=…, edits=[…]) 一次写回。',
             f'下一步: zju_build_study_notes(mode="compile", draft_path="{target}")',
         ]
         if draft.warnings:
@@ -1179,9 +1269,11 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
         if deliverable_pdf != result.pdf_path:
             lines.append(f"Typst 工程: {project_dir}（out.pdf 是同一份）")
         if result.png_paths:
-            lines.append(
-                "逐页 PNG: " + ", ".join(os.path.basename(path) for path in result.png_paths)
-            )
+            names = ", ".join(os.path.basename(path) for path in result.png_paths)
+            lines.append("逐页 PNG: " + names)
+            # 直接给一条完整路径：Agent 就能把这张图原样交给看图工具，
+            # 不必再 glob 一次去拼目录（实地会话为此多花了一次调用）。
+            lines.append("例（可直接看）: " + result.png_paths[0])
             lines.append(
                 "请抽查 PNG：knot 内容块错位不会让编译报错（退出码仍是 0）。"
                 "只看与内容块/图相关的页，不必逐页全看。"
