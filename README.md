@@ -137,7 +137,8 @@ Agent 只多收到一行 `PDF: <路径>（N 页）`。失败时 Markdown 照常�
 ### 填空式学习笔记（可选）
 
 打开 `enableStudyNotes` 后，`zju_build_study_notes` 产出**基于 Typst scholia 模板排版的
-填空式学习笔记**：`mode=draft` 生成填空底稿，`mode=compile` 排成 PDF + 逐页 PNG。
+填空式学习笔记**：`mode=draft` 生成填空底稿，`mode=patch` 把一批挖空/标记一次写回，
+`mode=compile` 排成 PDF + 逐页 PNG。
 **配色与段落规范由本项目定义**，见
 [scholia-notes 规范](skills/scholia-notes/references/typography-spec.md)。
 工具只做搬运与排版，哪句是定理、哪里挖空仍由你判断——自动挖空等于替读者决定「考什么」。
@@ -168,7 +169,7 @@ dsh 默认注册 **6 个**核心工具（含依赖自检 `zju_doctor`）；打�
 | `zju_check_note` | 检查 / 修复**已有**讲义；`pdf=true` 重排 PDF | 开 |
 | `zju_write_note` | 写入讲义：自动命名、拒绝静默覆盖、修公式、校验、自动排 PDF | 开 |
 | `zju_doctor` | 检查 Python / Typst / 字体 / 包；`install=true` 自动装 Typst | 开 |
-| `zju_build_study_notes` | 讲义 → 填空底稿 → scholia PDF + 逐页 PNG | 关（`enableStudyNotes`） |
+| `zju_build_study_notes` | 讲义 → 填空底稿 →（批量挖空）→ scholia PDF + 逐页 PNG | 关（`enableStudyNotes`） |
 | `zju_fetch_slides` | 抓投影截图清单，可选下载并合成 PDF | 关（`enableSlides`） |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 关（`enableLoginTools`） |
 | `zju_read_browser_cookie` | 读本机 Edge 登录态并缓存到服务端内存（只回名称与长度） | 关（`enableLoginTools`） |
@@ -178,6 +179,10 @@ dsh 默认注册 **6 个**核心工具（含依赖自检 `zju_doctor`）；打�
 dsh 的六个开关在 **设置 → 左侧导航「浙大智云课堂讲义」**（独立一栏，不占通用设置），
 按「核心链路 → 阅读输出 → 环境与依赖 → 主动回忆 → 课堂投影 → 登录辅助」分组，并有三枚预设：
 **省 Token / 复习模式 / 全功能**。
+
+同一页也在**左侧栏的「智云讲义」一行**（`插件` / `自动化任务` 下面）：点它直接在主区域打开，
+不必先进设置。左栏入口与设置页共用同一份配置和同一个控制器，改哪边都一样；
+侧边栏收起时它只显示图标，悬停给出同一个名字。
 
 | 设置 | 作用 | 默认 |
 | :--- | :--- | :--- |

@@ -15,7 +15,7 @@ dsh-zju-lecture-note/
 ├── lib/                           # dsh 插件实现（ESM）
 │   ├── index.js                   # 插件入口：按开关注册工具 + 内存注册随包 Skill
 │   ├── bridge.js                  # 拉起随包 Python 核心（JSON-RPC over stdio）
-│   ├── client.js                  # 浏览器半边：设置页「浙大智云课堂讲义」
+│   ├── client.js                  # 浏览器半边：设置页 + 左栏「智云讲义」入口
 │   ├── tools.js                   # 生成物：dsh 工具定义
 │   └── tools.schema.json          # 生成物：工具定义快照（供测试比对）
 ├── .minimax-plugin/plugin.json    # MiniMax Code（MCode）插件清单
@@ -66,7 +66,8 @@ dsh-zju-lecture-note/
   →（可选）zju_extract_courseware（本地课件校准术语）
   → Agent 写 Markdown
   → zju_write_note：命名 → 修公式 → 校验 → 写文件 → 排版同名 PDF
-  →（可选）zju_build_study_notes：讲义 → 填空底稿 → scholia PDF + 逐页 PNG
+  →（可选）zju_build_study_notes：讲义 →（draft）填空底稿 →（patch，一次写回挖空）
+    →（compile）scholia PDF + 逐页 PNG
 ```
 
 ## 2. 安装形态与依赖
@@ -123,6 +124,23 @@ PATH 上的 `python3` / `python` / `py -3`。
 **client 元数据在 Host 启动时缓存**：`dsh.client` 新增或修改后，只重装插件、甚至刷新页面都不够，
 必须**完全重启 DeepSeek Harness**；可在 `cordis_inspect_query` 的 `Slots` →
 `factory:dsh-zju-lecture-note` / `settings.section` 验证。
+
+**浏览器半边的两个席位（同一份配置）**：`lib/client.js` 只创建一个 `PipelineSettings`
+控制器、一个 `PipelineSection` 组件，然后从两个席位挂同一个页面：
+
+| 席位 | 位置 | 注册 |
+| :--- | :--- | :--- |
+| `settings.section` | 设置弹窗的左栏「浙大智云课堂讲义」 | `id: PANEL_ID`、`order: 25` |
+| `sidebar.panellist` + `main` | 主界面左栏「智云讲义」一行，点开在主区域显示同一页 | 行 `id` 与面板 `key` 都取 `PANEL_ID` |
+
+- 侧边栏按 id 调 `ctx.layout.selectPanel(id)`，所以**行的 `id` 与 `main` 的 `key` 必须一致**；
+  两处都引用同一个 `PANEL_ID = 'zju-lecture'` 常量，不要写死两份字符串。
+- 两个席位嵌套注册（`main` 外层、`sidebar.panellist` 内层），任一侧失败都不会留下半套入口。
+- `sidebar.panellist` 没有图标字段：注册项自己画 SVG，用 `currentColor` 才能跟随行的
+  悬停/选中颜色；`label` 是 thunk，跟随语言切换。
+- `main` 占的是整列页面，页首要用 `calc(20px + var(--dsh-frame-top-clearance, 0px))` 留出
+  窗口标题栏的高度，否则 Windows 上第一行会被标题栏压住。
+- 面板页把标题渲染成 `h1`（`asPage`），设置弹窗里仍是 `h2`（弹窗自己提供标题）。
 
 ## 3. 工具与开关分层
 
@@ -205,12 +223,21 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
     本节只保留机制。
   - 一级标题：灰蓝编号 + 蓝色标题 + 细线；方框淡彩底 + 左侧竖线、无圆角；
     证明以斜体 `Proof.` + 行末 qed。
+  - 各级标题后的间距自 2.2.2 起加大（用户在实地会话里要求「小节标题后的行间距
+    适当大一些」），具体值见规范 §2；两条链路同步改。
   - `par.first-line-indent` **不可靠**：它只在「前一个兄弟元素是段落」时生效，
     标题 / 块 / 图 / 公式后的段落一律不缩进 ⇒ 正文改用行内 `#h(2em)` 顶首行；
     直觉块不缩进（块自身的左内边距已经分开）。
   - 块级公式的上下间距吃 `par.spacing`，压段间距会把公式压到下一段上 ⇒ 用
     `#show math.equation.where(block: true): set block(above: …, below: …)` 解耦
     （数值见规范）。
+  - 行内公式的墨迹会溢出「行盒」：Typst 的行内数学盒子高度是**固定值**（11pt 下
+    ≈0.68em，`measure($frac(1,2)$)` 与 `measure($x$)` 都是 7.51pt），分式的分子/分母、
+    大算子的上下限压到邻行上。解决办法是两处**显式**留白：模板里的
+    `#show math.equation.where(block: false): it => box(inset: (top: …, bottom: …), it)`
+    给每个行内公式补一点；`study_notes.pad_inline_math()` 再给分式/根式/矩阵/大算子
+    这类「结构上会撑高」的公式包一层 `#box(inset: (bottom: …))`。只按最大值统一给会把
+    只有 `$x$` 的行也撑松，所以按结构分级（数值与实测见规范 §3.2）。
   - 边注用 `box(width: 0pt, context { let p = here().position(); place(top + left, dx: page.width - p.x - note-width - right-pad, …) })`：
     `note-width` / `right-pad` 的数值见规范；直接 `context` + `place(top + right)`
     会把边注甩到页面顶端。
@@ -224,6 +251,7 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
   | `[练习]` | `#yourturn` + 3 行 `#workspace(n: 3)`（练习块里的短 `____` 一律丢弃） |
   | `[边注]` / `[边注!]` | 右侧留白边注（`[边注!]` 带强调） |
   | `[强调]` / `[易错]` / `[弱注]` / `[分隔]` | 行内高亮 / 提示 / 弱化 / 分隔线 |
+  | `---`（独占一行） | 同 `[分隔]` 的细分隔线（不再被智能标点排成孤立「–」） |
   | `____` | `#fillin(width: 2.2cm)`（灰色，提示留给读者写） |
   | `[缺口: …]` | `#gap` 留白 |
   | `<label>` / `@label` | 两遍扫描后生成原生交叉引用 |
@@ -270,10 +298,14 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 
 `zju_lecture/study_notes.py` 负责两段：
 
-- `mode=draft`：讲义 → 填空底稿（标题层级映射、标记位插入）。
-  标记位只插 `[直觉]` / `[练习]` / `[边注]`——`[定义]` / `[定理]` / `[证明]` 该不该用是内容判断，
-  骨架不替使用者决定。**公式、表格、列表、行内代码都原样保留成 Markdown**：
+- `mode=draft`：讲义 → 填空底稿（标题层级映射、正文原样搬运）。
+  骨架**不再逐节插 `[直觉]` / `[练习]` / `[边注]` 空占位**：文件头只有一条 HTML 注释
+  说明这些装置可选，加不加、加在哪儿由内容判断。**公式、表格、列表、行内代码都原样保留成 Markdown**：
   底稿是给人/模型改的，转换只在 `mode=compile` 做一次。
+- `mode=patch`：按 `edits=[{old, new}, …]` 一次写回底稿，逐条报告命中/未命中。
+  挖空是十几处精确替换，逐条调用编辑工具就是十几次往返（实地会话 35 步里有 12 步
+  花在这上面）；这里是同一批修改的一次提交。`old` 默认必须唯一命中，重复时加
+  `"all": true` 或加长上下文。
 - `mode=compile`：底稿 → `main.typ` + `prelude.typ` → `out.pdf` + 逐页 `page-N.png`，
   并报告编译错误、方框预算与悬空回指。
 
@@ -282,8 +314,17 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 - 骨架**不会**替使用者插 `[定义]/[定理]/[证明]`——那三个框该不该用是内容判断。
 - 底稿可以写 `<!-- … -->` 注释，转成 Typst 块注释，不渲染、也不计进正文段落。
 - 数学转换是**幂等**的：`_plain_word` 认识转换器自己会产出的名字（`frac` / `cal` / `sum` /
-  `quad` / `"Res"` …），所以 `latex_to_typst(latex_to_typst(x)) == latex_to_typst(x)`，
+  `quad` / `wide` / `slash` / `"Res"` …），所以 `latex_to_typst(latex_to_typst(x)) == latex_to_typst(x)`，
   不会被拆成 `s u m` / `f r a c`。引号串（`"Res"`）原样搬运，不再被二次加工。
+- 间距命令走 Typst 的真实间距：`\quad` → `quad`（1em）、`\qquad` → `wide`（2em）、
+  `\,` → `thin`、`\;` → `med`。早先映射成空格，而 Typst 会折叠连续空格，
+  于是「并排的两条公式」粘成 `0∇×H`（实地会话里 Agent 只能写脚本拆公式块）。
+- 行内数学（`inline=True`）把 `/` 排成平排的 `slash`，块级公式仍排上下分式：
+  `$1/r$` 不再把行距顶高，不必手改成 `r^{-1}`。
+- Markdown 的 `>` 引用块 → `#quoted[…]`（左侧细线 + 灰色小字）。Typst **没有** `>`
+  引用语法，旧实现把 `>` 原样印进 PDF；多条 `> **字段**：…` 按行换行，不再粘成一句。
+- 方框预算按**最小**小节统计：`## 二、分章详解` 下挂 7 个 `### 2.x` 时逐 `2.x` 计数，
+  不会把整章的框算到同一节。
 - GFM 表格 / `- ` 与 `1.` 列表 / 行内反引号在 `render_typst` 里有对应分支：表格 → `#table(…)`、
   列表 → Typst 列表、反引号 → raw（内容不转义）。以前表格只在 `build_draft` 转、`render_typst`
   不认，底稿里的 `#table(…)` 会被当正文转义成 `\[a\]`。

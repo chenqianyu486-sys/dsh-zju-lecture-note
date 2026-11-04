@@ -3,6 +3,80 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
+## 2.2.3 — 2026-11-04
+
+按又一次真实上课（`session-5415d8a5`，sub_id 1990907）里「工具没错、但 Agent 得替它
+擦屁股」的地方收口。回归钉在 `tests/test_session_5415d8a5.py`。
+
+- **`\qquad` / `\quad` 排成真间距**：以前映射成两个空格，Typst 会把空格折叠掉，
+  四条麦克斯韦方程挤成 `0∇×H` 这种像乘法的东西；Agent 只好自己写
+  `.tmp_split_display.py` 把 28 个公式块拆开、再重排两份 PDF。现在
+  `\qquad` → `wide`（2em）、`\quad` → `quad`（1em）、`\,` → `thin`、`\;` → `med`，
+  并保持转换幂等。
+- **行内 `$1/r$` 不再顶高行距**：行内数学把 `/` 排成平排的 `slash`
+  （`1 slash r`），独占一行的 `$$…$$` 仍排上下分式。此前 Agent 手改 4 处成 `r^{-1}`。
+- **含公式的行不再拥挤**：Typst 的行内数学盒子高度是固定值（11pt 下 ≈0.68em，
+  `measure($frac(1,2)$)` 与 `measure($x$)` 都是 7.51pt），分式的分子/分母、根式、
+  大算子的上下限会溢出盒子、压到邻行（实测重叠 1–4pt），`par.leading` 管不到。
+  现在两处显式留白：模板的 `#show math.equation.where(block: false)` 给每个行内
+  公式补上 `0.12em` / 下 `0.10em`；`pad_inline_math()` 再给分式/根式/矩阵/大算子
+  包一层 `#box(inset: (bottom: 0.30em))`。同一份讲义实测：行间 < 2pt 的行对
+  37 → 15，最差一处 −3.74pt（重叠）→ +1.19pt，纯文字行的行距一点没动。
+  数值进 `typography-spec.md` §3.2，两条链路由 `tests/test_typography_unified.py` 绑定。
+- **引用块不再印出字面量 `>`**：Typst 没有 `>` 引用语法，旧实现把 `>` 原样写进
+  PDF，还把抬头三个字段粘成「时长：约 01:40:16 上课时间：未提供…」。现在两条链路
+  都渲染成左侧细线 + 灰色小字块，`**字段**：` 之间自动换行（`#quoted[…]`）。
+- **`bare_imaginary_unit` 不再误报电流**：只有出现复数语境（`i^2`、`e^{iθ}`、
+  `\pm i`、复数 / 虚部 / 相量等用语）时才报；LC 回路里的 `i = -q_0ω_0 sin(…)`
+  不再逼 Agent 把物理量改成 `\mathrm{i}`。
+- **方框预算按最小小节统计**：`## 二、分章详解` 下挂 7 个 `### 2.x` 时逐 `2.x` 计数，
+  不再把整章 9 个框算成「一节超预算」（Agent 为此纠结过一大段）。
+- **新增 `zju_build_study_notes(mode="patch")`**：`edits=[{old, new}, …]` 一次写回
+  十几处挖空 / 标记，逐条报告命中与未命中；`old` 默认要求唯一命中（重复时加
+  `"all": true`）。此前 35 步里有 12 步是一条一条改底稿。
+- 顺带收紧投影抓取的失败文案：`ZJU_COOKIE_FILE` 的建议不再在 5 行报错里出现两次。
+- **列表序号之间留出呼吸**：`-` 与 `1.` 的相邻条目间距 0.3em → **0.7em**
+  （两条链路同一组参数，`list.spacing` / `list.indent` 进 `typography-spec.md`
+  的机器可读块）；原来相邻条目几乎粘在一起。版式规范与实现由
+  `tests/test_typography_unified.py` 绑定。
+
+## 2.2.2 — 2026-11-04
+
+修一次真实上课（sub_id 1990907，大学物理·麦克斯韦方程组）里暴露的**多余手工操作**：
+PDF 因两个没映射的 LaTeX 符号直接跳过，Agent 手改 Markdown；填空底稿的每节空占位
+要删改近 20 次；`---` 被排成孤立「–」，Agent 写通配脚本清理时误伤旧讲义。
+回归钉在 `tests/test_session_7402719b.py`。
+
+- **补上 `\perp` / `\leftrightarrow` 等关系符号**：`zju_write_note` 首次排版返回
+  `PDF 跳过: error: unknown variable: leftrightarrow`，`note_lint` 还对 `\perp`
+  报「没有 Typst 对应写法」。现在两者都映射为 `⊥` / `↔`，并补齐常用双向箭头、
+  `\parallel`、`\nparallel`、`\hookrightarrow`、`\doteq` 等；`latex_unmapped`
+  自然消失。
+- **斜杠分式归一化**：`\partial D/\partial t`、`\mathrm{d}i/\mathrm{d}t`、
+  `\sqrt{\mu_0/\varepsilon_0}` 在渲染层转成 `\frac{…}{…}`，不再需要 Agent
+  写脚本逐条替换；只处理明确的微分/根式，不动普通 `a/b`。
+- **修 `bare_imaginary_unit` 误报**：`$L\frac{\mathrm{d}i}{\mathrm{d}t}$` 里的
+  `i` 是电流，不是虚数单位；负向后行断言把 `}` 也排除，不再逼 Agent 把电流改成
+  `\mathrm{i}`（那会把物理量改错）。
+- **填空底稿不再逐节塞空占位**：`build_draft` 以前在每节插
+  `[直觉]（用一句人话解释…）` / `[练习]（留给读者自己重做的一题）` /
+  `[边注]（一个主动回忆问题）`，实地会话为此花了近 20 次编辑。现在只保留原文，
+  文件头留一条 HTML 注释说明可选装置；加不加、加在哪儿由内容判断。
+- **`---` 水平分隔线不再变成孤立「–」**：`render_typst` 现在把独占一行的
+  `---` 映射成 `#divider`（与 `[分隔]` 同款细线）。此前 Agent 只能写
+  `知识总结*.md` 通配脚本删分隔线，误伤了另外两份旧讲义；Skill 也补了
+  「不要用通配批量改讲义」。
+- **小节标题后的间距加大**：一级标题下 8pt → 12pt，二级标题下 0.5em → 0.85em，
+  三级标题下 0.4/0.5em → 0.65em；两条 PDF 链路同步（改 vendored scholia 补丁）。
+  规范机器可读块新增 `heading.h{1,2,3}.above/below`，测试逐项比对。
+- **新增主界面左栏入口**：`lib/client.js` 增加 `sidebar.panellist` 一行「智云讲义」
+  （`id: zju-lecture`，order 30，排在「插件」「自动化任务」之后），点开在**主区域**
+  渲染与「设置 → 浙大智云课堂讲义」完全相同的页面——同一个 `PipelineSettings`
+  控制器、同一份配置，设置弹窗里的那一栏保留。折叠态只显示 `currentColor` 的 SVG
+  图标，页首按 `--dsh-frame-top-clearance` 让出窗口标题栏。回归钉在
+  `tests/test_sidebar_entry_v222.py` 与 `tests/client_settings_smoke.mjs`。
+- 版本 2.2.1 → 2.2.2（六处对齐，两个 Skill 清单重新生成）。**尚未发布**。
+
 ## 2.2.1 — 2026-11-04
 
 修一次真实上课（sub_id 1990049，89 步）暴露的**自相矛盾**：工具和文档各说各话，
