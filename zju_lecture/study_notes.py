@@ -48,6 +48,7 @@ __all__ = [
     "compile_project",
     "find_typst",
     "latex_to_typst",
+    "pad_inline_math",
 ]
 
 
@@ -153,6 +154,58 @@ BODY_SPACING = "0.95em"
 #: 段首缩进两格的实现：行内空白顶开首行。
 BODY_INDENT = "#h(2em)"
 
+#: 行内公式的上下留白（见 ``typography-spec.md`` §3.2）。
+#:
+#: Typst 的行内数学盒子高度是**固定值**（11pt 下实测 0.68em，与内容无关）：
+#: 分式的分子/分母、根式、大算子的上下限会溢出这个盒子，直接压到邻行上
+#: （带 ``\frac`` 的行，墨迹比行盒低约 7pt，与下一行重叠 1–4pt）。所以留白
+#: 只能显式给，分两处：
+#:
+#: * prelude 里的 ``#show math.equation.where(block: false)`` 给**每个**行内
+#:   公式补 ``top`` / ``bottom`` 这一点（上下标也吃到了）；
+#: * 渲染器 :func:`pad_inline_math` 只给「结构上会撑高」的公式再补
+#:   ``INLINE_MATH_TALL_INSET`` 的下留白 —— 固定留白按最大高度给，会把只有
+#:   ``$x$`` 的行也撑松，整页节奏就散了。
+INLINE_MATH_INSET_TOP = "0.12em"
+INLINE_MATH_INSET_BOTTOM = "0.10em"
+INLINE_MATH_TALL_INSET = "0.30em"
+
+#: 「结构上会撑高」的行内公式，按**转换后的 Typst 形态**判断。
+#: 两条链路（阅读版 / 填空笔记）共用同一张表，改这里就两边同时生效。
+#:
+#: 尾部的 ``(?![A-Za-z])`` 不能用 ``\b``：Typst 里大算子几乎总带下标
+#: （``integral_Omega``、``sum_(k=1)^n``），而 ``_`` 在正则里算单词字符，
+#: ``\b`` 在那里根本不断词，结果「有积分/求和的行」全被漏掉。
+_TALL_INLINE_MATH_RE = re.compile(
+    r"\b(?:frac|sqrt|root|binom|mat|cases)\s*\("
+    r"|(?:integral|sum|prod|coprod|union|inter|limsup|liminf|lim)(?![A-Za-z])"
+)
+
+
+def pad_inline_math(math: str) -> str:
+    """给「会撑高」的行内公式补下留白，返回可直接写进段落的 Typst 片段。
+
+    ``math`` 是 ``$…$`` 形式的 Typst 数学。只有分式、根式、矩阵、大算子的
+    上下限这类**结构上必然溢出**的公式才补 —— 见
+    :data:`INLINE_MATH_TALL_INSET` 的注释。块级公式（``$ … $``）不补：
+    它的上下间距由 ``block: true`` 的那条 show 规则负责。
+    """
+    if not (math.startswith("$") and math.endswith("$")) or len(math) < 3:
+        return math
+    inner = math[1:-1]
+    if inner.startswith("$") or inner[:1].isspace():
+        return math
+    if not _TALL_INLINE_MATH_RE.search(inner):
+        return math
+    return "#box(inset: (bottom: " + INLINE_MATH_TALL_INSET + "), " + math + ")"
+
+
+#: 列表排版：序号之间留出呼吸（0.3em 实测相邻条目几乎粘在一起），
+#: 取 0.7em —— 介于「紧凑」与段间距 0.95em 之间。`-` 与 `+` 同一组参数，
+#: 阅读版模板（handout_prelude.typ）与这里必须一致。
+LIST_SPACING = "0.7em"
+LIST_INDENT = "1.5em"
+
 #: Typst 助手调用的开头（`#mark-key[` …）。
 _HELPER_RE = re.compile(
     r"#(" + "|".join(
@@ -189,6 +242,24 @@ _BULLET_RE = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 _TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 
+#: Markdown 水平分隔线。`---` 在 Typst markup 里会被智能标点排成一个
+#: 孤立的「–」；底稿里出现时必须映射成 `#divider`，不能当普通段落。
+_HR_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
+
+#: 斜杠分式：`\partial D/\partial t`、`\mathrm{d}i/\mathrm{d}t`、
+#: `\sqrt{\mu_0/\varepsilon_0}`。这些写法在行内会与上下标挤在一起，
+#: 渲染层统一改成 `\frac{…}{…}`；只处理**明确的微分/根式**，不碰一般 `a/b`。
+_DERIVATIVE_SLASH_RE = re.compile(
+    r"\\partial\s+([A-Za-z](?:_\{?[A-Za-z0-9]+\}?)?)"
+    r"\s*/\s*\\partial\s+([A-Za-z](?:_\{?[A-Za-z0-9]+\}?)?)"
+)
+_DIFFERENTIAL_SLASH_RE = re.compile(
+    r"\\mathrm\{d\}\s*([A-Za-z])\s*/\s*\\mathrm\{d\}\s*([A-Za-z])"
+)
+_SQRT_SLASH_RE = re.compile(
+    r"\\sqrt\{\s*([A-Za-z0-9_{}\\]+?)\s*/\s*([A-Za-z0-9_{}\\]+?)\s*\}"
+)
+
 #: Typst 注释 / 无意义空白
 _BLANK_RE = re.compile(r"^\s*$")
 
@@ -205,12 +276,29 @@ _LATEX_SYMBOLS: Dict[str, str] = {
     "cup": "∪", "cap": "∩", "emptyset": "∅",
     "to": "→", "rightarrow": "→", "leftarrow": "←",
     "Rightarrow": "⇒", "Leftarrow": "⇐", "Leftrightarrow": "⇔",
+    # 双向箭头 / 垂直 / 平行：实地会话（sub_id 1990907）里 `\perp` 与
+    # `\leftrightarrow` 漏映射，PDF 直接 `unknown variable: leftrightarrow`，
+    # 讲义只能「PDF 跳过」再由 Agent 手改公式。这里补齐常用关系符号。
+    "leftrightarrow": "↔", "rightleftarrows": "⇄", "leftrightarrows": "⇆",
+    "rightleftharpoons": "⇌", "updownarrow": "↕", "Updownarrow": "⇕",
+    "hookrightarrow": "↪", "hookleftarrow": "↩",
+    "longleftrightarrow": "⟷", "Longleftrightarrow": "⟺",
+    "nearrow": "↗", "searrow": "↘", "nwarrow": "↖", "swarrow": "↙",
+    "uparrow": "↑", "downarrow": "↓",
+    "perp": "⊥", "parallel": "∥", "nparallel": "∦",
+    "doteq": "≐", "asymp": "≍", "bowtie": "⋈",
+    "models": "⊨", "vdash": "⊢", "dashv": "⊣", "top": "⊤", "bot": "⊥",
     "mapsto": "↦", "infty": "∞", "partial": "∂", "nabla": "∇",
     "sum": "sum", "prod": "product", "int": "integral",
     "iint": "∬", "iiint": "∭", "oint": "∮", "coprod": "product",
     "forall": "∀", "exists": "∃", "neg": "¬", "land": "∧", "lor": "∨",
     "dots": "dots", "cdots": "dots", "ldots": "dots",
-    "quad": " ", "qquad": "  ", ",": " ", ";": " ", "!": "",
+    # 空白命令不能映射成空格：Typst 的数学模式会把连续空格折叠成一个普通
+    # 词间距（约等于「没有」），于是 `a \qquad b` 排成 `ab`，四条麦克斯韦方程
+    # 挤成 `0∇×H` 这种看起来像乘法的东西。Typst 侧本来就有 `quad`（1em）与
+    # `wide`（2em），直接映射，语义与排版都对。
+    "quad": "quad", "qquad": "wide",
+    ",": "thin", ";": "med", ":": "med", "!": "",
     "alpha": "alpha", "beta": "beta", "gamma": "gamma", "delta": "delta",
     "epsilon": "epsilon", "varepsilon": "epsilon", "zeta": "zeta",
     "eta": "eta", "theta": "theta", "vartheta": "theta", "iota": "iota",
@@ -308,7 +396,8 @@ _TYPST_BARE_NAMES = (
     | frozenset(w for w in _LATEX_SYMBOLS.values() if re.fullmatch(r"[A-Za-z]+", w))
     | frozenset({
         "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op",
-        "mat", "cases", "quad", "product", "integral", "sum", "dots",
+        "mat", "cases", "quad", "wide", "thin", "med", "slash",
+        "product", "integral", "sum", "dots",
         "overbrace", "underbrace", "overline", "underline",
         "hat", "tilde", "bar", "vec", "dot", "ddot", "compose",
     })
@@ -518,12 +607,66 @@ def _convert_environment(name: str, inner: str) -> Tuple[str, List[str]]:
     return convert_cell(body), warnings
 
 
-def latex_to_typst(expression: str) -> Tuple[str, List[str]]:
+def _normalize_slash_fractions(expression: str) -> str:
+    r"""把明确的斜杠分式改写成 ``\frac{…}{…}``。
+
+    实地会话里 ``\partial D/\partial t`` 被原样排成 ``∂D/∂t``，和上下标挤在
+    一起像错位的堆叠分式；当时只能让 Agent 写脚本逐条替换。这里在渲染层做
+    一次机械归一化，源 Markdown 保持原样（别的阅读器里斜杠也读得通）。
+
+    只处理 ``\partial …/\partial …``、``\mathrm{d}…/\mathrm{d}…`` 与
+    ``\sqrt{…/…}``；**不碰一般的 ``a/b``**（可能是单位 ``m/s`` 或普通除法）。
+    """
+    expression = _DERIVATIVE_SLASH_RE.sub(
+        r"\\frac{\\partial \1}{\\partial \2}", expression
+    )
+    expression = _DIFFERENTIAL_SLASH_RE.sub(
+        r"\\frac{\\mathrm{d}\1}{\\mathrm{d}\2}", expression
+    )
+
+    def _sqrt_fraction(match: "re.Match[str]") -> str:
+        numerator, denominator = match.group(1).strip(), match.group(2).strip()
+        # 只处理单层的 ``a/b``；``a/b/c`` 这种歧义写法留给人工判断。
+        if "/" in numerator or "/" in denominator:
+            return match.group(0)
+        # 回调返回值按字面量使用，不像 re.sub 的替换串那样需要写双反斜杠。
+        return r"\sqrt{\frac{" + numerator + r"}{" + denominator + r"}}"
+
+    return _SQRT_SLASH_RE.sub(_sqrt_fraction, expression)
+
+
+def _flatten_inline_slashes(converted: str) -> str:
+    """把**行内**数学里的 ``/`` 换成平排的 ``slash``。
+
+    Typst 数学里 ``a/b`` 默认就是上下分式：``$1/r$`` 会排成一道竖着的分数，
+    把整行行距顶高（实地会话里 Agent 为此把十几处 ``1/r`` 手改成 ``r^{-1}``）。
+    行内保留平排的斜杠才像正常句子，块级公式仍然要真分式，所以只有行内
+    调用本函数。引号里的文本（``upright("m/s")``、``"W/m"``）原样保留。
+    """
+    out: List[str] = []
+    in_quote = False
+    for char in converted:
+        if char == '"':
+            in_quote = not in_quote
+            out.append(char)
+            continue
+        if char == "/" and not in_quote:
+            out.append(" slash ")
+            continue
+        out.append(char)
+    return "".join(out)
+
+
+def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str]]:
     """把一段 LaTeX 数学改写成 Typst 数学。
 
     返回 ``(改写结果, 无法机械转换的片段列表)``。转换不了的**不静默丢弃**：
     它们会被列出来交给上层报告，因为「编译报错」比「悄悄改错公式」好发现得多。
+
+    ``inline=True`` 表示这段数学会排在一句话中间：此时 ``a/b`` 保留平排的
+    斜杠，不排成顶高行距的堆叠分式（块级公式仍走默认的真分式）。
     """
+    expression = _normalize_slash_fractions(expression)
     warnings: List[str] = []
     out: List[str] = []
     index = 0
@@ -575,6 +718,7 @@ def latex_to_typst(expression: str) -> Tuple[str, List[str]]:
                     "equiv": "≢", "approx": "≉", "sim": "≁",
                     "le": "≰", "leq": "≰", "ge": "≱", "geq": "≱",
                     "lt": "≮", "gt": "≯", "exists": "∄",
+                    "parallel": "∦",
                 }
                 following = _LATEX_COMMAND_RE.match(expression, index)
                 if following and following.group(1) in negated:
@@ -859,7 +1003,10 @@ def latex_to_typst(expression: str) -> Tuple[str, List[str]]:
         out.append(char)
         index += 1
 
-    return "".join(out), warnings
+    converted = "".join(out)
+    if inline:
+        converted = _flatten_inline_slashes(converted)
+    return converted, warnings
 
 
 # ------------------------------------------------------------- Typst 行内转义
@@ -950,7 +1097,7 @@ def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str
     # 行内代码优先保护：反引号里在 Typst 是 raw，**不转义才对**。
     # 此前把 `` `[00:20]` `` 转成 `` `\\[00:20\\]` ``，PDF 里就带着反斜杠念出来。
     protected, kept_code = _protect(text, _INLINE_CODE_RE, lambda m: m.group(0))
-    protected, kept_math = _protect(protected, _math_pattern(), lambda m: m.group(0))
+    protected, kept_math = _protect(protected, _math_pattern(), lambda m: pad_inline_math(m.group(0)))
     protected, kept_helper = _protect_helpers(protected)
     protected, kept_fill = _protect(
         protected, _FILLIN_RE, lambda m: "#fillin(width: 2.2cm)"
@@ -1190,6 +1337,7 @@ _TYPST_SAFE_WORDS = (
         "frac", "sqrt", "root", "mat", "cases", "cal", "frak", "bold",
         "upright", "op", "compose", "norm", "abs", "floor", "ceil", "round",
         "diag", "rank", "Res", "tr", "det", "lim", "max", "min", "sup", "inf",
+        "wide", "thin", "med", "slash",
     })
 )
 
@@ -1213,6 +1361,63 @@ def _looks_like_typst_math(segment: str) -> bool:
     return True
 
 
+#: 引用块里「另起一条」的判断：行首是粗体标签（`**来源**：`）。
+_QUOTE_ITEM_RE = re.compile(r"^\*\*[^*\n]{1,24}\*\*\s*(?:：|:|｜)")
+
+#: 引用块里的项目符号。按行断开，别和上一行接成一句；标记统一成 `-`
+#: （Typst 只认 `-` / `+`，`*` 会被当成强调符）。
+_QUOTE_LIST_RE = re.compile(r"^[-*+]\s+")
+
+#: 中日韩字符（判断软换行处要不要补空格）。
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]")
+
+
+def split_quote_items(lines: Sequence[str]) -> List[List[str]]:
+    """把 ``> `` 引用块拆成「条目」，每个条目是一组需要接成一段的行。
+
+    讲义开头的元信息是多个字段：``> **来源**：…`` / ``> **上课时间**：…``。
+    把它们逐行接成一段，PDF 里就变成「时长：约 01:40:16 上课时间：未提供…」，
+    三个字段粘成一句，读不出哪句是哪句（实地会话里 Agent 只能把引用块
+    手改成普通段落）。这里在「以粗体标签开头的行」与项目符号行前断条，
+    其余软换行照常接上。
+    """
+    items: List[List[str]] = []
+    for raw in lines:
+        text = raw.strip()
+        if text.startswith(">"):
+            text = text[1:]
+        text = text.strip()
+        if not text:
+            continue
+        if items and items[-1] and _QUOTE_ITEM_RE.match(text):
+            items.append([text])
+        elif items and _QUOTE_LIST_RE.match(text):
+            items.append([_QUOTE_LIST_RE.sub("- ", text, count=1)])
+        elif items:
+            items[-1].append(text)
+        else:
+            items.append([_QUOTE_LIST_RE.sub("- ", text, count=1)])
+    return items
+
+
+def join_cjk_lines(lines: Sequence[str]) -> str:
+    """把软换行的几行接成一段：两侧都是中日韩字符时不补空格。"""
+    joined = ""
+    for raw in lines:
+        text = raw.strip()
+        if not text:
+            continue
+        if not joined:
+            joined = text
+            continue
+        if _CJK_CHAR_RE.match(joined[-1:]) and _CJK_CHAR_RE.match(text[:1]):
+            joined += text
+        else:
+            joined += " " + text
+    return joined
+
+
+
 def _convert_draft_math(text: str) -> Tuple[str, List[str]]:
     """把底稿里残留的 LaTeX 数学改写成 Typst 数学。
 
@@ -1221,29 +1426,55 @@ def _convert_draft_math(text: str) -> Tuple[str, List[str]]:
     看不出「你写的是 LaTeX」。这里在编译前先改写一遍，并把改不动的点名。
 
     已经是 Typst 语法的数学没有反斜杠，原样通过。
+
+    逐行处理：**独占一行**的 ``$ … $`` 是块级公式，``/`` 仍排上下分式；
+    行内的 ``$…$`` 走 ``inline=True``，保留平排斜杠（见
+    :func:`_flatten_inline_slashes`）。
     """
     warnings: List[str] = []
     result: List[str] = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        display = _DISPLAY_MATH_RE.match(stripped)
+        if display and stripped.count("$") == 2:
+            inner = display.group(1)
+            if _looks_like_typst_math(inner):
+                converted, issues = inner, []
+            else:
+                converted, issues = latex_to_typst(inner)
+            warnings.extend(issues)
+            indent = line[:len(line) - len(line.lstrip())]
+            result.append(indent + "$" + converted + "$")
+            continue
+        result.append(_convert_inline_spans(line, warnings))
+    return "\n".join(result), warnings
+
+
+def _convert_inline_spans(line: str, warnings: List[str]) -> str:
+    """转换一行里的行内 ``$…$``（保留平排斜杠）。"""
+    out: List[str] = []
     index = 0
-    length = len(text)
+    length = len(line)
     while index < length:
-        if text[index] != "$":
-            result.append(text[index])
+        if line[index] != "$":
+            out.append(line[index])
             index += 1
             continue
-        close = text.find("$", index + 1)
+        close = line.find("$", index + 1)
         if close == -1:
-            result.append(text[index:])
+            out.append(line[index:])
             break
-        inner = text[index + 1:close]
+        inner = line[index + 1:close]
         if _looks_like_typst_math(inner):
-            result.append("$" + inner + "$")
+            # 已经是 Typst 写法（没有 LaTeX 命令），但 `$1/r$` 这种纯斜杠
+            # 也要在行内排平 —— 否则一条 `1/r` 就把行距顶高。
+            out.append("$" + _flatten_inline_slashes(inner) + "$")
         else:
-            converted, issues = latex_to_typst(inner)
+            converted, issues = latex_to_typst(inner, inline=True)
             warnings.extend(issues)
-            result.append("$" + converted + "$")
+            out.append("$" + converted + "$")
         index = close + 1
-    return "".join(result), warnings
+    return "".join(out)
 
 
 def _strip_html_comments(text: str) -> Tuple[str, List[str]]:
@@ -1328,7 +1559,11 @@ def render_typst(
                 continue
             if in_cover:
                 in_cover = False
-            if level == 2:
+            if 2 <= level <= 4:
+                # 「每节」按**最小**的小节算：讲义常写成
+                # `## 二、分章详解` 下面再挂 7 个 `### 2.1 …`，
+                # 按 h2 统计会把 7 小节的框全算到同一节，明明每节 1–2 个
+                # 却报「9 个，超预算」（实地会话里 Agent 为此纠结了很久）。
                 section = title
             lines_out.append("=" * (level - 1) + " " + escape_typst(title, known_labels))
             continue
@@ -1356,12 +1591,28 @@ def render_typst(
                 knots.append({"call": call, "section": section})
             continue
 
-        # Typst 的引用块：行首的 `>` 是引用标记，不能转义成字面量。
+        # Markdown 引用块。Typst **没有** `>` 引用语法（0.15 实测：`>` 会被
+        # 当成字面量印出来，整段抬头变成「> 来源：… > 上课时间：…」），
+        # 所以走 prelude 里的 `#quoted` 内容块；字段之间用行间断行。
         if stripped.startswith(">"):
-            lines_out.append(
-                ">" + BODY_INDENT + escape_typst(raw_line.strip()[1:], known_labels)
+            quote_lines = [raw_line]
+            while cursor < len(input_lines) and input_lines[cursor].strip().startswith(">"):
+                quote_lines.append(input_lines[cursor])
+                cursor += 1
+            items = split_quote_items(quote_lines)
+            body = " \\\n".join(
+                escape_typst(join_cjk_lines(item), known_labels) for item in items
             )
+            lines_out.append("#quoted[\n" + body + "\n]")
             _count("quote")
+            continue
+
+        # Markdown 水平分隔线 → Typst 的细分隔线。不处理的话 `---` 会被
+        # Typst 的智能标点排成一个孤立的「–」——实地会话里 Agent 为此写了
+        # 一个通配脚本删 `---`，误伤了另外两份旧讲义。
+        if _HR_RE.match(stripped):
+            lines_out.append("#divider")
+            _count("divider")
             continue
 
         # GFM 表格 → Typst `table`。底稿里保持 `| a | b |` 这种人人能读的写法，
@@ -1433,10 +1684,18 @@ def render_typst(
         "  first-line-indent: 0pt,",
         f"  spacing: {BODY_SPACING},",
         ")",
+        # 列表：序号之间留呼吸。Typst 默认间距在 11pt 中文下几乎贴在一起，
+        # 与阅读版模板（handout_prelude.typ）用同一组参数。
+        f"#set list(indent: {LIST_INDENT}, spacing: {LIST_SPACING})",
+        f"#set enum(indent: {LIST_INDENT}, spacing: {LIST_SPACING})",
         # 块级公式的上下间距显式给出：它不能跟着 par.spacing 一起变，
         # 否则一调段间距，公式就贴到上下段落上。
         "#show math.equation.where(block: true): set block("
         f"above: {EQUATION_BLOCK_SPACING}, below: {EQUATION_BLOCK_SPACING})",
+        # 行内公式的上下留白：Typst 的行内数学盒子高度固定，分式/根式会压到
+        # 邻行（数值与含义见 INLINE_MATH_INSET_* 与 typography-spec.md §3.2）。
+        "#show math.equation.where(block: false): it => box("
+        f"inset: (top: {INLINE_MATH_INSET_TOP}, bottom: {INLINE_MATH_INSET_BOTTOM}), it)",
         "",
     ])
 
@@ -1453,7 +1712,7 @@ def render_typst(
     over_budget = _over_budget_sections(knots)
     for name, count in over_budget:
         warnings.append(
-            f"第「{name}」节有 {count} 个方框，超过每节 {KNOT_BUDGET_PER_SECTION} 个的视觉预算；"
+            f"第「{name or '未命名'}」节有 {count} 个方框，超过每节 {KNOT_BUDGET_PER_SECTION} 个的视觉预算；"
             "按格式规范，把不需要被回指的那几条降级成普通段落 + [强调] 行内强调"
         )
 
@@ -1553,11 +1812,11 @@ def build_draft(
 ) -> DraftResult:
     """把讲义 Markdown 变成填空底稿骨架。
 
-    做的是**搬运**：标题层级映射、LaTeX 数学改写成 Typst 数学、
-    在合适的位置插好标记位。**不做判断**：哪句是定理、哪里该挖空，
-    由上层（人或模型）填 —— 所以这里留下的都是待填的占位。
-
-    标记位按「本节有没有公式」决定密度：纯叙述章节不硬塞定理框。
+    做的是**搬运**：标题层级映射、正文原样保留（公式仍是 LaTeX）。
+    **不做内容判断**：哪句是定理、哪里该挖空、哪些可选装置值得加，
+    由上层（人或模型）决定。骨架只在文件头留一行可选装置说明，
+    **不逐节塞 `[直觉]/[练习]/[边注]` 空占位** —— 那些空占位会让 Agent
+    把步数花在删改占位上（实地会话实测近 20 次编辑）。
     """
     warnings: List[str] = []
     normalized = note_text.replace("\r\n", "\n")
@@ -1613,37 +1872,33 @@ def build_draft(
     if kicker:
         out.append(f"- kicker: {kicker}")
     out.append("")
+    # 只留一行「可选装置」说明，不逐节塞空占位。实地会话里骨架给每节插
+    # `[直觉]（用一句人话解释…）` / `[练习]` / `[边注]` 三条空占位，Agent
+    # 花了近 20 次编辑删改它们 —— 这些应该由内容决定，不该由骨架代劳。
+    out.append(
+        "<!-- 可选装置：[直觉] 人话解释 / [练习] 自测 / [边注] 主动回忆；"
+        "按内容添加，不需要就删掉，不要留空标记。 -->"
+    )
+    out.append("")
 
     for block in blocks:
         level = int(block["level"])
         block_title = str(block["title"])
         block_lines = list(block["lines"])
+        # 去掉块首尾的空行：它们只是标题与段落之间的分隔，块之间会统一补。
+        while block_lines and not block_lines[0].strip():
+            block_lines.pop(0)
+        while block_lines and not block_lines[-1].strip():
+            block_lines.pop()
 
         if block_title:
             out.append("#" * level + " " + block_title)
             out.append("")
-            if level == 2:
-                out.append(f"[直觉] （用一句人话解释「{block_title}」在解决什么问题）")
-                out.append("")
 
-        has_math = any("$" in str(item) for item in block_lines)
         out.extend(_convert_block(block_lines, warnings))
 
-        if level == 2:
-            out.append("")
-            if has_math:
-                # 提示不渲染（HTML 注释 → 底稿里留给自己看的说明）。
-                # **不替使用者插 [定义]/[定理]/[证明]**：那三个框是不是该用，
-                # 取决于这条内容后面会不会被回指 —— 是内容判断，不是排版判断。
-                out.append(
-                    "<!-- 本节有公式：只有后面会被引用/回指的结论才用 "
-                    "[定义]/[定理]/[例]（每节合计 ≤ 2 个），"
-                    "其余写成普通段落，用 [强调]/[易错] 标重点。"
-                    "格式规范见 references/format-spec.md -->"
-                )
-            # 练习块里**不插填空位**：块里本来就有书写横线，再加几条短下划线只会挤在题面里。
-            out.append("[练习] （留给读者自己重做的一题）")
-            out.append("[边注] （一个主动回忆问题）")
+        # 块之间留一个空行；`<!-- … -->` 与正文互不影响。
+        if out and out[-1].strip():
             out.append("")
 
     text = "\n".join(out).strip() + "\n"
@@ -1669,6 +1924,83 @@ def _convert_block(lines: Sequence[str], warnings: List[str]) -> List[str]:
     实测一次课为此白跑了 40 多个工具调用。
     """
     return list(lines)
+
+
+# ------------------------------------------------------------------ 批量改稿
+
+
+#: 一次 ``mode=patch`` 最多接受的修改条数（防止把整份文档拆成上千条）。
+MAX_DRAFT_EDITS = 80
+
+
+@dataclass
+class PatchResult:
+    """``apply_draft_edits`` 的结果。"""
+
+    text: str
+    applied: int = 0
+    skipped: int = 0
+    failures: List[str] = field(default_factory=list)
+
+
+def _short(text: str, limit: int = 40) -> str:
+    """把一段原文压成一行，用于失败报告里点名。"""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def apply_draft_edits(
+    text: str, edits: Sequence[Dict[str, object]]
+) -> PatchResult:
+    """把一批 ``old → new`` 修改**一次**写回底稿文本。
+
+    为什么需要它：填空笔记的「挖空」是十几处零散的精确替换，逐条调用编辑
+    工具就是十几次往返（实地会话 35 步里有 12 步花在这上面）。这里一次收
+    完，逐条报告命中情况，Agent 不必为每一处空位单独发一次调用。
+
+    每条修改默认要求 ``old`` **恰好出现一次**（重复时请加长上下文，或显式
+    写 ``all: true`` 全部替换），避免「改到了不该改的那处」。
+    """
+    if len(edits) > MAX_DRAFT_EDITS:
+        raise StudyNotesError(
+            f"一次最多 {MAX_DRAFT_EDITS} 条修改，收到 {len(edits)} 条；请分两次调用"
+        )
+
+    result = text
+    applied = 0
+    skipped = 0
+    failures: List[str] = []
+
+    for index, item in enumerate(edits, start=1):
+        if not isinstance(item, dict):
+            failures.append(f"第 {index} 条不是 {{old, new}} 对象")
+            continue
+        old = str(item.get("old") or "")
+        new = str(item.get("new") or "")
+        replace_all = bool(item.get("all"))
+        if not old:
+            failures.append(f"第 {index} 条缺少 old")
+            continue
+        if old == new:
+            skipped += 1
+            continue
+        occurrences = result.count(old)
+        if occurrences == 0:
+            failures.append(
+                f"第 {index} 条原文未找到（可能已被前面的条目改过，或空格/换行不一致）："
+                + _short(old)
+            )
+            continue
+        if occurrences > 1 and not replace_all:
+            failures.append(
+                f"第 {index} 条原文出现 {occurrences} 次；加长 old 让它是唯一的，"
+                "或设 all=true 全部替换：" + _short(old)
+            )
+            continue
+        result = result.replace(old, new, -1 if replace_all else 1)
+        applied += 1
+
+    return PatchResult(text=result, applied=applied, skipped=skipped, failures=failures)
 
 
 # ------------------------------------------------------------------ 编译

@@ -41,8 +41,32 @@ _TEXT_CMD_RE = re.compile(r"\\text\{([^}]*)\}")
 _CJK_RE = re.compile(r"[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]")
 
 # A bare imaginary unit. ``x_i`` and ``\mathrm{i}`` are fine; ``i`` is not.
-_BARE_IMAG_RE = re.compile(r"(?<![A-Za-z0-9_{])i(?![A-Za-z0-9_])")
+# ``\mathrm{d}i`` 里的 i 是「电流」，前面紧挨着 ``}``；不排除它就会把
+# ``$L\frac{\mathrm{d}i}{\mathrm{d}t}$`` 误报成虚数单位（实地会话踩过）。
+# ``i(t)`` 同理：那是随时间变化的电流。
+_BARE_IMAG_RE = re.compile(r"(?<![A-Za-z0-9_{}])i(?![A-Za-z0-9_])(?!\(t\))")
 _IMAG_CMD_RE = re.compile(r"\\mathrm\{[ij]\}")
+
+#: 复数语境信号。物理 / 电路课里裸 `i` 绝大多数是**电流**（LC 回路、
+#: 交流电、相量），一律按虚数单位报警，Agent 会把正确的物理量手改成
+#: ``\mathrm{i}``（实地会话：一份讲义为此改了 3 处、多排一轮 PDF）。
+#: 只有句子里真的出现复数用语，或公式里出现 ``i^2`` / ``e^{iθ}` / ``\pm i``
+#: 这类铁证时才报。
+_COMPLEX_WORD_RE = re.compile(
+    r"复数|虚数|虚部|实部|共轭|复平面|复变|复指数|复振幅|相量|欧拉|"
+    r"解析函数|留数|幅角|复根|特征根"
+)
+_COMPLEX_MATH_RE = re.compile(
+    r"i\s*\^\s*\{?\s*2|e\s*\^\s*\{?\s*\\?i|\\pm\s*i|\\mp\s*i|"
+    r"i\s*\\pi|i\s*\\omega|i\s*\\theta|i\s*\\varphi|\\sqrt\{\s*-\s*1\s*\}"
+)
+
+
+def _complex_context(math: str, line: str) -> bool:
+    """这一行的裸 ``i`` 有没有可能是真的虚数单位。"""
+    if _COMPLEX_WORD_RE.search(line):
+        return True
+    return bool(_COMPLEX_MATH_RE.search(math))
 
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
@@ -239,7 +263,7 @@ def check_markdown(text: str) -> List[Issue]:
                     break
 
             imag_probe = _IMAG_CMD_RE.sub(" ", body_stripped)
-            if _BARE_IMAG_RE.search(imag_probe):
+            if _BARE_IMAG_RE.search(imag_probe) and _complex_context(imag_probe, stripped):
                 issues.append(Issue(
                     line_no, WARN, "bare_imaginary_unit",
                     "虚数单位写成了裸 `i`",

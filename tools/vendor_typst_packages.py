@@ -116,6 +116,24 @@ PATCHES = {
             '#text(font: f.sans, weight: "bold", size: 11.5pt, fill: p.thm)[#it.body]',
             "三级标题字号统一为 11.5pt",
         ),
+        (
+            "src/lib.typ",
+            "block(above: 20pt, below: 8pt, width: 100%)[",
+            "block(above: 20pt, below: 12pt, width: 100%)[",
+            "一级标题后的间距加大到 12pt（2.2.2：小节标题与正文之间留出呼吸）",
+        ),
+        (
+            "src/lib.typ",
+            "show heading.where(level: 2): it => block(above: 11pt, below: 0.5em)[",
+            "show heading.where(level: 2): it => block(above: 12pt, below: 0.85em)[",
+            "二级标题后的间距加大到 0.85em（2.2.2）",
+        ),
+        (
+            "src/lib.typ",
+            "show heading.where(level: 3): it => block(above: 8pt, below: 0.5em)[",
+            "show heading.where(level: 3): it => block(above: 9pt, below: 0.65em)[",
+            "三级标题后的间距加大到 0.65em（2.2.2）",
+        ),
     ],
 }
 

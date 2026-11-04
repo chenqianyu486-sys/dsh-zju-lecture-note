@@ -97,23 +97,37 @@
 // 块级公式的上下间距**显式**给出，不跟随 par.spacing（否则一压段距就重叠）。
 #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
 
-#set list(indent: 1.5em, spacing: 0.3em)
-#set enum(indent: 1.5em, spacing: 0.3em)
+// 行内公式的上下留白。Typst 的行内数学盒子高度是固定值（11pt 下约 0.68em，
+// 与内容无关）：分式的分子/分母、根式、大算子的上下限会溢出盒子、压到邻行
+// （实测带 \frac 的行，墨迹比行盒低约 7pt，与下一行重叠 1–4pt）。这里给每个
+// 行内公式补一点，渲染器再对「结构上会撑高」的公式补下留白（见
+// typography-spec.md §3.2；两处数值由 tests/test_typography_unified.py 绑定）。
+#show math.equation.where(block: false): it => box(
+  inset: (top: 0.12em, bottom: 0.10em),
+  it,
+)
+
+// 列表：序号之间留出呼吸。0.3em 实测太挤（相邻条目几乎粘在一起），
+// 0.7em 介于「紧凑」与段间距 0.95em 之间；`+` 有序列表用同一组参数。
+#set list(indent: 1.5em, spacing: 0.7em)
+#set enum(indent: 1.5em, spacing: 0.7em)
 #set heading(numbering: "1.1")
 
 // ── 4. 标题：编号灰蓝 + 标题蓝，一级标题下一条细横线（参考图的样式）──
+// 标题后的间距比 2.2.1 略大：小节标题与正文之间留出呼吸，
+// 读者一眼能看出「新的一节从这里开始」（规范见 typography-spec.md §2）。
 #show heading: set text(font: fonts.heading)
-#show heading.where(level: 1): it => block(width: 100%, above: 20pt, below: 8pt)[
+#show heading.where(level: 1): it => block(width: 100%, above: 20pt, below: 12pt)[
   #text(size: 15pt, weight: "bold", fill: palette.muted)[#counter(heading).display()]
   #h(0.7em)
   #text(size: 15pt, weight: "bold", fill: palette.thm)[#it.body]
   #v(1pt)
   #line(length: 100%, stroke: 1.1pt + palette.rule)
 ]
-#show heading.where(level: 2): it => block(above: 11pt, below: 0.5em)[
+#show heading.where(level: 2): it => block(above: 12pt, below: 0.85em)[
   #text(size: 12.5pt, weight: "bold", fill: palette.def)[#counter(heading).display() #it.body]
 ]
-#show heading.where(level: 3): it => block(above: 8pt, below: 0.4em)[
+#show heading.where(level: 3): it => block(above: 9pt, below: 0.65em)[
   #text(size: 11.5pt, weight: "bold", fill: palette.thm)[#it.body]
 ]
 

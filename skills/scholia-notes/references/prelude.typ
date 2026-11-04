@@ -73,6 +73,15 @@
   size: 0.9em,
 )[#body]
 
+// ── 4b. 引用 / 来源块：左侧细线 + 灰色小字 ──
+// Markdown 的 `>` 引用在 Typst **没有**对应语法（会原样印出 `>`），
+// 讲义抬头（来源 / 上课时间 / ASR 说明）统一走这个助手。
+#let quoted(body) = context block(
+  width: 100%,
+  inset: (left: 12pt, y: 2pt),
+  stroke: (left: 2pt + active.get().hairline),
+)[#text(size: 0.95em, fill: active.get().muted)[#body]]
+
 // ── 5. 填空线：灰色，不是黑色 ──
 // 上游的 fillin 用 ink（近黑）画底线，读起来像印刷内容。
 // 练习块里那些线是**留给读者写字**的地方 —— 改成灰色，读者一眼就知道该往哪写。

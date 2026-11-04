@@ -42,6 +42,8 @@ from .study_notes import (
     _run_typst,
     find_typst,
     latex_to_typst,
+    pad_inline_math,
+    split_quote_items,
     strip_heading_number,
 )
 
@@ -366,14 +368,15 @@ def _render_inline(
     while index < length:
         char = text[index]
 
-        # 行内公式：$...$（不跨 $$，块级公式在外面处理）
+        # 行内公式：$...$（不跨 $$，块级公式在外面处理）。
+        # inline=True：`1/r` 这类斜杠在句子里保持平排，不排成顶高行距的分式。
         if char == "$":
             close = text.find("$", index + 1)
             if close != -1 and not text.startswith("$$", index):
-                converted, issues = latex_to_typst(text[index + 1:close])
+                converted, issues = latex_to_typst(text[index + 1:close], inline=True)
                 warnings.extend(issues)
                 flush()
-                out.append("$" + converted + "$")
+                out.append(pad_inline_math("$" + converted + "$"))
                 index = close + 1
                 continue
 
@@ -613,15 +616,29 @@ def _quote_block(
 
     parts: List[str] = []
     buffer: List[str] = []
+
+    def flush_buffer() -> None:
+        """把攒下的引用行接成若干「条目」，条目之间硬换行。
+
+        抬头里的 ``> **来源**：…`` / ``> **上课时间**：…`` 是多行字段；
+        逐行接成一段会粘成「时长：约 01:40:16 上课时间：未提供…」，读不出
+        哪句是哪句（实地会话里 Agent 只好把抬头改成普通段落）。
+        """
+        if not buffer:
+            return
+        items = split_quote_items(buffer)
+        buffer.clear()
+        rendered = [
+            _render_rich_text(_join_paragraph(item), warnings, image_resolver, refs)
+            for item in items
+        ]
+        parts.append("#linebreak()".join(part for part in rendered if part.strip()))
+
     index = 0
     while index < len(cleaned):
         text = cleaned[index]
         if _LIST_RE.match(text):
-            if buffer:
-                parts.append(
-                    _render_rich_text(_join_paragraph(buffer), warnings, image_resolver, refs)
-                )
-                buffer = []
+            flush_buffer()
             list_lines: List[str] = []
             while index < len(cleaned) and _LIST_RE.match(cleaned[index]):
                 list_lines.append(cleaned[index])
@@ -630,8 +647,7 @@ def _quote_block(
             continue
         buffer.append(text)
         index += 1
-    if buffer:
-        parts.append(_render_rich_text(_join_paragraph(buffer), warnings, image_resolver, refs))
+    flush_buffer()
     body = "\n\n".join(part for part in parts if part.strip())
 
     label, tone = {
@@ -864,6 +880,11 @@ def _render_body(
             if level <= 2:
                 section += 1
                 counts.clear()
+                section_name = title
+                boxes_by_section.setdefault(section_name, 0)
+            elif level == 3:
+                # 「每节」按最小小节算：`## 二、分章详解` 下面挂 7 个
+                # `### 2.1 …`，按 h2 统计会把 7 小节的框算成同一节。
                 section_name = title
                 boxes_by_section.setdefault(section_name, 0)
             typst_level = max(1, level - 1)
