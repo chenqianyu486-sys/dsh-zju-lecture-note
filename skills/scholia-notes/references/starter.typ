@@ -21,6 +21,9 @@
   spacing: 0.95em,
 )
 #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
+// 行内公式的上下留白：Typst 的行内数学盒子高度固定（≈0.68em），分式的分子/分母、
+// 根式、大算子的上下限会溢出盒子压到邻行。数值见 typography-spec.md §3.2。
+#show math.equation.where(block: false): it => box(inset: (top: 0.12em, bottom: 0.10em), it)
 
 #cover(
   "章节总标题",

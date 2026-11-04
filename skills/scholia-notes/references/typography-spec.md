@@ -36,6 +36,11 @@ body.leading = 0.72em
 body.spacing = 0.95em
 body.indent = 2em
 body.formula = 1.6em
+body.inline-math.top = 0.12em
+body.inline-math.bottom = 0.10em
+body.inline-math.tall = 0.30em
+list.spacing = 0.7em
+list.indent = 1.5em
 cover.kicker = 10pt
 cover.title = 30pt
 cover.subtitle = 13pt
@@ -44,6 +49,12 @@ cover.date = 9pt
 heading.h1 = 15pt
 heading.h2 = 12.5pt
 heading.h3 = 11.5pt
+heading.h1.above = 20pt
+heading.h1.below = 12pt
+heading.h2.above = 12pt
+heading.h2.below = 0.85em
+heading.h3.above = 9pt
+heading.h3.below = 0.65em
 note.size = 0.92em
 note.inset = 11pt,9pt,6pt,6pt
 note.line = 1.6pt
@@ -111,9 +122,9 @@ divider.stroke = 0.4pt
 | 装置 | 字号 | 其它 | 实现位置 |
 | :--- | :--- | :--- | :--- |
 | 正文 | 11pt | `ink` 色 | 两条链路的 `set text` |
-| 一级标题（章） | 15pt | 粗体；编号 `muted`、标题 `thm`；下方 1.1pt `rule` | 阅读版 `handout_prelude.typ`；填空版 vendored `lib.typ` |
-| 二级标题（节） | 12.5pt | 粗体，`def` 色 | 同上 |
-| 三级标题 | 11.5pt | 粗体，`thm` 色 | 同上 |
+| 一级标题（章） | 15pt | 粗体；编号 `muted`、标题 `thm`；下方 1.1pt `rule`；上 20pt / 下 12pt | 阅读版 `handout_prelude.typ`；填空版 vendored `lib.typ` |
+| 二级标题（节） | 12.5pt | 粗体，`def` 色；上 12pt / 下 0.85em | 同上 |
+| 三级标题 | 11.5pt | 粗体，`thm` 色；上 9pt / 下 0.65em | 同上 |
 | 封面 kicker | 10pt | 全大写，字距 3pt，`muted` | 同上 |
 | 封面标题 | 30pt | 粗体，字距 1.5pt，`thm` | 同上 |
 | 封面副标题 | 13pt | `muted` | 同上 |
@@ -132,9 +143,13 @@ divider.stroke = 0.4pt
 | :--- | :--- | :--- |
 | 行距 `leading` | **0.72em** | 行与行之间 |
 | 段距 `spacing` | **0.95em** | 段与段之间，比行距略大 |
+| 列表序号间距 `list.spacing` | **0.7em** | `-` 与 `1.` 的相邻条目之间；默认值/0.3em 实测太挤 |
+| 列表缩进 `list.indent` | **1.5em** | 两条链路一致 |
 | 正文段首缩进 | **2em**（两格） | 只用于正文段落；用 `#h(2em)` 顶首行 |
 | 直觉块首行 | **不缩进** | 块自身的左内边距已经与正文分开（参考图口径） |
 | 块级公式上下 | **1.6em** | 显式给出，不跟随 `par.spacing` |
+| 行内公式上下（基础） | 上 **0.12em** / 下 **0.10em** | 每个行内公式都补；见 §3.2 |
+| 行内公式下留白（高公式） | **0.30em** | 只给分式/根式/矩阵/大算子的上下限；见 §3.2 |
 | `justify` | **false** | 两端对齐会把中文字距拉松 |
 | `first-line-indent` | **0pt** | 配合 `#h(2em)`，避免双重缩进 |
 
@@ -147,6 +162,33 @@ divider.stroke = 0.4pt
   Typst 只有在 `$` 之后有空白时才把它当**块级公式**（居中 + 独立上下间距）；
   写成 `$x$` 只是行内公式，靠左排，还会吃掉那一行的首行缩进。
 
+### 3.2 行内公式的上下留白（`body.inline-math.*`）
+
+**现象**：纯文字行的行距正常，但**含行内公式的行明显拥挤**——分式的分子/分母、
+根式、积分/求和的上下限压到邻行上，甚至与下一行重叠 1–4pt。
+
+**原因**（实测，Typst 0.15.1）：行内数学盒子的高度是**固定值**（11pt 下约
+`0.68em`，与内容无关）。`measure($frac(1,2)$)` 与 `measure($x$)` 都返回
+`7.51pt`，而 `\frac` 的墨迹实际高约 21pt。溢出部分不会撑开行盒，`par.leading`
+照常只按固定高度加，于是墨迹撞进邻行。这是排版引擎的行为，**不是**行距参数写错了。
+
+**做法**（两处，都是显式留白）：
+
+1. **基础留白**：`#show math.equation.where(block: false): it => box(inset: (top: 0.12em, bottom: 0.10em), it)`
+   ——每个行内公式都补一点，上下标也受益。放在阅读版模板里（`handout_prelude.typ` 内联生效），
+   填空笔记链路由 `render_typst` 写进 `main.typ` 的固定头部（`prelude.typ` 是 `#import`，
+   里面的 `#show` 不会带到文档里）。
+2. **高公式补下留白**：渲染器 `pad_inline_math()` 识别「结构上必然溢出」的公式
+   （`frac` / `sqrt` / `root` / `binom` / `mat` / `cases` / `integral` / `sum` /
+   `prod` / `lim` 等，按**转换后的 Typst 形态**判断），再包一层
+   `#box(inset: (bottom: 0.30em), $…$)`。
+
+为什么不全用固定留白：按最大高度（约 0.45em）给，会把只有 `$x$` 的行也撑松，
+整页节奏就散了。按结构分级后，实测同一份讲义：行间距 < 2pt 的行对从 37 降到 15，
+最差的一处从 −3.74pt（重叠）升到 +1.19pt；纯文字行的行距一点没动。
+
+块级公式（`$ … $`）**不加**这层：它的上下间距由 §3 的 `body.formula` 负责。
+
 固定头部（工具自动写，手工排版照抄）：
 
 ```typst
@@ -157,7 +199,10 @@ divider.stroke = 0.4pt
   first-line-indent: 0pt,
   spacing: 0.95em,
 )
+#set list(indent: 1.5em, spacing: 0.7em)
+#set enum(indent: 1.5em, spacing: 0.7em)
 #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
+#show math.equation.where(block: false): it => box(inset: (top: 0.12em, bottom: 0.10em), it)
 ```
 
 ## 4. 版心与边注

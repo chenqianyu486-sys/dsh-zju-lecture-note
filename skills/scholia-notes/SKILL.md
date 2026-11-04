@@ -77,15 +77,29 @@ prelude 已内置四色体系，**照着用，不要另挑颜色**：
 
 | 步骤 | 工具 | 做什么 |
 |---|---|---|
-| 1 | `zju_build_study_notes(mode="draft", note_path=…)` | 讲义 → 填空底稿 `*-填空底稿.md`（标题层级映射、标记位插入；**公式保持 LaTeX、表格保持 Markdown**，不写任何 Typst 语法） |
-| 2 | 人工/Agent 填底稿 | 只补 `[直觉]`/`[练习]`/`[边注]` 占位符、该挖空的地方写 `____`；**不要重写全文**，也别把公式改成 Typst |
-| 3 | `zju_build_study_notes(mode="compile", draft_path=…)` | 底稿 → `main.typ` + `prelude.typ` → `out.pdf` + 逐页 `page-N.png`（PDF 同时落在底稿同目录，无需再拷） |
+| 1 | `zju_build_study_notes(mode="draft", note_path=…)` | 讲义 → 填空底稿 `*-填空底稿.md`（标题层级映射、正文原样搬运；**公式保持 LaTeX、表格保持 Markdown**，不写任何 Typst 语法，也**不逐节塞空占位**） |
+| 2 | 人工/Agent 填底稿 | 按内容补 `[直觉]`/`[练习]`/`[边注]`（可选，不需要就别加）、该挖空的地方写 `____`；**不要重写全文**，也别把公式改成 Typst |
+| 3 | `zju_build_study_notes(mode="patch", draft_path=…, edits=[{old,new}, …])` | 把第 2 步的全部改动**一次**写回底稿（每处 `old` 必须唯一命中；命中结果逐条报出来）。**不要一处一处调用编辑工具**——一次课的挖空有十几处 |
+| 4 | `zju_build_study_notes(mode="compile", draft_path=…)` | 底稿 → `main.typ` + `prelude.typ` → `out.pdf` + 逐页 `page-N.png`（PDF 同时落在底稿同目录，无需再拷） |
 
 工具只做**搬运与排版**：哪些是定理、哪里该挖空，是内容判断，仍由你（Agent）完成。
 LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里保持 LaTeX，
 工具会统一改写，转不动的会点名。反过来（把底稿改写成 Typst）会被二次转换拆坏。
 工具会把「无法机械转换的数学」「超出视觉预算的方框」「方框 : 正文段落比值」
 「编译错误」原样报出来，别自行吞掉。
+
+**`mode=patch` 的用法**：第 2 步读完底稿后，把十几处 `{old, new}` 攒成一个数组一次提交：
+
+```json
+{"mode": "patch", "draft_path": "…-填空底稿.md",
+ "edits": [
+   {"old": "**总电流连续**", "new": "**总电流____**"},
+   {"old": "这就是电磁波的直接来源。", "new": "…。\n\n[边注] …"}
+ ]}
+```
+
+`old` 在底稿里必须**恰好出现一次**（重复时加长上下文，或加 `"all": true`）。
+没命中的几条会逐条点名，已命中的照常写回，不必重发。
 
 **格式规范（规范性文件）在 [`references/format-spec.md`](references/format-spec.md)** ——
 语义对应关系、预算、禁止事项、校验清单都在那里。
@@ -246,6 +260,15 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
   **退出码是 0，grep `error:` 抓不到**，只能靠看 PNG 发现。
 - 公式报 `unknown variable` 或渲染出字面量：`$a_(ij)$`、`$rank(A)$`、`$\prod_…$`、`$\overline{A}$`
   在 Typst 里全是错的；正确写法见 `references/troubleshooting.md`。这类错应在 Markdown 阶段就改掉。
+- **几条公式并排写成 `a \qquad b`**：工具会把 `\qquad` 映射成 2em 的 `wide`、`\quad` 映射成
+  1em 的 `quad`，直接排就对了。**不要**再写脚本把它们拆成多个公式块（实测那会多跑两轮排版）。
+  一行真的放不下时，再拆成独立 `$$` 块。
+- **行内 `$1/r$`**：工具在行内把 `/` 排成平排的斜杠（`1 slash r`），只有独占一行的 `$$` 才排
+  上下分式。看到 `1/r` 不必手改成 `r^{-1}`。
+- **讲义抬头的多行引用块**（`> **来源**：…`）在两条 PDF 链路里都会排成左侧细线的灰色小字块，
+  字段之间自动换行。不要为了「排版」把它改成普通段落。
+- 方框预算按**最小**小节统计：`## 二、分章详解` 下面挂 7 个 `### 2.x` 时，每个 `2.x` 各自
+  ≤2 就行，不会因为整章合计超 2 就报警。
 - `sidenote` 的 `symbol` 必须圆括号：`#sidenote([正文], symbol: [!])`，方括号写法直接报 `unexpected argument`。
 - 首次编译卡住无输出（包注册表不通）：重试一次，仍不行就把依赖名报给用户，别空等。
 - 用户要的是中文论文/长文排版而非填空笔记：这个 skill 不适用，转 `typst-author-chinese`。
