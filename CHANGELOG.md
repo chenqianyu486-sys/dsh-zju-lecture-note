@@ -3,6 +3,16 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
+## 未发布
+
+- **市场条目描述收成一行的三句**（`market-submission/*.yml`）：按市场实际分布
+  （en 中位数 212 / p90 445，zh 中位数 84 / p90 178）从 1226 / 561 字符压到
+  326 / 165，只留「做什么 / 权限边界 / 来源」。`8eoyw` 参考实现、scholia 的作者
+  与 Typst Universe 链接仍由 `ATTRIBUTION.md` / `README.md` 常设致谢承担；
+  同时删掉会被站点当字面量印出的 `**`，以及「离线也能出 PDF」这类经不起对照
+  `zju_lecture/deps.py` 的夸大（Typst 二进制是缺失时联网下载的）。
+  `tests/test_docs_split.py` 增加长度与「纯文本」闸门，挡住再长回去。
+
 ## 2.2.3 — 2026-11-04
 
 按又一次真实上课（`session-5415d8a5`，sub_id 1990907）里「工具没错、但 Agent 得替它
