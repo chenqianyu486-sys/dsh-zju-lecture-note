@@ -243,7 +243,9 @@ class TestNoteLint(unittest.TestCase):
         self.assertEqual([i for i in issues if i.level == "error"], [])
 
     def test_bare_imaginary_unit_is_a_warning(self):
-        issues = check_markdown("写成 $i\\mapsto\\frac{1}{2}$ 不统一。\n")
+        # 只有出现复数语境（`i^2`、`e^{iθ}`、复数用语…）时才报；
+        # 物理/电路课里裸 `i` 多半是电流，见 note_lint 的 `_complex_context`。
+        issues = check_markdown("写成 $i^2 = -1$ 不统一。\n")
         self.assertIn("bare_imaginary_unit", {i.code for i in issues})
 
     def test_code_fence_contents_are_not_linted(self):

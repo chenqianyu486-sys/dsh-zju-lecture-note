@@ -169,6 +169,14 @@ def handout_params():
         "page.note.width": width + "cm",
         "page.note.gap": gap,
         "body.size": one(r"#set text\(font: fonts\.body, size: ([\d.]+pt)", text),
+        "body.inline-math.top": one(
+            r"where\(block: false\): it => box\(\s*inset: \(top: ([\d.]+em), bottom: [\d.]+em\)",
+            text,
+        ),
+        "body.inline-math.bottom": one(
+            r"where\(block: false\): it => box\(\s*inset: \(top: [\d.]+em, bottom: ([\d.]+em)\)",
+            text,
+        ),
         "cover.kicker": one(r"size: ([\d.]+pt), tracking: 3pt", cover),
         "cover.title": one(r"size: ([\d.]+pt), tracking: 1.5pt", cover),
         "cover.subtitle": one(r"size: ([\d.]+pt), fill: palette.muted\)\[#subtitle\]", cover),
@@ -177,6 +185,12 @@ def handout_params():
         "heading.h1": one(r"size: ([\d.]+pt), weight: \"bold\", fill: palette.muted", h1),
         "heading.h2": one(r"size: ([\d.]+pt), weight: \"bold\", fill: palette.def", h2),
         "heading.h3": one(r"size: ([\d.]+pt), weight: \"bold\", fill: palette.thm", h3),
+        "heading.h1.above": one(r"above: ([\d.]+pt), below: [\d.]+pt", h1),
+        "heading.h1.below": one(r"above: [\d.]+pt, below: ([\d.]+pt)", h1),
+        "heading.h2.above": one(r"above: ([\d.]+pt), below: [\d.]+em", h2),
+        "heading.h2.below": one(r"above: [\d.]+pt, below: ([\d.]+em)", h2),
+        "heading.h3.above": one(r"above: ([\d.]+pt), below: [\d.]+em", h3),
+        "heading.h3.below": one(r"above: [\d.]+pt, below: ([\d.]+em)", h3),
         "note.size": one(r"size: ([\d.]+em), fill: palette.ink", note),
         "note.inset": _inset(note),
         "note.line": one(r"stroke: \(left: ([\d.]+pt)", note),
@@ -190,6 +204,8 @@ def handout_params():
         "sidenote.size": one(r"size: ([\d.]+em)", sidenote),
         "sidenote.leading": one(r"leading: ([\d.]+em)", sidenote),
         "sidenote.spacing": one(r"spacing: ([\d.]+em)", sidenote),
+        "list.spacing": one(r"#set list\(indent: [\d.]+em, spacing: ([\d.]+em)", text),
+        "list.indent": one(r"#set list\(indent: ([\d.]+em), spacing", text),
         "footer.size": one(r"footer: context align\(right, text\(font: fonts.sans, size: ([\d.]+em)", text),
         "fillin.width": one(r"#let fillin\(width: ([\d.]+cm)\)", fillin),
         "fillin.height": one(r"height: ([\d.]+em)", fillin),
@@ -203,6 +219,7 @@ def vendored_params():
     text = read(VENDORED_LIB)
     cover = slice_between(text, "#let cover(", "counter(page).update(1)")
     sidenote = slice_between(text, "#let sidenote(", "#let recall(")
+    h1 = slice_between(text, "heading.where(level: 1)", "heading.where(level: 2)")
     h2 = slice_between(text, "heading.where(level: 2)", "heading.where(level: 3)")
     h3 = slice_between(text, "heading.where(level: 3)", "show: theorem-rules")
     return {
@@ -215,6 +232,12 @@ def vendored_params():
         "cover.date": one(r"size: ([\d.]+pt), fill: p.muted, tracking: 0.5pt", cover),
         "heading.h2": one(r"size: ([\d.]+pt), fill: p.def", h2),
         "heading.h3": one(r"size: ([\d.]+pt), fill: p.thm", h3),
+        "heading.h1.above": one(r"above: ([\d.]+pt), below: [\d.]+pt", h1),
+        "heading.h1.below": one(r"above: [\d.]+pt, below: ([\d.]+pt)", h1),
+        "heading.h2.above": one(r"above: ([\d.]+pt), below: [\d.]+em", h2),
+        "heading.h2.below": one(r"above: [\d.]+pt, below: ([\d.]+em)", h2),
+        "heading.h3.above": one(r"above: ([\d.]+pt), below: [\d.]+em", h3),
+        "heading.h3.below": one(r"above: [\d.]+pt, below: ([\d.]+em)", h3),
         "sidenote.leading": one(r"leading: ([\d.]+em)", sidenote),
         "sidenote.spacing": one(r"spacing: ([\d.]+em)", sidenote),
     }
@@ -226,6 +249,11 @@ def python_params():
         "body.spacing": study_notes.BODY_SPACING,
         "body.formula": study_notes.EQUATION_BLOCK_SPACING,
         "body.indent": study_notes.BODY_INDENT.replace("#h(", "").replace(")", ""),
+        "body.inline-math.top": study_notes.INLINE_MATH_INSET_TOP,
+        "body.inline-math.bottom": study_notes.INLINE_MATH_INSET_BOTTOM,
+        "body.inline-math.tall": study_notes.INLINE_MATH_TALL_INSET,
+        "list.spacing": study_notes.LIST_SPACING,
+        "list.indent": study_notes.LIST_INDENT,
     }
 
 
@@ -256,6 +284,23 @@ class TestSpecMatchesImplementation(unittest.TestCase):
         for key, value in python_params().items():
             self.assert_matches(key, value)
 
+    def test_list_and_enum_share_the_same_metrics(self):
+        text = read(HANDOUT_TYP)
+        pairs = re.findall(
+            r"#set (list|enum)\(indent: ([\d.]+em), spacing: ([\d.]+em)\)", text
+        )
+        self.assertEqual([item[0] for item in pairs], ["list", "enum"], pairs)
+        self.assertEqual(pairs[0][1:], pairs[1][1:], "list 与 enum 必须用同一组参数")
+
+    def test_fill_in_renderer_emits_the_same_list_metrics(self):
+        typst = study_notes.render_typst("正文。").typst
+        params = self.spec
+        expected = "#set list(indent: {i}, spacing: {s})".format(
+            i=params["list.indent"], s=params["list.spacing"]
+        )
+        self.assertIn(expected, typst)
+        self.assertIn(expected.replace("#set list(", "#set enum("), typst)
+
     def test_both_cover_size_sets_are_identical(self):
         a = handout_params()
         b = vendored_params()
@@ -271,6 +316,75 @@ class TestSpecMatchesImplementation(unittest.TestCase):
         text = read(SPEC)
         self.assertIn("唯一真相源", text)
         self.assertIn("typography-params", text)
+
+
+class TestInlineMathPadding(unittest.TestCase):
+    """行内公式的上下留白：两条链路同一套数值，且只给「会撑高」的公式补。
+
+    背景见 typography-spec.md §3.2：Typst 的行内数学盒子高度固定（≈0.68em），
+    分式/根式/大算子的墨迹会溢出、压到邻行。
+    """
+
+    def setUp(self):
+        self.spec = spec_params()
+
+    def _rule_re(self):
+        top = self.spec["body.inline-math.top"]
+        bottom = self.spec["body.inline-math.bottom"]
+        return (
+            r"#show math\.equation\.where\(block: false\): it => box\(\s*"
+            r"inset: \(top: {t}, bottom: {b}\),\s*it,?\s*\)".format(t=re.escape(top), b=re.escape(bottom))
+        )
+
+    def test_reading_template_has_the_rule(self):
+        # 阅读版模板是内联进 main.typ 的，`#show` 直接生效。
+        self.assertRegex(read(HANDOUT_TYP), self._rule_re())
+
+    def test_note_renderer_emits_the_same_rule(self):
+        # 填空笔记走 `#import "prelude.typ": *`，模板里的 `#show` 不会带进文档，
+        # 所以必须由 render_typst 写进 main.typ 的固定头部。
+        self.assertRegex(study_notes.render_typst("正文。").typst, self._rule_re())
+
+    def test_starter_template_has_the_rule(self):
+        # 手工排版（不走工具）时照抄的起步模板也要带上，否则手写文档照样拥挤。
+        starter = os.path.join(os.path.dirname(SPEC), "starter.typ")
+        self.assertRegex(read(starter), self._rule_re())
+
+    def test_tall_formulas_get_extra_room(self):
+        pad = study_notes.INLINE_MATH_TALL_INSET
+        self.assertEqual(self.spec["body.inline-math.tall"], pad)
+        for tall in (
+            "$frac(h, 2)$",
+            "$sqrt(mu_0 epsilon_0)$",
+            "$integral_Omega f$",   # 大算子几乎总带下标，别用 \b 断词
+            "$sum_(k = 1)^n k$",
+            "$mat(1, 2; 3, 4)$",
+        ):
+            self.assertEqual(
+                study_notes.pad_inline_math(tall),
+                "#box(inset: (bottom: " + pad + "), " + tall + ")",
+                tall,
+            )
+
+    def test_flat_formulas_are_left_alone(self):
+        for flat in ("$x$", "$O(h^2)$", "$a^2+b^2=c^2$", "$x_j = a + j h$"):
+            self.assertEqual(study_notes.pad_inline_math(flat), flat)
+
+    def test_block_math_is_not_padded(self):
+        # 块级公式写成 `$ … $`（两侧留空格），上下间距另有 show 规则。
+        for block in ("$ frac(a, b) $", "$$x$$"):
+            self.assertEqual(study_notes.pad_inline_math(block), block)
+
+    def test_both_pipelines_wrap_the_same_formula(self):
+        note = "步长 $h = \\frac{b-a}{N}$，误差 $O(h^2)$。"
+        wrapped = "#box(inset: (bottom: " + study_notes.INLINE_MATH_TALL_INSET + "), $h = frac(b-a, N)$)"
+        for typst in (
+            handout.render_handout(note, workspace_root=ROOT, note_path="").typst,
+            study_notes.render_typst(note).typst,
+        ):
+            self.assertIn(wrapped, typst)
+            # 只有 `O(h^2)` 的那一段不该被包：普通公式不动行距。
+            self.assertIn("误差 $O(h^2)$", typst)
 
 
 def _poppler(name):

@@ -147,10 +147,14 @@ class TestBuildDraft(unittest.TestCase):
         self.assertNotIn("- title:", body)
         self.assertNotIn("- author:", body)
 
-    def test_markers_are_inserted(self):
+    def test_scaffold_leaves_optional_devices_to_the_writer(self):
+        # 2.2.2 起骨架不再逐节塞 `[直觉]（用一句人话解释…）` 之类的空占位：
+        # 它们是内容判断，且实地会话里 Agent 为此删改了近 20 次。
+        self.assertNotIn("（用一句人话解释", self.draft.text)
+        self.assertNotIn("留给读者自己重做", self.draft.text)
+        self.assertNotIn("一个主动回忆问题", self.draft.text)
+        self.assertIn("可选装置", self.draft.text)
         self.assertIn("[直觉]", self.draft.text)
-        self.assertIn("[练习]", self.draft.text)
-        self.assertIn("[边注]", self.draft.text)
 
     def test_math_is_kept_as_latex(self):
         # 底稿的契约是「纯 Markdown + LaTeX 数学」（format-spec.md §1）。
@@ -303,7 +307,7 @@ class TestMcpTool(unittest.TestCase):
         self.assertTrue(os.path.exists(draft))
         with open(draft, encoding="utf-8") as handle:
             content = handle.read()
-        self.assertIn("[直觉]", content)
+        self.assertIn("可选装置", content)
 
     def test_draft_mode_requires_the_note_path(self):
         report = mcp_server._dispatch_tool("zju_build_study_notes", {"mode": "draft"})
@@ -420,23 +424,19 @@ class TestFormatSpec(unittest.TestCase):
         for token in ("普通段落", "[直觉]", "[定义]", "[定理]", "[练习]", "[边注]", "____"):
             self.assertIn(token, spec)
 
-    def test_scaffold_does_not_insert_boxes(self):
-        # 骨架只该插「直觉/练习/边注」。定义、定理、证明是内容判断 ——
-        # 自动插框等于替使用者决定「什么该被回指」。
+    def test_scaffold_does_not_insert_any_active_marker(self):
+        # 骨架只搬运原文；定义/定理/证明/直觉/练习/边注都是内容判断。
+        # 文件头允许一条 HTML 注释说明「可选装置」，但它不是行首标记。
         draft = build_draft(NOTE, author="测试")
         marker_lines = [
             line.strip()
             for line in draft.text.splitlines()
             if line.strip().startswith("[")
         ]
-        for marker in ("[定义]", "[定理]", "[证明]", "[例]", "[引理]"):
-            self.assertFalse(
-                any(line.startswith(marker) for line in marker_lines),
-                f"骨架不该插入 {marker}",
-            )
-        self.assertTrue(any(line.startswith("[直觉]") for line in marker_lines))
-        self.assertTrue(any(line.startswith("[练习]") for line in marker_lines))
-        self.assertTrue(any(line.startswith("[边注]") for line in marker_lines))
+        self.assertEqual(marker_lines, [])
+        for marker in ("[定义]", "[定理]", "[证明]", "[例]", "[引理]", "[直觉]", "[练习]", "[边注]"):
+            self.assertNotIn(marker, marker_lines)
+        self.assertIn("可选装置", draft.text)
 
     def test_paragraphs_are_counted(self):
         rendered = render_typst("第一段。\n\n第二段。\n\n## 标题\n\n第三段。")
@@ -554,9 +554,14 @@ class TestFormatSpec(unittest.TestCase):
         typst = render_typst("[定义] 术语 —— 关键处留空：____").typst
         self.assertIn("#fillin(width: 2.2cm)", typst)
 
-    def test_scaffold_exercise_has_no_blanks(self):
+    def test_scaffold_has_no_empty_exercise_placeholder(self):
         draft = build_draft(NOTE, author="测试")
-        self.assertIn("[练习] （留给读者自己重做的一题）", draft.text)
+        marker_lines = [
+            line.strip()
+            for line in draft.text.splitlines()
+            if line.strip().startswith("[")
+        ]
+        self.assertFalse(any(line.startswith("[练习]") for line in marker_lines))
         self.assertNotIn("____ ____ ____", draft.text)
 
 
