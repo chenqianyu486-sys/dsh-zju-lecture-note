@@ -12,7 +12,7 @@
 ## 开始使用
 
 - 安装 DeepSeek Harness
-- 进入插件→添加插件，复制仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
+- 进入插件→添加插件，复制 npm 包名 dsh-zju-lecture-note 或仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
 - 安装并启用插件
 - 在新会话中键入 /zju-lecture-summarizer 即可使用插件总结课堂内容，例：  
 ```text
