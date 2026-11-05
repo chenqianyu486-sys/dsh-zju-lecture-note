@@ -161,7 +161,7 @@
   // section: number + title over a rule; reset the per-section knot counter
   show heading.where(level: 1): it => {
     counter(figure.where(kind: "frame")).update(0)
-    block(above: 20pt, below: 12pt, width: 100%)[
+    block(above: 24pt, below: 12pt, width: 100%)[
       #text(font: hfont, weight: "bold", size: 15pt, fill: p.muted)[#counter(heading).display()]
       #h(0.7em)
       #text(font: hfont, weight: "bold", size: 15pt, fill: p.thm)[#it.body]
@@ -169,7 +169,7 @@
       #line(length: 100%, stroke: 1.1pt + p.rule)
     ]
   }
-  show heading.where(level: 2): it => block(above: 12pt, below: 0.85em)[
+  show heading.where(level: 2): it => block(above: 22pt, below: 0.85em)[
     #text(font: hfont, weight: "bold", size: 12.5pt, fill: p.def)[#counter(heading).display() #it.body]
   ]
   show heading.where(level: 3): it => block(above: 9pt, below: 0.65em)[

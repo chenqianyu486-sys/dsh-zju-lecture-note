@@ -119,14 +119,14 @@ PATCHES = {
         (
             "src/lib.typ",
             "block(above: 20pt, below: 8pt, width: 100%)[",
-            "block(above: 20pt, below: 12pt, width: 100%)[",
-            "一级标题后的间距加大到 12pt（2.2.2：小节标题与正文之间留出呼吸）",
+            "block(above: 24pt, below: 12pt, width: 100%)[",
+            "一级标题上 24pt / 下 12pt（2.2.4：章与节都多留一点空）",
         ),
         (
             "src/lib.typ",
             "show heading.where(level: 2): it => block(above: 11pt, below: 0.5em)[",
-            "show heading.where(level: 2): it => block(above: 12pt, below: 0.85em)[",
-            "二级标题后的间距加大到 0.85em（2.2.2）",
+            "show heading.where(level: 2): it => block(above: 22pt, below: 0.85em)[",
+            "二级标题上 22pt、下 0.85em（上边距 2.2.4 由 12pt 加大，节与正文分得开）",
         ),
         (
             "src/lib.typ",
@@ -307,7 +307,7 @@ def write_index(entries: list) -> None:
         "| :--- | :--- |",
         "| `src/fonts.typ` | 字体表改为可再分发栈：`body`/`heading` 用 STIX Two + 随包 Notes Kai SC、Notes Serif SC；`sans` 用 Noto Sans / Liberation Sans / DejaVu Sans（中文回 Notes Kai SC）；移除 Optima / Avenir Next / Menlo / Songti SC |",
         "| `src/theorems.typ` | 方框标签（`Theorem` / `Definition` / `Example`）改用 `default-fonts.sans`，标签末尾句点同步 |",
-        "| `src/lib.typ` | `Your turn.` 标签改用 `sans`；二级/三级标题字号统一为 12.5pt / 11.5pt；边注段距补 0.4em |",
+        "| `src/lib.typ` | `Your turn.` 标签改用 `sans`；二级/三级标题字号统一为 12.5pt / 11.5pt；一/二级标题上方留白 24pt / 22pt；边注段距补 0.4em |",
         "",
         "  除上述补丁外，其余代码、`typst.toml` 与许可文件保持上游原样。",
         "",
