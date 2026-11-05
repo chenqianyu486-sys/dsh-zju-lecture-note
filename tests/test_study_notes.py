@@ -519,8 +519,10 @@ class TestFormatSpec(unittest.TestCase):
             "块后的第一段。",
             "$x^2$",
             "公式后的第一段。",
-            "[定理] 结论 —— 正文",
-            "框后的第一段。",
+            # 框与证明会跨段吸收后面的正文（见 test_marker_span_*），
+            # 所以这里用单段装置验证「块后段落仍然缩进」。
+            "[练习] 练习块",
+            "练习块后的第一段。",
         ])
         typst = render_typst(draft).typst
         body = re.sub(

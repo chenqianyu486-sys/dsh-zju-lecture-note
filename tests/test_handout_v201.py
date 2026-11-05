@@ -113,8 +113,9 @@ class TestRenderHandout(unittest.TestCase):
         )
         rendered = render_handout(text)
         self.assertNotIn("不渲染的备注", rendered.typst)
-        self.assertNotIn("<details>", rendered.typst)
-        self.assertIn("*补充*", rendered.typst)
+        self.assertNotIn("\\<details\\>", rendered.typst)
+        # `<details>` 排成「答案」块：标签来自 <summary>，内容留在块里。
+        self.assertIn('#answer("补充")[正文。]', rendered.typst)
         self.assertTrue(any("找不到图片" in item for item in rendered.warnings))
 
     def test_hard_break_is_a_typst_break_not_literal_text(self):

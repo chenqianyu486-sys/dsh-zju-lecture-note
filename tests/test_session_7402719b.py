@@ -192,12 +192,12 @@ class TestHorizontalRule(unittest.TestCase):
 
 
 class TestHeadingSpacing(unittest.TestCase):
-    """小节标题后的间距加大，两条链路一致（规范见 typography-spec.md）。"""
+    """标题上下间距，两条链路一致（规范见 typography-spec.md）。"""
 
     def test_reading_template(self):
         text = read(os.path.join(ROOT, "zju_lecture", "handout_prelude.typ"))
-        self.assertIn("above: 20pt, below: 12pt", text)
-        self.assertIn("block(above: 12pt, below: 0.85em)", text)
+        self.assertIn("above: 24pt, below: 12pt", text)
+        self.assertIn("block(above: 22pt, below: 0.85em)", text)
         self.assertIn("block(above: 9pt, below: 0.65em)", text)
 
     def test_vendored_template_and_patch(self):
@@ -207,13 +207,13 @@ class TestHeadingSpacing(unittest.TestCase):
                 "src", "lib.typ",
             )
         )
-        self.assertIn("block(above: 20pt, below: 12pt, width: 100%)", lib)
-        self.assertIn("block(above: 12pt, below: 0.85em)", lib)
+        self.assertIn("block(above: 24pt, below: 12pt, width: 100%)", lib)
+        self.assertIn("block(above: 22pt, below: 0.85em)", lib)
         self.assertIn("block(above: 9pt, below: 0.65em)", lib)
 
         patch_tool = read(os.path.join(ROOT, "tools", "vendor_typst_packages.py"))
         self.assertIn("below: 12pt, width: 100%", patch_tool)
-        self.assertIn("below: 0.85em", patch_tool)
+        self.assertIn("above: 22pt, below: 0.85em", patch_tool)
         self.assertIn("below: 0.65em", patch_tool)
 
 
