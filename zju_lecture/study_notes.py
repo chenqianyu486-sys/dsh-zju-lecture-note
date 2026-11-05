@@ -216,6 +216,45 @@ _HELPER_RE = re.compile(
 #: 证明骨架里的缺口标记：`[缺口: 关键那一步]`
 _GAP_RE = re.compile(r"\[缺口\s*[:：]\s*([^\]]*)\]")
 
+#: 自测题块：`<details><summary>答案</summary>…</details>`。
+#: 阅读版与填空版都把它排成「题干琥珀框 + 框外答案」，题目与答案不再糊成一片。
+_DETAILS_START_RE = re.compile(r"^<details\b", re.IGNORECASE)
+_DETAILS_END_RE = re.compile(r"^</details\s*>", re.IGNORECASE)
+_SUMMARY_LINE_RE = re.compile(r"<summary[^>]*>(.*?)</summary\s*>", re.IGNORECASE)
+
+#: 自测题的编号写法：模型最常用 `**1.**`，也兼容 `1.` / `1、`。
+_QUESTION_NUMBER_RE = re.compile(r"^\*\*\s*(\d+)\s*[.．、)）]\s*\*\*\s*")
+
+
+def split_question_number(text: str) -> Tuple[str, str]:
+    """把「**1.** 题干」拆成 ``("1", "题干")``；没有编号时返回 ``("", 原文)``。"""
+    stripped = text.strip()
+    match = _QUESTION_NUMBER_RE.match(stripped)
+    if not match:
+        return "", stripped
+    return match.group(1), stripped[match.end():].strip()
+
+#: 复习版例题的四段式标签。模型常把它们写进同一段（「…跳起来。切入点：…」），
+#: 方框里会排成一大坨；渲染时在这些标签前断段，一条一行。
+_REVIEW_LABEL_RE = re.compile(r"(?<=[。！？；])(题目|切入点|关键步骤|易错点|易错)\s*[：:]")
+
+
+def split_review_labels(text: str) -> List[str]:
+    """按「题目 / 切入点 / 关键步骤 / 易错点」把一段正文拆成多段。
+
+    只在这些标签**紧跟句末标点**（或位于段首）时断段，正文一个字都不改 ——
+    断的是排版段落，不是内容。标签排在段首时本来就在新行，不重复拆。
+    """
+    pieces: List[str] = []
+    start = 0
+    for match in _REVIEW_LABEL_RE.finditer(text):
+        if match.start() <= start:
+            continue
+        pieces.append(text[start:match.start()])
+        start = match.start()
+    pieces.append(text[start:])
+    return [piece.strip() for piece in pieces if piece.strip()]
+
 #: 行首标记：`[定义] …`
 _MARKER_RE = re.compile(r"^\[([^\]\n]{1,8})\]\s*(.*)$")
 
@@ -245,6 +284,12 @@ _TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 #: Markdown 水平分隔线。`---` 在 Typst markup 里会被智能标点排成一个
 #: 孤立的「–」；底稿里出现时必须映射成 `#divider`，不能当普通段落。
 _HR_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
+
+#: 伪标题：整行只有一段粗体（可带 `[mm:ss]` 时间码）。讲义里常拿它当小标题，
+#: 它是**下一个话题**的抬头，不属于前一个装置的正文；跨段收集到这里收尾。
+_PSEUDO_HEADING_RE = re.compile(
+    r"^\*\*[^*\n]{1,40}\*\*(?:\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?)?\s*$"
+)
 
 #: 斜杠分式：`\partial D/\partial t`、`\mathrm{d}i/\mathrm{d}t`、
 #: `\sqrt{\mu_0/\varepsilon_0}`。这些写法在行内会与上下标挤在一起，
@@ -852,6 +897,13 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
                     # 单字母（\mathrm{d} 里的 d）用直立文本包起来：既保留微分符号的
                     # 直立字形，又不会和后面的 x 粘成未知变量 `dx`。
                     _emit('"' + argument.strip() + '"', next_index)
+                elif "\\" in argument:
+                    # 参数里还有 LaTeX 命令（`\mathrm{\mu F}`、`\mathrm{\Omega}`）：
+                    # 先递归转成 Typst 数学再交给 upright()。直接塞进字符串会把
+                    # 反斜杠当字面量印出来（PDF 里就是 `\mu F`）。
+                    converted, issues = latex_to_typst(argument)
+                    warnings.extend(issues)
+                    _emit("upright(" + converted + ")", next_index)
                 else:
                     escaped = argument.replace('"', '\\"')
                     _emit(f'upright("{escaped}")', next_index)
@@ -1076,6 +1128,11 @@ def _restore(text: str, kept: Sequence[Tuple[str, str]]) -> str:
     for token, value in kept:
         text = text.replace(token, value)
     return text
+
+
+def typst_string(value: str) -> str:
+    """Typst 的字符串字面量（与 handout 的 ``_json_string`` 同义）。"""
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str:
@@ -1316,6 +1373,192 @@ def _render_marker(
     return fragment, label
 
 
+def _marker_absorbs_blocks(name: str) -> bool:
+    """框类装置与证明可以**跨段**：一直写到下一个标题或下一个标记。
+
+    旧实现一次只读标记行那一行，紧跟着的块级公式与段落都会掉到装置外：
+    定理框里的公式跑到框外，证明的 qed 方块停在第一段末尾，看起来像
+    「证明到这就结束了」。讲义阅读版链路（``handout._absorbs_blocks``）
+    用同一套规则，两条 PDF 的语义才一致。
+    """
+    call, shape = MARKERS[name]
+    return call == "proof" or shape == "knot"
+
+
+def _is_marker_line(text: str) -> bool:
+    marker = _MARKER_RE.match(text)
+    return bool(
+        marker
+        and (marker.group(1) in MARKERS or marker.group(1).startswith("缺口"))
+    )
+
+
+def _collect_block_lines(
+    lines: Sequence[str],
+    cursor: int,
+) -> Tuple[List[str], int]:
+    """收集标记行之后、到下一个标题/标记为止的底稿行（空行保留）。"""
+    body: List[str] = []
+    total = len(lines)
+    while cursor < total:
+        raw = lines[cursor]
+        stripped = raw.strip()
+        if stripped and (
+            re.match(r"^#{1,6}\s+", stripped)
+            or _is_marker_line(stripped)
+            or _PSEUDO_HEADING_RE.match(stripped)
+        ):
+            break
+        body.append(raw)
+        cursor += 1
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+    return body, cursor
+
+
+def _split_trailing_label(text: str) -> Tuple[str, str]:
+    match = _LABEL_RE.search(text)
+    if not match:
+        return text.rstrip(), ""
+    return text[: match.start()].rstrip(), match.group(1)
+
+
+def _render_block_body(
+    lines: Sequence[str],
+    known_labels: Sequence[str],
+    warnings: List[str],
+) -> Tuple[str, int]:
+    """把标记块内部的底稿行渲染成 Typst 内容（块内段落不缩进）。
+
+    返回 ``(Typst 内容, 段落数)``：段落数要计入「方框 : 正文」的统计，
+    否则内容一旦搬进装置，分母就凭空变小，批量误报「框框滥用」。
+    """
+    out: List[str] = []
+    paragraphs = 0
+    index = 0
+    total = len(lines)
+    while index < total:
+        raw = lines[index]
+        stripped = raw.strip()
+        if not stripped:
+            out.append("")
+            index += 1
+            continue
+        display = _DISPLAY_MATH_RE.match(stripped)
+        if display:
+            out.append("$ " + display.group(1) + " $")
+            index += 1
+            continue
+        if _TABLE_ROW_RE.match(raw):
+            rows: List[str] = []
+            while index < total and _TABLE_ROW_RE.match(lines[index]):
+                rows.append(lines[index])
+                index += 1
+            out.extend(_convert_table(rows, warnings))
+            continue
+        bullet = _BULLET_RE.match(raw)
+        if bullet:
+            indent = bullet.group(1).replace("\t", "  ")
+            out.append(indent + "- " + escape_typst(bullet.group(2), known_labels))
+            index += 1
+            continue
+        ordered = _OL_RE.match(raw)
+        if ordered:
+            indent = ordered.group(1).replace("\t", "  ")
+            out.append(
+                indent + "+ " + escape_typst(raw[ordered.end():].strip(), known_labels)
+            )
+            index += 1
+            continue
+        # 「题目 / 切入点 / 关键步骤 / 易错点」写在同一段里时，一条一行排开。
+        for position, part in enumerate(split_review_labels(stripped)):
+            if position:
+                out.append("")
+            out.append(_render_gaps(part, known_labels))
+            paragraphs += 1
+        index += 1
+    while out and not out[0].strip():
+        out.pop(0)
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out), paragraphs
+
+
+def _render_label_paragraphs(text: str, known_labels: Sequence[str]) -> str:
+    """把「题目：…。切入点：…」这类一行写全的正文按标签拆成多段。"""
+    if not text.strip():
+        return ""
+    return "\n\n".join(
+        _render_gaps(part, known_labels) for part in split_review_labels(text)
+    )
+
+
+def _render_block_marker(
+    marker: str,
+    first: str,
+    extra: Sequence[str],
+    known_labels: Sequence[str],
+    warnings: List[str],
+) -> Tuple[str, str, int]:
+    """渲染一个跨段标记（标记行 + 后续正文行），返回 ``(Typst, label, 段落数)``。"""
+    call, shape = MARKERS[marker]
+    if call is None:
+        return "#divider", "", 0
+
+    first, label = _split_trailing_label(first)
+    extra = list(extra)
+    if not label:
+        # 独占一行的 <label>（写在公式后面）也认。
+        for position, raw_line in enumerate(extra):
+            stripped_line = raw_line.strip()
+            if not stripped_line:
+                continue
+            text, found = _split_trailing_label(stripped_line)
+            if not found or text.strip():
+                continue
+            del extra[position]
+            label = found
+            break
+    if not label:
+        # <label> 写在最后一段末尾也很自然：两处都认，回指编号才不会悬空。
+        for position in range(len(extra) - 1, -1, -1):
+            if not extra[position].strip():
+                continue
+            text, found = _split_trailing_label(extra[position])
+            if found:
+                extra[position] = text
+                if not text.strip():
+                    del extra[position]
+                label = found
+            break
+
+    rest_typst, rest_paragraphs = _render_block_body(extra, known_labels, warnings)
+    if shape == "knot":
+        title, tag, content = _split_knot_parts(first)
+        head = _render_label_paragraphs(content, known_labels)
+        content_typst = "\n\n".join(part for part in (head, rest_typst) if part.strip())
+        title_typst = escape_typst(title, known_labels)
+        tag_typst = escape_typst(tag, known_labels)
+        if tag:
+            fragment = f"#{call}[{title_typst}][{tag_typst}][{content_typst}]"
+        elif title:
+            fragment = f"#{call}[{title_typst}][{content_typst}]"
+        else:
+            fragment = f"#{call}[{content_typst}]"
+    else:
+        head = _render_label_paragraphs(first, known_labels)
+        content_typst = "\n\n".join(part for part in (head, rest_typst) if part.strip())
+        if call == "sidenote":
+            fragment = f"#sidenote([{content_typst}], symbol: [!])"
+        else:
+            fragment = f"#{call}[{content_typst}]"
+    if label:
+        fragment += f" <{label}>"
+    return fragment, label, rest_paragraphs
+
+
 def _collapse_display_math(text: str) -> str:
     """把跨行的 ``$$ … $$`` 块压成单行 ``$ … $``。
 
@@ -1530,6 +1773,9 @@ def render_typst(
     paragraphs = 0
     devices: Dict[str, int] = {}
     lines_out: List[str] = []
+    #: 已排版段落 → 原始 Markdown，用来在遇到 `<details>` 时把上一段改成题干框。
+    paragraph_raw: Dict[int, str] = {}
+    question_count = 0
 
     def _count(name: str) -> None:
         devices[name] = devices.get(name, 0) + 1
@@ -1573,6 +1819,46 @@ def render_typst(
                 continue
             in_cover = False
 
+        # 自测题：`**1.** 题干` + `<details><summary>答案</summary>…</details>`。
+        # 题干换成琥珀方框（#selftest），答案排在框外（#answer + 灰色左边线），
+        # 题目与答案因此有一道清楚的边界；旧实现会把标签原样印成 `<details>`。
+        if _DETAILS_START_RE.match(stripped):
+            last = len(lines_out) - 1
+            while last >= 0 and not lines_out[last].strip():
+                last -= 1
+            raw_question = paragraph_raw.get(last)
+            if raw_question:
+                number, stem = split_question_number(raw_question)
+                if number:
+                    question_count = max(question_count, int(number))
+                else:
+                    question_count += 1
+                    number = str(question_count)
+                lines_out[last] = (
+                    "#selftest(" + number + ")[" + escape_typst(stem, known_labels) + "]"
+                )
+                _count("selftest")
+            label = "答案"
+            content_lines: List[str] = []
+            while cursor < len(input_lines):
+                candidate = input_lines[cursor]
+                candidate_text = candidate.strip()
+                cursor += 1
+                if _DETAILS_END_RE.match(candidate_text):
+                    break
+                summary = _SUMMARY_LINE_RE.search(candidate_text)
+                if summary:
+                    label = summary.group(1).strip() or label
+                    continue
+                content_lines.append(candidate)
+            answer_typst, answer_paragraphs = _render_block_body(
+                content_lines, known_labels, warnings
+            )
+            lines_out.append("#answer(" + typst_string(label) + ")[" + answer_typst + "]")
+            paragraphs += answer_paragraphs
+            _count("answer")
+            continue
+
         marker = _MARKER_RE.match(stripped)
         if marker and (marker.group(1) in MARKERS or marker.group(1).startswith("缺口")):
             name = marker.group(1)
@@ -1581,7 +1867,15 @@ def render_typst(
                 hint = body.split(":", 1)[1].strip() if ":" in body else body.strip()
                 lines_out.append("#TODO[" + escape_typst(hint, known_labels) + "]")
                 continue
-            fragment, label = _render_marker(name, body, known_labels)
+            if _marker_absorbs_blocks(name):
+                # 框与证明跨段：同一装置的公式、段落、列表都留在块内。
+                extra, cursor = _collect_block_lines(input_lines, cursor)
+                fragment, label, body_paragraphs = _render_block_marker(
+                    name, body, extra, known_labels, warnings
+                )
+                paragraphs += body_paragraphs
+            else:
+                fragment, label = _render_marker(name, body, known_labels)
             lines_out.append(fragment)
             if label:
                 labels.append(label)
@@ -1656,6 +1950,7 @@ def render_typst(
 
         # 普通段落 —— 正文的主体。段首空两格。
         lines_out.append(BODY_INDENT + escape_typst(stripped, known_labels))
+        paragraph_raw[len(lines_out) - 1] = stripped
         paragraphs += 1
 
     body_text = "\n".join(lines_out).strip()

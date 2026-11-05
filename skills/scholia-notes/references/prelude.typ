@@ -91,6 +91,48 @@
   stroke: (bottom: 0.6pt + active.get().fillin),
 )
 
+// ── 5b. 自测题：题干琥珀框，答案排在框外 ──
+// Markdown 里的 `<details><summary>答案</summary>…</details>` 由渲染器映射成
+// 这两个装置：题干进 #selftest（与「例」同款的琥珀方框），答案进 #answer
+// （左侧一条淡灰细线 + 「答案」小标签）。题目与答案因此有一道清楚的边界，
+// 不会像以前那样连成一篇。
+#let selftest(number, body) = context {
+  let p = active.get()
+  block(
+    width: 100%,
+    breakable: true,
+    fill: tint(p, p.eg),
+    stroke: (left: 2pt + p.eg),
+    inset: (left: 11pt, right: 10pt, top: 7pt, bottom: 7pt),
+    above: 14pt,
+    below: 2pt,
+    {
+      set align(left)
+      text(font: default-fonts.sans, weight: "bold", size: 0.92em, fill: p.eg)[自测题 #number]
+      h(0.4em)
+      body
+    },
+  )
+}
+
+#let answer(label, body) = context {
+  let p = active.get()
+  block(
+    width: 100%,
+    breakable: true,
+    inset: (left: 12pt, right: 10pt),
+    stroke: (left: 1.2pt + p.hairline),
+    above: 4pt,
+    below: 16pt,
+    {
+      set align(left)
+      text(font: default-fonts.sans, weight: "bold", size: 0.9em, fill: p.muted)[#label]
+      v(0.25em)
+      body
+    },
+  )
+}
+
 // ── 6. 类型速查（写正文时照着选色相） ──
 //   结论/定理/证明/回指  → thm  蓝
 //   定义/公理/术语/标签  → def  青绿
