@@ -49,9 +49,9 @@ cover.date = 9pt
 heading.h1 = 15pt
 heading.h2 = 12.5pt
 heading.h3 = 11.5pt
-heading.h1.above = 20pt
+heading.h1.above = 24pt
 heading.h1.below = 12pt
-heading.h2.above = 12pt
+heading.h2.above = 22pt
 heading.h2.below = 0.85em
 heading.h3.above = 9pt
 heading.h3.below = 0.65em
@@ -122,8 +122,8 @@ divider.stroke = 0.4pt
 | 装置 | 字号 | 其它 | 实现位置 |
 | :--- | :--- | :--- | :--- |
 | 正文 | 11pt | `ink` 色 | 两条链路的 `set text` |
-| 一级标题（章） | 15pt | 粗体；编号 `muted`、标题 `thm`；下方 1.1pt `rule`；上 20pt / 下 12pt | 阅读版 `handout_prelude.typ`；填空版 vendored `lib.typ` |
-| 二级标题（节） | 12.5pt | 粗体，`def` 色；上 12pt / 下 0.85em | 同上 |
+| 一级标题（章） | 15pt | 粗体；编号 `muted`、标题 `thm`；下方 1.1pt `rule`；上 24pt / 下 12pt | 阅读版 `handout_prelude.typ`；填空版 vendored `lib.typ` |
+| 二级标题（节） | 12.5pt | 粗体，`def` 色；上 22pt / 下 0.85em | 同上 |
 | 三级标题 | 11.5pt | 粗体，`thm` 色；上 9pt / 下 0.65em | 同上 |
 | 封面 kicker | 10pt | 全大写，字距 3pt，`muted` | 同上 |
 | 封面标题 | 30pt | 粗体，字距 1.5pt，`thm` | 同上 |
