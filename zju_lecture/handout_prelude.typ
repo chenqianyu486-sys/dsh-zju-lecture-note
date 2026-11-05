@@ -117,14 +117,14 @@
 // 标题后的间距比 2.2.1 略大：小节标题与正文之间留出呼吸，
 // 读者一眼能看出「新的一节从这里开始」（规范见 typography-spec.md §2）。
 #show heading: set text(font: fonts.heading)
-#show heading.where(level: 1): it => block(width: 100%, above: 20pt, below: 12pt)[
+#show heading.where(level: 1): it => block(width: 100%, above: 24pt, below: 12pt)[
   #text(size: 15pt, weight: "bold", fill: palette.muted)[#counter(heading).display()]
   #h(0.7em)
   #text(size: 15pt, weight: "bold", fill: palette.thm)[#it.body]
   #v(1pt)
   #line(length: 100%, stroke: 1.1pt + palette.rule)
 ]
-#show heading.where(level: 2): it => block(above: 12pt, below: 0.85em)[
+#show heading.where(level: 2): it => block(above: 22pt, below: 0.85em)[
   #text(size: 12.5pt, weight: "bold", fill: palette.def)[#counter(heading).display() #it.body]
 ]
 #show heading.where(level: 3): it => block(above: 9pt, below: 0.65em)[
@@ -212,6 +212,39 @@
     h(0.3em)
     body
     workspace(n: 3)
+  },
+)
+
+// 自测题：题干复用「例」的琥珀方框；答案排在框外（淡灰左线 + 「答案」标签），
+// 题目与答案之间因此有一道清楚的边界。渲染器把 `<details>` 块映射成这两个装置。
+#let selftest(number, body) = block(
+  width: 100%,
+  breakable: true,
+  fill: tint(palette.eg),
+  stroke: (left: 2pt + palette.eg),
+  inset: (left: 11pt, right: 10pt, top: 7pt, bottom: 7pt),
+  above: 14pt,
+  below: 2pt,
+  {
+    set align(left)
+    text(font: fonts.sans, weight: "bold", size: 0.92em, fill: palette.eg)[自测题 #number]
+    h(0.4em)
+    body
+  },
+)
+
+#let answer(label, body) = block(
+  width: 100%,
+  breakable: true,
+  inset: (left: 12pt, right: 10pt),
+  stroke: (left: 1.2pt + palette.hairline),
+  above: 4pt,
+  below: 16pt,
+  {
+    set align(left)
+    text(font: fonts.sans, weight: "bold", size: 0.9em, fill: palette.muted)[#label]
+    v(0.25em)
+    body
   },
 )
 

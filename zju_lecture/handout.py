@@ -40,10 +40,13 @@ from .study_notes import (
     MARKERS,
     StudyNotesError,
     _run_typst,
+    _SUMMARY_LINE_RE,
     find_typst,
     latex_to_typst,
     pad_inline_math,
     split_quote_items,
+    split_question_number,
+    split_review_labels,
     strip_heading_number,
 )
 
@@ -95,6 +98,11 @@ _TABLE_SEP_RE = re.compile(
 )
 _IMAGE_RE = re.compile(r'^!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)$')
 _HR_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
+#: 伪标题：整行只有一段粗体（可带 `[mm:ss]` 时间码）。讲义里常拿它当小标题，
+#: 它是**下一个话题**的抬头，不属于前一个装置的正文；跨段收集到这里收尾。
+_PSEUDO_HEADING_RE = re.compile(
+    r"^\*\*[^*\n]{1,40}\*\*(?:\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?)?\s*$"
+)
 _LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
 _DETAILS_OPEN_RE = re.compile(r"<details[^>]*>", re.IGNORECASE)
 _DETAILS_CLOSE_RE = re.compile(r"</details\s*>", re.IGNORECASE)
@@ -733,21 +741,270 @@ def _image_block(
     return "#figure(" + ", ".join(figure_args) + ")"
 
 
+def _read_display_math(
+    lines: Sequence[str],
+    index: int,
+    warnings: List[str],
+) -> Tuple[str, int]:
+    """从 ``lines[index]`` 的 ``$$`` 开始读一个块级公式。
+
+    返回 ``(Typst 片段, 下一个待处理下标)``；块级公式以 ``$ … $``（两侧
+    有空白）输出，Typst 才会把它当居中块级公式。
+    """
+    body = [lines[index].strip()[2:]]
+    index += 1
+    total = len(lines)
+    if "$$" in body[0]:
+        inner = body[0].split("$$")[0]
+    else:
+        while index < total:
+            line = lines[index].strip()
+            index += 1
+            if "$$" in line:
+                body.append(line.split("$$")[0])
+                break
+            body.append(line)
+        inner = "\n".join(body)
+    converted, issues = latex_to_typst(inner.strip())
+    warnings.extend(issues)
+    return "$ " + converted.strip() + " $", index
+
+
+def _absorbs_blocks(name: str) -> bool:
+    """标记块是否**跨段**：框类装置与证明一直写到下一个标记/标题。
+
+    ``[直觉]`` / ``[练习]`` / ``[边注]`` / ``[强调]`` 这类装置是一句话，
+    只吃标记行那一句；定理、定义、例、证明的正文常常带块级公式与多个
+    段落，旧实现遇到空行或 ``$$`` 就收尾，公式会被甩到方框外，证明的
+    qed 方块也会停在第一段末尾（实地讲义里就是这样误导读者的）。
+    """
+    call, _shape = MARKERS[name]
+    return call == "proof" or call in _KNOT_CALLS
+
+
+def _collect_marker_body(
+    lines: Sequence[str],
+    index: int,
+    first: str,
+    absorb: bool,
+) -> Tuple[List[str], int]:
+    """收集标记行之后的正文行，返回 ``(行列表, 下一个待处理下标)``。
+
+    ``absorb=False`` 沿用旧规则：遇到空行、标题、公式、列表、表格、代码块
+    或下一个标记就停。``absorb=True`` 一直收到下一个标题或下一个标记，
+    空行保留为段落分隔。
+    """
+    body: List[str] = [first] if first else []
+    total = len(lines)
+    if absorb:
+        while index < total:
+            raw = lines[index]
+            stripped = raw.strip()
+            if (
+                _HEADING_RE.match(stripped)
+                or _is_marker_start(stripped)
+                or _PSEUDO_HEADING_RE.match(stripped)
+            ):
+                break
+            body.append(raw)
+            index += 1
+    else:
+        while index < total:
+            candidate = lines[index].strip()
+            if (
+                not candidate
+                or _HEADING_RE.match(candidate)
+                or _is_marker_start(candidate)
+                or candidate.startswith("$$")
+                or _LIST_RE.match(lines[index])
+                or candidate.startswith("|")
+                or _FENCE_RE.match(candidate)
+            ):
+                break
+            body.append(candidate)
+            index += 1
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+    return body, index
+
+
+def _extract_block_label(body: List[str]) -> Tuple[List[str], str]:
+    """摘掉块里的 ``<def:x>``，返回 ``(正文行, label)``。
+
+    认三个位置：标记行末尾（最常见）、独占一行的 ``<label>``、最后一段末尾。
+    跨段标记把 ``<label>`` 写在公式后面单独一行也很自然，三种都认，
+    才能和 :func:`_collect_refs` 的编号对得上。
+    """
+    if body:
+        text, label = _extract_label(body[0])
+        if label:
+            return [text] + list(body[1:]), label
+    for position, raw in enumerate(body):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        text, label = _extract_label(stripped)
+        if not label or text.strip():
+            continue
+        rest = list(body)
+        del rest[position]
+        return rest, label
+    for position in range(len(body) - 1, -1, -1):
+        if not body[position].strip():
+            continue
+        text, label = _extract_label(body[position])
+        if not label:
+            break
+        rest = list(body)
+        rest[position] = text
+        if not text.strip():
+            del rest[position]
+        return rest, label
+    return list(body), ""
+
+
+def _split_knot_title_lines(body: List[str]) -> Tuple[str, List[str]]:
+    """只在**第一段**里找 ``标题 —— 正文``；后面的段落原样保留。"""
+    if not body:
+        return "", []
+    title, rest = _split_knot_title(_join_paragraph([body[0]]))
+    if not title:
+        return "", list(body)
+    remainder = list(body[1:])
+    if rest.strip():
+        return title, [rest] + remainder
+    return title, remainder
+
+
+def _render_block_sequence(
+    lines: Sequence[str],
+    warnings: List[str],
+    image_resolver,
+    refs: Optional[Dict[str, str]] = None,
+) -> Tuple[str, int]:
+    """把标记块里的若干行渲染成 Typst 块序列（块内段落不缩进）。
+
+    与 :func:`_render_body` 的区别：不处理标题、不统计章节、不写段首缩进
+    （``#h(2em)``）—— 这些内容会作为 ``#theorem{…}`` / ``#proof{…}`` 的
+    内容块嵌进装置里，缩进交给装置自己的内边距。
+
+    返回 ``(Typst 内容, 段落数)``：段落数记进「方框:正文」统计，否则内容
+    一搬进装置，分母就凭空变小，比例检查会误报。
+    """
+    out: List[str] = []
+    paragraph: List[str] = []
+    paragraphs = 0
+    total = len(lines)
+    index = 0
+
+    def flush() -> None:
+        nonlocal paragraphs
+        if not paragraph:
+            return
+        text = _join_paragraph(paragraph)
+        paragraph.clear()
+        if not text.strip():
+            return
+        # 「题目 / 切入点 / 关键步骤 / 易错点」写在同一段里时，一段一行排开：
+        # 四段式例题排成一大坨在框里很难读（实地讲义里就是这样）。
+        for part in split_review_labels(text):
+            out.append(_render_rich_text(part, warnings, image_resolver, refs))
+            paragraphs += 1
+
+    while index < total:
+        raw = lines[index]
+        stripped = raw.strip()
+        if not stripped:
+            flush()
+            index += 1
+            continue
+        if stripped.startswith("$$"):
+            flush()
+            math, index = _read_display_math(lines, index, warnings)
+            out.append(math)
+            continue
+        if _LIST_RE.match(raw):
+            flush()
+            list_lines: List[str] = []
+            while index < total and _LIST_RE.match(lines[index]):
+                list_lines.append(lines[index])
+                index += 1
+            out.append(_list_block(list_lines, warnings, image_resolver, refs))
+            continue
+        if stripped.startswith("|") and stripped.endswith("|"):
+            rows: List[str] = []
+            while index < total:
+                candidate = lines[index].strip()
+                if candidate.startswith("|") and candidate.endswith("|"):
+                    rows.append(candidate)
+                    index += 1
+                else:
+                    break
+            if len(rows) >= 2 and _TABLE_SEP_RE.match(rows[1]):
+                flush()
+                out.append(_table_block(rows, warnings, image_resolver, refs))
+            else:
+                paragraph.extend(rows)
+            continue
+        if stripped.startswith(">"):
+            flush()
+            quote_lines: List[str] = []
+            while index < total and lines[index].strip().startswith(">"):
+                quote_lines.append(lines[index])
+                index += 1
+            out.append(_quote_block(quote_lines, warnings, image_resolver, refs))
+            continue
+        fence = _FENCE_RE.match(stripped)
+        if fence:
+            flush()
+            marker_text = fence.group(1)
+            info = fence.group(2) or ""
+            code: List[str] = []
+            index += 1
+            while index < total and not lines[index].strip().startswith(marker_text[:3]):
+                code.append(lines[index])
+                index += 1
+            if index < total:
+                index += 1
+            out.append(_code_block(marker_text, info, code))
+            continue
+        image = _IMAGE_RE.match(stripped)
+        if image:
+            flush()
+            out.append(
+                _image_block(
+                    image.group(1), image.group(2), warnings, image_resolver, refs
+                )
+            )
+            index += 1
+            continue
+        paragraph.append(raw)
+        index += 1
+
+    flush()
+    return "\n\n".join(part for part in out if part.strip()), paragraphs
+
+
 def _render_marker_block(
     name: str,
-    body: str,
+    body_lines: Sequence[str],
     number: str,
     warnings: List[str],
     image_resolver,
     refs: Optional[Dict[str, str]] = None,
-) -> str:
-    """把一行底稿标记渲染成对应的 PDF 装置。"""
+) -> Tuple[str, int]:
+    """把一个标记块（标记行 + 后续正文）渲染成对应的 PDF 装置。
+
+    返回 ``(Typst 片段, 块内段落数)``；段落数并入全篇的「方框:正文」统计。
+    """
     call, shape = MARKERS[name]
     if call is None:
-        return "#divider"
-    body, label = _extract_label(body)
+        return "#divider", 0
+    body, label = _extract_block_label(list(body_lines))
     if shape == "knot":
-        title, content = _split_knot_title(body)
+        title, content = _split_knot_title_lines(body)
         args = [_json_string(number)]
         if title:
             args.append(
@@ -755,24 +1012,25 @@ def _render_marker_block(
                 + _render_inline(title, warnings, image_resolver, refs=refs)
                 + "]"
             )
-        fragment = (
-            "#" + call + "(" + ", ".join(args) + ")["
-            + _render_rich_text(content, warnings, image_resolver, refs)
-            + "]"
+        content_typst, paragraphs = _render_block_sequence(
+            content, warnings, image_resolver, refs
         )
+        fragment = "#" + call + "(" + ", ".join(args) + ")[" + content_typst + "]"
     else:
         if call == "yourturn":
             # 练习块里已经有书写横线，题面里的短填空线一并丢掉（见规范 §2.1）。
-            body = re.sub(r"_{4,}", " ", body)
-        content = _render_rich_text(body, warnings, image_resolver, refs)
+            body = [re.sub(r"_{4,}", " ", line) for line in body]
+        content_typst, paragraphs = _render_block_sequence(
+            body, warnings, image_resolver, refs
+        )
         if call == "sidenote":
             # 边注的符号必须用圆括号参数；方括号写法会被当成第二个内容块。
-            fragment = "#sidenote([" + content + "], symbol: [!])"
+            fragment = "#sidenote([" + content_typst + "], symbol: [!])"
         else:
-            fragment = "#" + call + "[" + content + "]"
+            fragment = "#" + call + "[" + content_typst + "]"
     if label:
         fragment += " <" + label + ">"
-    return fragment
+    return fragment, paragraphs
 
 
 def _is_block_start(line: str) -> bool:
@@ -789,6 +1047,8 @@ def _is_block_start(line: str) -> bool:
         or (stripped.startswith("|") and stripped.endswith("|"))
         or _IMAGE_RE.match(stripped)
         or _is_marker_start(stripped)
+        or stripped.lower().startswith("<details")
+        or stripped.lower().startswith("</details")
     )
 
 
@@ -803,8 +1063,12 @@ def _collect_refs(lines: Sequence[str]) -> Dict[str, str]:
     sub = 0
     counts: Dict[str, int] = {}
 
-    for raw in lines:
+    index = 0
+    total = len(lines)
+    while index < total:
+        raw = lines[index]
         stripped = raw.strip()
+        index += 1
         if not stripped:
             continue
         heading = _HEADING_RE.match(stripped)
@@ -834,9 +1098,14 @@ def _collect_refs(lines: Sequence[str]) -> Dict[str, str]:
         call, _shape = MARKERS[name]
         if call not in _KNOT_CALLS:
             continue
+        # 与 _render_body 用同一个收集器：框可以跨段，<label> 也可能写在
+        # 最后一段末尾；两处必须同进同退，编号才不会漂。
+        body_lines, index = _collect_marker_body(
+            lines, index, marker.group(2), _absorbs_blocks(name)
+        )
         counts["knot"] = counts.get("knot", 0) + 1
         number = (str(section) + "." if section else "") + str(counts["knot"])
-        _, label = _extract_label(marker.group(2))
+        _body, label = _extract_block_label(body_lines)
         if label:
             refs[label] = number
     return refs
@@ -859,6 +1128,7 @@ def _render_body(
     counts: Dict[str, int] = {}
     section_name = ""
     boxes_by_section: Dict[str, int] = {}
+    question_count = 0
 
     def count(name: str, amount: int = 1) -> None:
         blocks[name] = blocks.get(name, 0) + amount
@@ -902,33 +1172,53 @@ def _render_body(
         marker = _MARKER_BLOCK_RE.match(stripped)
         if marker and marker.group(1) in MARKERS:
             name = marker.group(1)
-            body_lines = [marker.group(2)]
-            index += 1
-            while index < total:
-                candidate = lines[index].strip()
-                if (
-                    not candidate
-                    or _HEADING_RE.match(candidate)
-                    or _is_marker_start(candidate)
-                    or candidate.startswith("$$")
-                    or _LIST_RE.match(lines[index])
-                    or candidate.startswith("|")
-                    or _FENCE_RE.match(candidate)
-                ):
-                    break
-                body_lines.append(candidate)
-                index += 1
-            body = _join_paragraph(body_lines).strip()
-            call, shape = MARKERS[name]
+            body_lines, index = _collect_marker_body(
+                lines, index + 1, marker.group(2), _absorbs_blocks(name)
+            )
+            call, _shape = MARKERS[name]
             number = ""
             if call in _KNOT_CALLS:
                 counts["knot"] = counts.get("knot", 0) + 1
                 number = (str(section) + "." if section else "") + str(counts["knot"])
                 boxes_by_section[section_name] = boxes_by_section.get(section_name, 0) + 1
-            out.append(
-                _render_marker_block(name, body, number, warnings, image_resolver, refs)
+            fragment, inner_paragraphs = _render_marker_block(
+                name, body_lines, number, warnings, image_resolver, refs
             )
+            out.append(fragment)
+            if inner_paragraphs:
+                # 块内段落也算进「方框:正文」的分母：内容搬进装置之后，
+                # 分母不能凭空变小，否则比例检查会把正常的讲义判成框框滥用。
+                count("paragraph", inner_paragraphs)
             count(call or name)
+            continue
+
+        # 自测题的答案块：`<details><summary>答案</summary>…</details>`。
+        # 题干已在上面的段落分支里套成 `#selftest` 琥珀框；答案排在框外，
+        # 用 `#answer`（左侧淡灰细线 + 标签）与题目分开。
+        if stripped.lower().startswith("<details"):
+            index += 1
+            label = "答案"
+            content: List[str] = []
+            while index < total:
+                candidate = lines[index]
+                text_line = candidate.strip()
+                if text_line.lower().startswith("</details"):
+                    index += 1
+                    break
+                summary = _SUMMARY_LINE_RE.search(text_line)
+                if summary:
+                    label = summary.group(1).strip() or label
+                    index += 1
+                    continue
+                content.append(candidate)
+                index += 1
+            content_typst, inner = _render_block_sequence(
+                content, warnings, image_resolver, refs
+            )
+            out.append("#answer(" + _json_string(label) + ")[" + content_typst + "]")
+            count("answer")
+            if inner:
+                count("paragraph", inner)
             continue
 
         fence = _FENCE_RE.match(stripped)
@@ -947,22 +1237,8 @@ def _render_body(
             continue
 
         if stripped.startswith("$$"):
-            body = [stripped[2:]]
-            index += 1
-            if "$$" in body[0]:
-                inner = body[0].split("$$")[0]
-            else:
-                while index < total:
-                    line = lines[index].strip()
-                    index += 1
-                    if "$$" in line:
-                        body.append(line.split("$$")[0])
-                        break
-                    body.append(line)
-                inner = "\n".join(body)
-            converted, issues = latex_to_typst(inner.strip())
-            warnings.extend(issues)
-            out.append("$ " + converted.strip() + " $")
+            math, index = _read_display_math(lines, index, warnings)
+            out.append(math)
             count("equation")
             continue
 
@@ -1036,7 +1312,28 @@ def _render_body(
         while index < total and not _is_block_start(lines[index]):
             paragraph.append(lines[index])
             index += 1
-        out.append(_paragraph(_join_paragraph(paragraph), warnings, image_resolver, refs))
+        text = _join_paragraph(paragraph)
+        # 紧跟 `<details>` 的段落是自测题题干：套进与「例」同款的琥珀方框，
+        # 答案就会排在框外，题目与答案之间有一道清楚的边界。
+        probe = index
+        while probe < total and not lines[probe].strip():
+            probe += 1
+        if probe < total and lines[probe].strip().lower().startswith("<details"):
+            number, stem = split_question_number(text)
+            if number:
+                question_count = max(question_count, int(number))
+            else:
+                question_count += 1
+                number = str(question_count)
+            out.append(
+                "#selftest(" + number + ")["
+                + _render_rich_text(stem, warnings, image_resolver, refs)
+                + "]"
+            )
+            count("selftest")
+            count("paragraph")
+            continue
+        out.append(_paragraph(text, warnings, image_resolver, refs))
         count("paragraph")
 
     for name, boxes in boxes_by_section.items():
@@ -1150,9 +1447,8 @@ def render_handout(
 
     warnings: List[str] = []
     cleaned = _HTML_COMMENT_RE.sub("", markdown.replace("\r\n", "\n"))
-    cleaned = _SUMMARY_RE.sub(lambda m: "**" + m.group(1).strip() + "**", cleaned)
-    cleaned = _DETAILS_OPEN_RE.sub("", cleaned)
-    cleaned = _DETAILS_CLOSE_RE.sub("", cleaned)
+    # `<details>` / `<summary>` 不再预先摊平：自测题的题干与答案要分别排成
+    # `#selftest`（琥珀框）与 `#answer`（框外、灰色左线），见 _render_body。
 
     body_lines, fields = _extract_cover(
         cleaned, title=title, subtitle=subtitle, author=author, date=date, kicker=kicker
