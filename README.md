@@ -290,7 +290,7 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
 | 文档 | 内容 |
 | :--- | :--- |
 | [docs/technical.md](docs/technical.md) | 技术细节：目录结构、隐私实现、PDF 排版、标记语法、开发测试、发布流程 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本历史（2.1.0 → 1.4.0） |
+| [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
 | [SECURITY.md](SECURITY.md) | 威胁模型、Cookie 生命周期、已知边界 |
 | [ATTRIBUTION.md](ATTRIBUTION.md) | 逐文件来源、第三方许可、参考实现边界 |
 | [format-spec.md](skills/scholia-notes/references/format-spec.md) | 规范性文件：Markdown → PDF 装置的语义对应、预算、配色与字体 |
