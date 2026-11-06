@@ -1,7 +1,7 @@
 {
   "name": "dsh-zju-lecture-note",
   "version": "2.2.5",
-  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，写完讲义自动排版同名 PDF；可选启用投影 PPT 截图抓取、基于 Typst scholia 模板排版的填空式学习笔记与登录辅助工具；Cookie 只在本地内存中使用，不回显、不落盘",
+  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，写完讲义自动排版同名 PDF；可选启用投影 PPT 截图抓取、基于 Typst scholia 模板排版的填空式学习笔记与登录辅助工具；一键登录窗口让用户正常登录后自动安全保存登录态（Windows DPAPI），不回显、不进入对话、不保存密码",
   "license": "MIT",
   "author": "chenqianyu486",
   "icon": "icon.png",
@@ -49,6 +49,8 @@
     "skills/zju-lecture-summarizer.manifest.json",
     "skills/zju-lecture-summarizer-help",
     "skills/zju-lecture-summarizer-help.manifest.json",
+    "skills/zju-lecture-summarizer-login",
+    "skills/zju-lecture-summarizer-login.manifest.json",
     "skills/scholia-notes",
     "skills/scholia-notes.manifest.json",
     "icon.png",

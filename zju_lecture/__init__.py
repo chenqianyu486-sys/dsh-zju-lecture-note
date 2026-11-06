@@ -75,6 +75,15 @@ _LAZY_EXPORTS = {
     "render_handout": ".handout",
     "compile_handout": ".handout",
     "compile_handout_file": ".handout",
+    # The login window is interactive: import it only when the user actually
+    # opens it, not for every transcript fetch.
+    "LoginError": ".browser_login",
+    "open_login_window": ".browser_login",
+    "load_session_cookie": ".browser_login",
+    "save_session": ".browser_login",
+    "clear_session": ".browser_login",
+    "session_summary": ".browser_login",
+    "login_available": ".browser_login",
 }
 
 
@@ -109,6 +118,13 @@ __all__ = [
     "render_handout",
     "compile_handout",
     "compile_handout_file",
+    "LoginError",
+    "open_login_window",
+    "load_session_cookie",
+    "save_session",
+    "clear_session",
+    "session_summary",
+    "login_available",
     "extract_courseware_text",
     "check_markdown",
     "fix_markdown",

@@ -8,6 +8,14 @@ import json
 import os
 import sys
 
+from .browser_login import (
+    LoginError,
+    clear_session,
+    load_session_cookie,
+    login_available,
+    open_login_window,
+    session_summary,
+)
 from .client import (
     BASE_URL,
     TranscriptAuthError,
@@ -38,7 +46,7 @@ def _read_cookie_file(path: str) -> str:
 
 
 def _load_cookie(explicit: str = "", cookie_file: str = "") -> str:
-    """Resolve a cookie: explicit arg > file > ZJU_COOKIE env > local Edge."""
+    """Resolve a cookie: explicit > file > ZJU_COOKIE > zju_login session > Edge."""
     if explicit:
         print(
             "[zju-lecture] 警告: --cookie 会出现在进程列表中；建议改用 --cookie-file 或 ZJU_COOKIE。",
@@ -50,6 +58,9 @@ def _load_cookie(explicit: str = "", cookie_file: str = "") -> str:
     env_cookie = os.environ.get("ZJU_COOKIE", "").strip()
     if env_cookie:
         return sanitize_cookie_header(env_cookie)
+    saved = load_session_cookie()
+    if saved:
+        return saved
     return get_edge_cookie() or ""
 
 
@@ -146,6 +157,29 @@ def main():
     p_cw.add_argument("file", help="课件文件路径")
     p_cw.add_argument("--max-chars", type=int, default=10000, help="最多提取字符数")
 
+    # Command: login
+    p_login = subparsers.add_parser(
+        "login",
+        help="打开独立登录窗口完成浙大登录，并安全保存本机登录态",
+    )
+    p_login.add_argument(
+        "url",
+        nargs="?",
+        default="",
+        help="登录后要打开的课堂链接（可选，仅接受 https 的 *.zju.edu.cn）",
+    )
+    p_login.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="等待完成登录的秒数（默认 300，范围 30–540）",
+    )
+    p_login.add_argument(
+        "--clear",
+        action="store_true",
+        help="清除本机保存的登录态与独立登录窗口配置（不打开窗口）",
+    )
+
     # Command: cookie
     p_cookie = subparsers.add_parser("cookie", help="从本机 Edge 读取智云课堂 Cookie")
     p_cookie.add_argument(
@@ -179,8 +213,8 @@ def main():
                 cookie = _load_cookie(cookie_file=args.cookie_file or os.environ.get("ZJU_COOKIE_FILE", ""))
                 if not cookie:
                     raise ZJUAPIError(
-                        f"{exc}未读取到本机登录态；请在 Microsoft Edge 登录智云课堂，"
-                        "或使用 --cookie-file 指定本地 Cookie 文件。"
+                        f"{exc}未读取到本机登录态；运行 `zju-lecture login` 打开独立登录窗口，"
+                        "或使用 --cookie-file 指定本地 Cookie 文件（高级兜底）。"
                     ) from exc
                 try:
                     segs = fetch_transcript(sub_id, tenant, cookie=cookie)
@@ -289,10 +323,44 @@ def main():
                 sys.exit(1)
             print(text)
 
+        elif args.command == "login":
+            if args.clear:
+                result = clear_session(delete_profile=True)
+                print(
+                    "已清除本机登录态。"
+                    if result.get("session_removed")
+                    else "本机没有保存的登录态。"
+                )
+                if result.get("profile_removed"):
+                    print("独立登录窗口的浏览器配置也已删除。")
+                if result.get("profile_error"):
+                    print(
+                        "独立登录窗口配置未能删除："
+                        f"{result['profile_error']}。请先关闭该窗口后重试。",
+                        file=sys.stderr,
+                    )
+                return
+            try:
+                result = open_login_window(args.url, args.timeout)
+            except LoginError as exc:
+                print(f"登录未完成（{exc.reason}）：{exc.message}", file=sys.stderr)
+                if exc.hint:
+                    print(f"下一步：{exc.hint}", file=sys.stderr)
+                sys.exit(1)
+            print("登录成功，已读取本机登录态。")
+            print(f"- 浏览器: {result['browser']}")
+            print(f"- Cookie: {len(result['names'])} 条（含 _token，值不回显）")
+            if result.get("saved"):
+                print(f"- 保存: {result['saved_path']}（仅当前系统用户可解密）")
+            else:
+                print(f"- 保存失败: {result.get('save_error') or '未知原因'}（本次会话可用）")
+            print("现在可以运行 `zju-lecture fetch <url>`。")
+
         elif args.command == "cookie":
             c = get_edge_cookie()
             if not c:
                 print("未能在本机 Edge 找到 classroom.zju.edu.cn 的 Cookie。")
+                print("推荐改用 `zju-lecture login`：它会打开独立登录窗口，不依赖 Edge 的 Cookie 解密。")
                 return
             if args.reveal:
                 print("读取成功（明文回显；注意终端历史）：")

@@ -12,7 +12,7 @@ description: 浙大智云课堂插件的登录辅助与故障排查（401/403、
 - 不要要求用户把 Cookie、`_token`、Bearer、密码或浏览器数据库内容粘贴到对话。
 - 不要在回复、命令、文件或日志里复述任何凭据；如果用户已经贴出，提醒他撤回并重新登录/轮换，不要重复其中内容。
 - 不要读取浏览器历史、密码或其他网站 Cookie；登录态只允许来自插件既有的本地来源：
-  `ZJU_COOKIE`、`ZJU_COOKIE_FILE` 或本机 Microsoft Edge。
+  `zju_login` 保存的本机登录态、`ZJU_COOKIE`、`ZJU_COOKIE_FILE` 或本机 Microsoft Edge。
 - 不要建议关闭 TLS 校验，也不要把 Cookie / Bearer 发往 `classroom.zju.edu.cn` 之外的主机。
 - 不要擅自修改用户环境变量、注册表、浏览器配置或 `~/.dsh`；需要用户操作时，只给最短步骤。
 - 诊断结果只描述“可用 / 不可用、来源类别、错误类别、下一步”，不回显值。
@@ -32,26 +32,41 @@ description: 浙大智云课堂插件的登录辅助与故障排查（401/403、
 
 - 插件先匿名请求；401/403 时自动读取本机登录态并用 Bearer 重试一次。
   **不需要开启「登录辅助」工具**。
-- 用户已登录 Microsoft Edge（Windows / macOS）时通常可直接工作；
-  否则需要用户自己配置 `ZJU_COOKIE_FILE`：文件内只放一行 Cookie 头（含 `_token`），
-  不要把文件内容发给模型或贴进对话。
-- 按 `zju_doctor(login=true)` 的原因给一条动作：
-  - `abe` / `decrypt_failed`：Edge 无法在浏览器外解密，改用 `ZJU_COOKIE_FILE`；不要建议反复退出 Edge。
-  - `locked`：可尝试完全退出 Edge，或直接改用 `ZJU_COOKIE_FILE`。
-  - `no_rows` / `not_found`：先在 Edge 登录智云课堂；仍不行则用 `ZJU_COOKIE_FILE`。
-  - `unsupported_platform`：当前系统不支持自动读 Edge，改用 `ZJU_COOKIE_FILE`。
-  - `env_invalid` / `file_unreadable`：检查 `ZJU_COOKIE` / `ZJU_COOKIE_FILE` 的格式、可读性与编码。
+- **首选动作：调用 `zju_login(url=<这节课链接>)`**。它会弹出一个独立的
+  Edge / Chrome 登录窗口，不碰用户日常浏览器；用户在窗口里正常登录后，
+  窗口自动关闭，登录态安全保存到本机（Windows DPAPI；macOS / Linux 为 0600 文件）。
+  不需要开发者工具，不需要用户手工复制 Cookie，也不需要修改环境变量。
+- 调用前先告诉用户：「会弹出一个独立登录窗口，请在里面完成登录；成功后窗口会自动关闭。」
+  登录成功后重试字幕一次；**最多调用 `zju_login` 两次**，不要无限弹窗。
+- 按 `zju_login` 返回的 `reason` 给一条动作：
+  - `no_browser`：本机没有 Edge / Chrome / Chromium。安装浏览器后重试；
+    无图形界面的服务器改用 `ZJU_COOKIE_FILE`。
+  - `devtools_blocked` / `launch_failed`：企业策略或安全软件拦截了本机调试端口。
+    重试一次；仍失败改用 `ZJU_COOKIE_FILE`。
+  - `timeout` / `closed`：用户没有在时限内完成登录，或提前关了窗口；重试一次即可。
+  - `save_failed`：本次会话可用，但重启后需要重新登录。检查用户目录写权限；
+    或改用 `ZJU_COOKIE_FILE`。
+  - `bad_url`：只传 `https://*.zju.edu.cn` 的课堂链接，不要传其他站点。
+- 如果 `zju_doctor(login=true)` 仍报 `abe` / `decrypt_failed` / `locked` / `no_rows`：
+  **不要建议反复退出 Edge**，直接调用 `zju_login`。这些原因只说明「读 Edge 数据库」失败，
+  与独立登录窗口无关。
+- **高级兜底**（仅当 `zju_login` 不可用，例如无图形界面的服务器）：
+  配置 `ZJU_COOKIE_FILE`，文件内只放一行 Cookie 头（含 `_token`），
+  不要把文件内容发给模型或贴进对话。`ZJU_COOKIE` / `ZJU_COOKIE_FILE` 存在时优先级最高，
+  配错会挡住 `zju_login`；指导用户检查或移除后再重试。
 - 若登录态显示可用但 401/403 仍存在：请用户确认官网同一账号能看同一节课的字幕，
-  然后更新本机登录态；**不要直接归因校园网，不要更换后端或主机**。
+  然后重新调用 `zju_login`；**不要直接归因校园网，不要更换后端或主机**。
 - 若接口返回业务错误（code≠0）或列表为空：检查 `sub_id`、课程权限、字幕是否已生成。
 
 ### B. 找不到命令或工具
 
-- `/zju-lecture-summarizer` 生成讲义；`/zju-lecture-summarizer-help` 是本排查命令。
-- 默认注册 6 个核心工具；投影（`enableSlides`）、填空笔记（`enableStudyNotes`）、
-  登录辅助工具（`enableLoginTools`）是独立可选开关。
+- `/zju-lecture-summarizer` 生成讲义；`/zju-lecture-summarizer-help` 是本排查命令；
+  `/zju-lecture-summarizer-login` 只负责打开登录窗口 / 清除本机登录态。
+- 默认注册 7 个核心工具（含 `zju_login` 与 `zju_doctor`）；投影（`enableSlides`）、
+  填空笔记（`enableStudyNotes`）、登录辅助工具（`enableLoginTools`）是独立可选开关。
 - 修改设置后必须**完全重启 DeepSeek Harness**，当前会话不会热加载新工具集。
-- 字幕鉴权不受 `enableLoginTools` 影响，不要把“登录辅助关闭”误判成字幕不可用。
+- 字幕鉴权与 `zju_login` 都不受 `enableLoginTools` 影响，不要把“登录辅助关闭”误判成字幕不可用。
+- 用户想清除本机登录态时，调用 `zju_login(clear=true)`，不要手工删文件。
 
 ### C. PDF / Typst
 
@@ -67,7 +82,8 @@ description: 浙大智云课堂插件的登录辅助与故障排查（401/403、
 
 ### E. 投影 / 填空笔记
 
-- 投影抓取需要 `enableSlides` 与可用登录态；填空笔记需要 `enableStudyNotes` 与本机 Typst。
+- 投影抓取需要 `enableSlides` 与可用登录态；登录态问题同样走 `zju_login`。
+- 填空笔记需要 `enableStudyNotes` 与本机 Typst。
 - 两个模块互不依赖；失败时先确认对应开关与 `zju_doctor`，不要混在一起猜。
 
 ## 回复格式

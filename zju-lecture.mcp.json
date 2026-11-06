@@ -15,8 +15,8 @@
         "ZJU_RENDER_PDF": "0",
         "ZJU_TYPST_AUTO_INSTALL": "1"
       },
-      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放；字幕先匿名，401/403 时自动使用本机登录态重试一次。dsh 插件默认会自动排版同名 PDF，MCP 这里默认关闭（ZJU_RENDER_PDF=1 开启）。打开后若本机没有 Typst，插件会按 ZJU_TYPST_AUTO_INSTALL=1 自动下载官方版本（约 20 MB，SHA256 固定）到用户缓存目录，也可设为 0 关闭、改用 ZJU_TYPST_BIN 指定已有 Typst。投影截图（ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）、填空笔记（ZJU_ENABLE_STUDY_NOTES）与登录辅助工具（ZJU_ENABLE_LOGIN_TOOLS）都是独立可选模块，默认 0；字幕鉴权不受最后一个开关影响。",
-      "timeout": 300000
+      "description": "以「语音字幕 + 本地课件」为主链路整理浙大智云课堂回放；字幕先匿名，401/403 时自动使用本机登录态重试一次。仍失败时 zju_login 会打开独立登录窗口，用户正常登录后自动安全保存登录态（Windows DPAPI；macOS / Linux 0600），不保存密码。dsh 插件默认会自动排版同名 PDF，MCP 这里默认关闭（ZJU_RENDER_PDF=1 开启）。打开后若本机没有 Typst，插件会按 ZJU_TYPST_AUTO_INSTALL=1 自动下载官方版本（约 20 MB，SHA256 固定）到用户缓存目录，也可设为 0 关闭、改用 ZJU_TYPST_BIN 指定已有 Typst。投影截图（ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）、填空笔记（ZJU_ENABLE_STUDY_NOTES）与登录辅助工具（ZJU_ENABLE_LOGIN_TOOLS）都是独立可选模块，默认 0；字幕鉴权与 zju_login 不受最后一个开关影响。",
+      "timeout": 600000
     }
   }
 }

@@ -32,6 +32,14 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
+from zju_lecture.browser_login import (
+    LoginError,
+    clear_session,
+    load_session_cookie,
+    login_available,
+    open_login_window,
+    session_summary,
+)
 from zju_lecture.client import (
     TranscriptAuthError,
     ZJUAPIError,
@@ -230,7 +238,12 @@ def server_instructions() -> str:
     """MCP initialize instructions, reflecting the current feature gates."""
     parts = [
         "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取。"
-        "字幕先匿名请求；401/403 时自动使用本机登录态重试一次，无需开启登录辅助工具。",
+        "字幕先匿名请求；401/403 时自动使用本机登录态重试一次，无需开启登录辅助工具。"
+        "本机没有可用登录态、或登录态已失效时，调用 zju_login(url=<这节课链接>) "
+        "打开独立登录窗口：用户只需在窗口里正常登录，窗口会自动关闭并把登录态安全保存在本机；"
+        "不要让用户打开开发者工具复制 Cookie，也不要索要 Cookie / 密码。",
+        "登录态来源顺序：进程缓存 → ZJU_COOKIE → ZJU_COOKIE_FILE → zju_login 保存的本机登录态 → 本机 Edge。"
+        "ZJU_COOKIE / ZJU_COOKIE_FILE 是高级兜底，存在且损坏时会挡住 zju_login。",
         "主链路：把链接或 sub_id 直接交给 zju_fetch_transcript（默认 per_minute；"
         "长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用）"
         "→ 可选 zju_extract_courseware → zju_write_note（自动命名、拒绝静默覆盖、"
@@ -273,7 +286,8 @@ def server_instructions() -> str:
             "字幕鉴权仍由核心链路自动完成，投影抓取也自行解析登录态。"
         )
     parts.append(
-        "任何工具都不接受也不回显 Cookie 明文；登录态只能来自本地配置或本机 Edge。"
+        "任何工具都不接受也不回显 Cookie 明文；登录态只来自本机配置、zju_login 保存的"
+        "本机登录态或本机 Edge，绝不进入对话与工具参数。"
         + slide_image_mode_text()
     )
     return "".join(parts)
@@ -318,10 +332,14 @@ def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str], Opti
     """Return ``(cookie, error_message, source, reason)``.
 
     Source order: in-memory cache → ``ZJU_COOKIE`` → ``ZJU_COOKIE_FILE`` →
-    local Edge. The error text is actionable and never contains a cookie
-    value. ``reason`` is a machine-readable code (``abe`` / ``locked`` /
-    ``no_rows`` / ``env_invalid`` …) so a caller can print exactly one
-    conclusion instead of a list of maybes.
+    the session saved by ``zju_login`` → local Edge. Explicit host
+    configuration wins; otherwise the one-click login window is preferred over
+    the browser database because ABE can make Edge unreadable.
+
+    The error text is actionable and never contains a cookie value. ``reason``
+    is a machine-readable code (``abe`` / ``locked`` / ``no_rows`` /
+    ``env_invalid`` …) so a caller can print exactly one conclusion instead of
+    a list of maybes.
     """
     cached = _COOKIE_CACHE.get(DEFAULT_DOMAIN)
     if cached:
@@ -344,6 +362,10 @@ def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str], Opti
             "只含一行 name=value 形式的 Cookie）。"
         ), None, "file_unreadable"
 
+    session_cookie = load_session_cookie()
+    if session_cookie:
+        return _remember_cookie(session_cookie), None, "session", None
+
     cookie, error = read_edge_cookies(DEFAULT_DOMAIN)
     if cookie:
         return _remember_cookie(cookie), None, "edge", None
@@ -362,22 +384,43 @@ def _resolve_cookie() -> Tuple[Optional[str], Optional[str], Optional[str], Opti
 #: The old code pasted every possibility into one paragraph, which produced
 #: messages like "请完全退出 Edge 后重试；本机已启用 ABE，退出 Edge 也无法解密"
 #: — advice that contradicts itself and tells the agent nothing about which
-#: path to take. Each reason now maps to exactly one action.
+#: path to take. Each reason now maps to exactly one action. The default is
+#: the one-click login window; `ZJU_COOKIE_FILE` stays as the advanced
+#: fallback for headless hosts, not as the first thing a normal user sees.
 COOKIE_FAILURE_ACTIONS: Dict[str, str] = {
-    "abe": "退出 Edge 无效（ABE 的密钥与浏览器进程绑定）：请在宿主配置里设置 ZJU_COOKIE_FILE"
-    " 环境变量（文件内只放一行 Cookie 头，不要粘贴到对话里），然后重试。",
-    "locked": "完全退出 Edge（含后台驻留进程）后重试；或在宿主配置里设置 ZJU_COOKIE_FILE。",
-    "no_rows": "先在 Edge 里登录智云课堂，或在宿主配置里设置 ZJU_COOKIE_FILE，然后重试。",
-    "decrypt_failed": "Edge 的新版 Cookie 无法在浏览器外解密：改用 ZJU_COOKIE_FILE 环境变量。",
-    "not_found": "确认本机 Edge 至少登录过一次智云课堂，或改用 ZJU_COOKIE_FILE。",
-    "db_error": "完全退出 Edge 后重试，或改用 ZJU_COOKIE_FILE。",
-    "unsupported_platform": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量。",
-    "keychain_denied": "在弹出的钥匙串授权框选择『始终允许』，或改用 ZJU_COOKIE_FILE。",
-    "no_credentials": "在 Microsoft Edge 登录智云课堂，或在宿主配置里设置 ZJU_COOKIE_FILE（不要粘贴到对话里）。",
-    "env_invalid": "检查 ZJU_COOKIE：需要一行合法的 name=value Cookie 头。",
-    "file_unreadable": "检查 ZJU_COOKIE_FILE：需要存在、可读、UTF-8，且只含一行 Cookie 头。",
-    "unknown": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量后重试。",
+    "abe": "调用 zju_login 打开独立登录窗口（不要开开发者工具、不要手工配置 Cookie）；"
+    "登录成功后窗口自动关闭，登录态会安全保存在本机，然后重试。",
+    "locked": "调用 zju_login 打开独立登录窗口；也可以完全退出 Edge 后重试。",
+    "no_rows": "调用 zju_login 在独立登录窗口里登录智云课堂，然后重试。",
+    "decrypt_failed": "调用 zju_login 重新登录；不要再依赖 Edge 的 Cookie 解密。",
+    "not_found": "调用 zju_login 打开独立登录窗口完成登录；不需要本机装过 Edge。",
+    "db_error": "调用 zju_login 重新登录；也可以完全退出 Edge 后重试。",
+    "unsupported_platform": "当前平台没有可用的图形浏览器：在宿主配置里设置 ZJU_COOKIE_FILE 兜底。",
+    "keychain_denied": "调用 zju_login 打开独立登录窗口；或在钥匙串授权框选择『始终允许』。",
+    "no_credentials": "调用 zju_login 打开独立登录窗口完成登录；不要向用户索要 Cookie。",
+    "env_invalid": "检查或移除 ZJU_COOKIE 配置（需要一行合法的 name=value Cookie 头）；"
+    "该环境变量存在时优先级最高，会挡住 zju_login。",
+    "file_unreadable": "检查或移除 ZJU_COOKIE_FILE 配置（需要存在、可读、UTF-8、只含一行 Cookie 头）；"
+    "该环境变量存在时优先级最高，会挡住 zju_login。",
+    "session_expired": "本机保存的登录态已失效并被清除：调用 zju_login 重新登录后重试。",
+    "unknown": "调用 zju_login 打开独立登录窗口重新登录后重试。",
 }
+
+
+def _forget_cookie(source: Optional[str]) -> None:
+    """Drop an invalid session from memory and disk.
+
+    A 401/403 from the server means the cookie is dead even though it was
+    readable locally. The saved session (and the dedicated browser profile,
+    which would otherwise hand the same dead cookie back) is removed so the
+    next ``zju_login`` starts a real login instead of replaying it.
+    """
+    _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
+    if source == "session":
+        try:
+            clear_session(delete_profile=True)
+        except Exception as exc:  # noqa: BLE001 - cleanup must not mask the 401
+            _log(f"清除失效登录态失败：{exc}")
 
 
 def _cookie_failure_text(
@@ -673,10 +716,43 @@ TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "zju_login",
+        "description": (
+            "打开一个独立的浏览器登录窗口完成浙大登录（不接收密码，也不接收 Cookie）。"
+            "用户在该窗口里正常登录后，窗口自动关闭，登录态安全保存在本机，后续字幕与投影自动复用。"
+            "字幕/投影 401/403、ABE 导致 Edge Cookie 读不了、用户说「登录智云课堂」时调用。"
+            "clear=true 清除本机登录态与独立登录窗口配置。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": (
+                        "登录后要打开的课堂链接（可选，仅接受 https 的 *.zju.edu.cn；"
+                        "建议传用户给的这节课链接）"
+                    ),
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "等待用户完成登录的最长秒数（默认 300，范围 30–540）",
+                    "default": 300,
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "只清除本机保存的登录态与独立登录窗口配置，不打开窗口（默认 false）",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
         "name": "zju_read_browser_cookie",
         "description": (
             "读取本机 Edge 的 classroom.zju.edu.cn 登录态（含父域 .zju.edu.cn 的 _token）"
             "到服务端内存；只返回名称与长度，绝不回显明文，无参数。"
+            "Edge 启用 ABE 时会失败；这种情况改用 zju_login。"
         ),
         "inputSchema": {
             "type": "object",
@@ -787,10 +863,11 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "zju_doctor",
         "description": (
             "检查本机依赖并给出可执行结论：Python、Typst（版本 / 路径 / 来源 / 是否满足 ≥0.13）、"
-            "随包中文字体与离线 Typst 包、缓存目录；login=true 时额外检查登录态是否可用。"
+            "随包中文字体与离线 Typst 包、缓存目录、登录窗口是否可用、本机是否保存了登录态；"
+            "login=true 时额外验证登录态是否真的可用。"
             "install=true 时下载并校验安装 Typst"
             "（SHA256 固定，仅官方 Release；可用 ZJU_TYPST_AUTO_INSTALL=0 关闭自动安装）。"
-            "PDF 失败或用户问「为什么没有 PDF」时先跑它。"
+            "PDF 失败或用户问「为什么没有 PDF」时先跑它；没有任何输出时先跑它，再调用一次 zju_login。"
         ),
         "inputSchema": {
             "type": "object",
@@ -981,6 +1058,15 @@ def _note_cover_meta(note_path: str, note_text: str) -> Tuple[str, str]:
     return title, date_match.group(1) if date_match else ""
 
 
+_LOGIN_SOURCE_LABELS = {
+    "cache": "进程内缓存",
+    "env": "ZJU_COOKIE",
+    "file": "ZJU_COOKIE_FILE",
+    "session": "zju_login 安全保存",
+    "edge": "本机 Edge",
+}
+
+
 def _login_status_text() -> List[str]:
     """One concise login-status block for ``zju_doctor`` (never prints credential values)."""
     try:
@@ -989,15 +1075,28 @@ def _login_status_text() -> List[str]:
         return ["登录态: 检查失败（内部错误）"]
     if cookie:
         token = extract_classroom_token(cookie)
-        return [
-            f"登录态: 可用（来源 {source}；Bearer {'可用' if token else '缺失'}）",
+        label = _LOGIN_SOURCE_LABELS.get(source or "", source or "未知")
+        lines = [
+            f"登录态: 可用（来源 {source}（{label}）；Bearer {'可用' if token else '缺失'}）",
             "  字幕匿名被拒时会自动使用；无需开启登录辅助。",
         ]
+        summary = session_summary()
+        if summary.get("available"):
+            lines.append(
+                "  本机保存的登录态: 存在"
+                f"（{summary.get('cookie_count', 0)} 条 Cookie，"
+                f"浏览器 {summary.get('browser') or '未知'}）"
+            )
+        return lines
     action = COOKIE_FAILURE_ACTIONS.get(reason or "unknown", COOKIE_FAILURE_ACTIONS["unknown"])
     lines = [f"登录态: 不可用（原因 {reason or 'unknown'}）"]
     if error:
         lines.append(f"  说明: {REDACTOR.redact(error)}")
     lines.append(f"  修复: {action}")
+    available, detail = login_available()
+    lines.append(
+        "  登录窗口: " + ("可用（" + detail + "）" if available else "不可用（" + detail + "）")
+    )
     return lines
 
 
@@ -1040,6 +1139,24 @@ def _doctor_report(install: bool, check_login: bool = False) -> str:
     )
     lines.append(f"汇编缓存: {info['compile_cache'] or '(未指定工作区)'}")
     lines.append(f"自动安装: {'开' if auto else '关'}（ZJU_TYPST_AUTO_INSTALL）")
+    summary = session_summary()
+    if summary.get("available"):
+        saved_at = summary.get("saved_at")
+        stamp = ""
+        if isinstance(saved_at, (int, float)):
+            stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(saved_at))
+        lines.append(
+            "本机登录态: 已保存"
+            f"（{summary.get('cookie_count', 0)} 条 Cookie，浏览器 {summary.get('browser') or '未知'}"
+            + (f"，保存于 {stamp}" if stamp else "")
+            + "；不含账号密码）"
+        )
+    else:
+        lines.append("本机登录态: 未保存（需要时调用 zju_login 打开独立登录窗口）")
+    login_ok, login_detail = login_available()
+    lines.append(
+        "登录窗口: " + ("可用（" + login_detail + "）" if login_ok else "不可用（" + login_detail + "）")
+    )
     if check_login:
         lines.extend(_login_status_text())
     else:
@@ -1361,6 +1478,55 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         parsed = parse_lecture_url(str(arguments.get("url", "")))
         return json.dumps(parsed, ensure_ascii=False, indent=2)
 
+    if name == "zju_login":
+        if arguments.get("clear"):
+            result = clear_session(delete_profile=True)
+            _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
+            lines = [
+                "已清除本机保存的登录态。"
+                if result.get("session_removed")
+                else "本机没有保存的登录态。"
+            ]
+            if result.get("profile_removed"):
+                lines.append("独立登录窗口的浏览器配置也已删除。")
+            if result.get("profile_error"):
+                lines.append(
+                    "独立登录窗口配置未能删除："
+                    f"{REDACTOR.redact(result['profile_error'])}。"
+                    "请先关闭该登录窗口，再重试清除。"
+                )
+            return "\n".join(lines)
+
+        timeout = arguments.get("timeout_seconds") or 300
+        try:
+            result = open_login_window(str(arguments.get("url") or ""), timeout)
+        except LoginError as exc:
+            raise ZJUAPIError(
+                f"登录未完成（原因: {exc.reason}）。\n"
+                f"说明: {REDACTOR.redact(exc.message)}\n"
+                f"下一步: {exc.hint or '请重试一次。'}"
+            ) from exc
+        _remember_cookie(result["cookie"])
+        lines = [
+            "登录成功，已读取本机登录态。",
+            f"- 浏览器: {result['browser']}",
+            f"- Cookie: {len(result['names'])} 条（含 _token，值不回显）",
+            f"- 用时: {result['elapsed']} 秒",
+        ]
+        if result.get("saved"):
+            lines.append(
+                f"- 保存: 已安全保存到 {result['saved_path']}"
+                "（仅当前系统用户可解密；不包含账号密码）"
+            )
+        else:
+            lines.append(
+                "- 保存: 未落盘（"
+                f"{REDACTOR.redact(result.get('save_error') or '未知原因')}）；"
+                "本次会话仍可用，但重启后需要重新登录"
+            )
+        lines.append("现在可以重试字幕或投影抓取，不需要再操作浏览器。")
+        return "\n".join(lines)
+
     if name == "zju_fetch_transcript":
         parsed = parse_lecture_url(str(arguments.get("url_or_sub_id", "")))
         sub_id = parsed["sub_id"]
@@ -1378,7 +1544,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         except TranscriptAuthError as exc:
             # 字幕鉴权属于核心链路，不依赖「登录辅助」工具开关：用户默认安装
             # 即可使用。只有匿名请求确实被拒绝时才读取本机登录态。
-            cookie, cookie_error, _source, reason = _resolve_cookie()
+            cookie, cookie_error, source, reason = _resolve_cookie()
             if not cookie:
                 raise ZJUAPIError(
                     f"{exc}\n"
@@ -1388,18 +1554,24 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                         cookie_error,
                         degrade_hint=(
                             "字幕匿名请求被拒绝；插件只在这一步读取本机登录态。"
-                            "请在 Microsoft Edge 登录智云课堂，或在宿主配置 ZJU_COOKIE_FILE。"
-                            "不要把 Cookie 贴进对话。"
+                            "需要登录时调用 zju_login(url=<这节课链接>) 打开独立登录窗口，"
+                            "不要让用户开开发者工具、手工配置 Cookie，也不要把 Cookie 贴进对话。"
                         ),
                     )
                 ) from exc
             try:
                 raw_segments = fetch_transcript(sub_id, tenant, cookie=cookie)
             except TranscriptAuthError as auth_exc:
-                _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
+                _forget_cookie(source)
+                session_note = (
+                    "已清除本机保存的登录态；请调用 zju_login 重新登录后重试。"
+                    if source == "session"
+                    else "请调用 zju_login 重新登录后重试。"
+                )
                 raise ZJUAPIError(
-                    f"字幕携带本机登录态后仍返回 HTTP {auth_exc.status}，已停止重试。"
-                    "请确认该账号在官网能查看同一节课；若仍失败，请更新本机登录态。"
+                    f"字幕携带本机登录态（来源 {source}）后仍返回 HTTP {auth_exc.status}，"
+                    f"已停止重试。{session_note}"
+                    "若登录后仍失败，请确认该账号在官网能查看同一节课；"
                     "不能仅凭此错误断定是校园网限制。"
                 ) from auth_exc
         full_duration = (
@@ -1460,7 +1632,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         dedup = True if dedup_arg is None else bool(dedup_arg)
         output_dir = str(arguments.get("output_dir") or "").strip()
 
-        cookie, cookie_error, _source, reason = _resolve_cookie()
+        cookie, cookie_error, source, reason = _resolve_cookie()
         if not cookie:
             return _cookie_failure_text(
                 "PPT 记录",
@@ -1479,6 +1651,19 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         )
         if not slides_data:
             reason_text = "\n".join(f"- {item}" for item in diagnostics) or "- 未获得具体原因"
+            auth_failed = any(
+                marker in item
+                for item in diagnostics
+                for marker in ("HTTP 401", "HTTP 403", "未解析到 _token", "缺少 _token")
+            )
+            if auth_failed:
+                _forget_cookie(source)
+                return _cookie_failure_text(
+                    "PPT 记录",
+                    "session_expired" if source == "session" else "no_credentials",
+                    "投影接口拒绝了当前登录态，或 Cookie 中没有可用的 _token。",
+                    degrade_hint="（流水线可平滑降级：没有 PPT 也能仅凭语音字幕生成讲义。）",
+                )
             return (
                 "未抓取到 PPT 记录（原因: no_slides）。\n"
                 "登录态可用，但接口没有返回截图列表。\n"
