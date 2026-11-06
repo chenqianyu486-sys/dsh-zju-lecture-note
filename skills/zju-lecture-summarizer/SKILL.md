@@ -8,6 +8,9 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 本 Skill 指导 Agent 把浙江大学「智云课堂」（`classroom.zju.edu.cn`）的长篇课堂录音与回放，
 转化为高浓度、前后一致、方便期末复习的结构化知识讲义。字幕先匿名，401/403 时由工具自动使用本机登录态重试。
 
+> 遇到登录 / 401/403 / 依赖问题，用户可调用 `/zju-lecture-summarizer-help` 排查；
+> 不要向用户索要 Cookie，也不要把凭据贴进对话。
+
 ## 1. 可用工具
 
 | 工具 | 用途 | 访问条件 |

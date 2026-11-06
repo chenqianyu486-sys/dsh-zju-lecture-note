@@ -101,10 +101,17 @@ class TestToolDefinitions(unittest.TestCase):
             self.assertEqual(len(payload["toolsWithSlides"]), len(TOOLS))
             self.assertIn("zju_fetch_slides", payload["toolsWithSlides"])
             self.assertIn("zju_build_study_notes", payload["toolsWithStudy"])
-            self.assertEqual(payload["skills"], ["zju-lecture-summarizer"])
+            self.assertEqual(
+                payload["skills"],
+                ["zju-lecture-summarizer", "zju-lecture-summarizer-help"],
+            )
             self.assertEqual(
                 payload["skillsWithStudy"],
-                ["zju-lecture-summarizer", "scholia-notes"],
+                ["zju-lecture-summarizer", "zju-lecture-summarizer-help", "scholia-notes"],
+            )
+            self.assertEqual(
+                payload["helpInvocation"],
+                {"modelInvocable": False, "userInvocable": True},
             )
             self.assertTrue(payload["skillHasSlides"])
             self.assertEqual(payload["skill"], "zju-lecture-summarizer")
@@ -194,6 +201,7 @@ class TestPackage(unittest.TestCase):
         # （files 字段的优先级高于 .npmignore）。
         self.assertNotIn("zju_lecture", manifest["files"])
         self.assertIn("skills/zju-lecture-summarizer", manifest["files"])
+        self.assertIn("skills/zju-lecture-summarizer-help", manifest["files"])
         self.assertIn("SECURITY.md", manifest["files"])
         self.assertIn("@deepseek-ai/dsh-tools", manifest["peerDependencies"])
         # 隐私：不要声明用不到的 peer，减少版本不匹配面。
@@ -221,6 +229,14 @@ class TestPackage(unittest.TestCase):
         self.assertIn("公式书写规范", content)
         self.assertIn("zju_check_note", content)
         self.assertIn("不要在回复里回显登录 Cookie 明文", content)
+
+    def test_help_command_is_shipped_with_privacy_guardrails(self):
+        content = read_text("skills", "zju-lecture-summarizer-help", "SKILL.md")
+        self.assertIn("zju-lecture-summarizer-help", content)
+        self.assertIn("不要要求用户把 Cookie", content)
+        self.assertIn("zju_doctor(login=true)", content)
+        self.assertIn("不要建议关闭 TLS", content)
+        self.assertIn("401/403", content)
 
     def test_bridge_points_at_the_python_core(self):
         content = read_text("lib", "bridge.js")

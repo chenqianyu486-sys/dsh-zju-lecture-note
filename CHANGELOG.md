@@ -15,6 +15,8 @@
   代理 URL 的 userinfo 在诊断中掩码。
 - **用户引导**：README 首屏说明首次登录与 401/403 处理；插件设置页、Skill 同步更新；
   `zju_doctor(login=true)` 可选检查登录态与 Bearer 可用性，默认不读取凭据。
+- **新增用户命令**：`/zju-lecture-summarizer-help` 面向登录辅助与查错（401/403、登录态、
+  代理、Typst/PDF、工具开关）。它只对用户命令可见、不进入模型技能目录，且明确禁止索要或回显凭据。
 - **CLI 默认自动重试**：`fetch` 在 401/403 后自动使用本机登录态；`--no-login` 可关闭，
   `--cookie-file` 可指定本地文件，不新增明文 token 参数。
 

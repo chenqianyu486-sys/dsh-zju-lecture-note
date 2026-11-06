@@ -11,7 +11,8 @@
  *   - 打开填空笔记：额外注册 zju_build_study_notes，并加载 scholia-notes Skill；
  *   - 打开投影/登录辅助：额外注册对应工具，Skill 追加 SLIDES.md 附录。
  *
- * 随包分发两个 Skill（zju-lecture-summarizer / scholia-notes）；后者只在
+ * 随包分发三个 Skill（zju-lecture-summarizer / zju-lecture-summarizer-help /
+ * scholia-notes）；help 只面向用户命令、不进入模型目录，scholia-notes 只在
  * enableStudyNotes 打开时注册。
  *
  * 依赖 `node_modules/@deepseek-ai/*`（开发环境从本机 dsh 安装链接即可）。
@@ -161,13 +162,21 @@ try {
     if (typeof tool.execute !== "function") throw new Error(`${tool.name}: no execute`);
   }
 
-  if (core.skills.length !== 1) throw new Error(`expected 1 core skill, got ${core.skills.length}`);
-  if (study.skills.length !== 2) throw new Error(`expected 2 skills with study mode, got ${study.skills.length}`);
-  if (full.skills.length !== 2) throw new Error(`expected 2 full skills, got ${full.skills.length}`);
+  if (core.skills.length !== 2) throw new Error(`expected 2 core skills, got ${core.skills.length}`);
+  if (study.skills.length !== 3) throw new Error(`expected 3 skills with study mode, got ${study.skills.length}`);
+  if (full.skills.length !== 3) throw new Error(`expected 3 full skills, got ${full.skills.length}`);
   const coreSkill = core.skills[0];
-  const studySkill = study.skills[1];
+  const helpSkill = core.skills[1];
+  const studySkill = study.skills[2];
   const fullSkill = full.skills[0];
   if (coreSkill.name !== "zju-lecture-summarizer") throw new Error(`unexpected skill name ${coreSkill.name}`);
+  if (helpSkill.name !== "zju-lecture-summarizer-help") throw new Error(`unexpected help skill name ${helpSkill.name}`);
+  if (!helpSkill.content.includes("隐私红线")) throw new Error("help skill missing the privacy guardrails");
+  if (!helpSkill.content.includes("zju_doctor(login=true)")) throw new Error("help skill does not mention the opt-in login check");
+  if (!helpSkill.description) throw new Error("help skill description is empty");
+  if (helpSkill.invocation?.modelInvocable !== false || helpSkill.invocation?.userInvocable !== true) {
+    throw new Error(`help skill must be user-only: ${JSON.stringify(helpSkill.invocation)}`);
+  }
   if (studySkill.name !== "scholia-notes") throw new Error(`unexpected second skill name ${studySkill.name}`);
   if (!studySkill.content.includes("zju_build_study_notes")) throw new Error("scholia-notes skill does not mention the study-notes tool");
   if (!studySkill.description) throw new Error("scholia-notes description is empty");
@@ -214,6 +223,7 @@ try {
     skill: coreSkill.name,
     skills: core.skills.map((item) => item.name),
     skillsWithStudy: study.skills.map((item) => item.name),
+    helpInvocation: helpSkill.invocation,
     skillHasSlides: fullSkill.content.includes("投影抓取模块（可选附录）"),
     section: core.sections[0].name,
     result: result.text.trim().replace(/\s+/g, " "),

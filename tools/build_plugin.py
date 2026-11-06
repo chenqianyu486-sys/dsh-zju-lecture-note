@@ -67,6 +67,7 @@ PACKAGE_FILES = [
     "docs/technical.md",
     "skills/zju-lecture-summarizer/SKILL.md",
     "skills/zju-lecture-summarizer/SLIDES.md",
+    "skills/zju-lecture-summarizer-help/SKILL.md",
 ]
 PACKAGE_DIRS = ["zju_lecture"]
 

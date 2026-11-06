@@ -47,6 +47,8 @@
     "zju_lecture/typst-packages",
     "skills/zju-lecture-summarizer",
     "skills/zju-lecture-summarizer.manifest.json",
+    "skills/zju-lecture-summarizer-help",
+    "skills/zju-lecture-summarizer-help.manifest.json",
     "skills/scholia-notes",
     "skills/scholia-notes.manifest.json",
     "icon.png",

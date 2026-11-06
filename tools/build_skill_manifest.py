@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """生成各 Skill 的文件清单（sha256 审计用）。
 
-插件现在随包分发两个 Skill，清单脚本要能一次覆盖它们 —— 清单是
+插件现在随包分发三个 Skill，清单脚本要能一次覆盖它们 —— 清单是
 「装到用户机器上的那份」与「仓库里这份」是否一致的凭据，少一个就少一个
 可核对的地方。
 
@@ -27,6 +27,7 @@ ROOT = os.path.dirname(HERE)
 #: 随包分发的 Skill。清单里的版本号统一取插件主版本，不再各写各的。
 SKILLS = (
     "zju-lecture-summarizer",
+    "zju-lecture-summarizer-help",
     "scholia-notes",
 )
 

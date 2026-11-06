@@ -15,7 +15,7 @@
 - 进入插件→添加插件，复制 npm 包名 dsh-zju-lecture-note 或仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
 - 安装并启用插件
 - 首次使用：在 **Microsoft Edge**（Windows / macOS）登录智云课堂，或配置 `ZJU_COOKIE_FILE`（一行 Cookie 头）。字幕先匿名，401/403 时自动用本机登录态重试一次，不需要开启「登录辅助」。
-- 在新会话中键入 /zju-lecture-summarizer 即可使用插件总结课堂内容，例：  
+- 新会话输入 /zju-lecture-summarizer 总结课程；登录 / 401/403 / 依赖问题输入 /zju-lecture-summarizer-help。例：
 ```text
 /zju-lecture-summarizer 帮我总结课程内容 https://classroom.zju.edu.cn/livingroom?course_id=87517&sub_id=1988617&tenant_code=112
 ```

@@ -42,6 +42,8 @@ dsh-zju-lecture-note/
 │   └── cli.py                     # 命令行入口
 ├── skills/zju-lecture-summarizer/ # 讲义生成 SOP（五段式模板 + 公式规范）
 ├── skills/zju-lecture-summarizer.manifest.json
+├── skills/zju-lecture-summarizer-help/ # 用户命令：登录辅助与故障排查
+├── skills/zju-lecture-summarizer-help.manifest.json
 ├── skills/scholia-notes/          # 填空式学习笔记 Skill（MIT，独立授权）
 │   ├── SKILL.md / LICENSE / README.md / THIRD_PARTY_NOTICES.md
 │   ├── references/                # API / 风格指南 / 排错 / 格式规范
@@ -181,6 +183,9 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 - 投影抓取与填空笔记互不依赖；登录辅助也与投影抓取解耦——投影工具会自己解析登录态。
 - 登录辅助默认关闭（dsh `enableLoginTools=false`），只影响视频直链与读 Cookie 工具，不影响字幕。
   字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，也不新增工具或凭据参数。
+- `zju-lecture-summarizer-help` 是仅用户可调用的 Skill
+  （`userInvocable: true` / `modelInvocable: false`），对应输入框 `/zju-lecture-summarizer-help`；
+  只做登录、401/403、代理与依赖排查，不进入模型技能目录，避免干扰正常的讲义生成。
 
 ### 环境变量
 
@@ -517,7 +522,7 @@ dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳
 ### 版本号
 
 版本在**六处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
-`.minimax-plugin/plugin.json`、两个 Skill manifest（由 `tools/build_skill_manifest.py` 生成）。
+`.minimax-plugin/plugin.json`、三个 Skill manifest（由 `tools/build_skill_manifest.py` 生成）。
 `tests/test_dsh_plugin.py` 会断言。
 
 ### 插件市场条目
