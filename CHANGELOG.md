@@ -1,7 +1,7 @@
 # 更新日志
 
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
-`.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
+`.minimax-plugin/plugin.json` 与四个 Skill manifest 八处对齐。
 
 ## 2.2.5 — 2026-11-06
 
@@ -11,7 +11,7 @@
 - **兼容老课程字幕**：`trans_type=ai` 返回 `time` / `zhtext` / `entext` 而非 `BeginSec` / `Text`，
   现在以第一条时间戳为相对零点换算秒数，旧课程也能生成讲义。
 - **错误诊断更准确**：区分 HTTP 拒绝、接口业务错误与凭据读取失败；不再把 403 直接归因校园网。
-  读不到凭据 / 遇到 ABE 时提示在 Edge 登录或配置 `ZJU_COOKIE_FILE`，不索要 Cookie；
+  读不到凭据 / 遇到 ABE 时调用 `zju_login` 打开独立登录窗口，不索要 Cookie；
   代理 URL 的 userinfo 在诊断中掩码。
 - **用户引导**：README 首屏说明首次登录与 401/403 处理；插件设置页、Skill 同步更新；
   `zju_doctor(login=true)` 可选检查登录态与 Bearer 可用性，默认不读取凭据。
@@ -19,6 +19,27 @@
   代理、Typst/PDF、工具开关）。它只对用户命令可见、不进入模型技能目录，且明确禁止索要或回显凭据。
 - **CLI 默认自动重试**：`fetch` 在 401/403 后自动使用本机登录态；`--no-login` 可关闭，
   `--cookie-file` 可指定本地文件，不新增明文 token 参数。
+
+### 一键登录窗口（2026-11-06 追加，仍在 2.2.5）
+
+**不再让用户开开发者工具配 Cookie。**
+
+- **`zju_login` 常驻工具**：字幕 / 投影遇到 401/403、或本机 Edge 因 ABE 无法读取时，
+  插件用独立浏览器 profile 打开登录窗口（不碰日常 Edge）。用户正常登录（SSO / 2FA 由页面处理），
+  插件通过 `127.0.0.1` 随机端口从浏览器进程内读取 Cookie，成功后自动关闭窗口。
+- **登录态安全保存**：只保存 Cookie（不保存账号密码），Windows 用 DPAPI 绑定当前用户，
+  macOS / Linux 用 0600 文件；`zju_login(clear=true)` 一并删除登录态与独立浏览器配置。
+  登录态失效时自动清除，下次从真正的登录页开始，不重放死 Cookie。
+- **新的解析顺序**：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 登录态 → 本机 Edge。
+  `ZJU_COOKIE_FILE` 降为无图形界面服务器的高级兜底，普通用户不再需要手工配置。
+- **跨平台**：Windows / macOS / Linux 均优先 Edge，其次 Chrome / Chromium；
+  可用 `ZJU_BROWSER_BIN` 指定浏览器，`ZJU_LOGIN_DIR` 覆盖状态目录。
+- **新用户命令** `/zju-lecture-summarizer-login`：只负责打开登录窗口或清除本机登录态。
+  主 Skill 与 help Skill 同步改写 401/403 SOP，禁止索要 Cookie、密码或开发者工具内容。
+- **工具集**：默认 7 个核心工具、全开 11 个；核心 Skill 3 个（主 Skill / help / login），
+  填空模式再加 scholia-notes。设置页说明「登录入口始终可用」，`enableLoginTools` 只控制两个可选辅助工具。
+- **回归**：新增 `tests/test_login_v225.py`（23 条），覆盖安全存储、Cookie 域过滤、
+  URL 白名单、解析顺序、失效清除、`clear=true` 与无浏览器失败原因。
 
 ## 2.2.4 — 2026-11-05
 

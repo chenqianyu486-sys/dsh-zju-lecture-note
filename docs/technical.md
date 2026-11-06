@@ -25,6 +25,7 @@ dsh-zju-lecture-note/
 ├── zju_lecture/                   # 核心库（纯标准库）
 │   ├── client.py                  # 智云课堂 API 客户端（TLS 校验 + 同域重定向）
 │   ├── cookies.py                 # Edge Cookie 读取与安全清理
+│   ├── browser_login.py           # 一键登录窗口：CDP 取 Cookie + 安全保存 + 清除
 │   ├── security.py                # Cookie 校验 / redactor / 本地文件边界
 │   ├── paths.py                   # 工作区与相对路径解析
 │   ├── courseware.py              # 课件文本提取（带路径校验）
@@ -44,6 +45,8 @@ dsh-zju-lecture-note/
 ├── skills/zju-lecture-summarizer.manifest.json
 ├── skills/zju-lecture-summarizer-help/ # 用户命令：登录辅助与故障排查
 ├── skills/zju-lecture-summarizer-help.manifest.json
+├── skills/zju-lecture-summarizer-login/      # 用户命令：打开独立登录窗口 / 清除登录态
+├── skills/zju-lecture-summarizer-login.manifest.json
 ├── skills/scholia-notes/          # 填空式学习笔记 Skill（MIT，独立授权）
 │   ├── SKILL.md / LICENSE / README.md / THIRD_PARTY_NOTICES.md
 │   ├── references/                # API / 风格指南 / 排错 / 格式规范
@@ -72,13 +75,34 @@ dsh-zju-lecture-note/
     →（compile）scholia PDF + 逐页 PNG
 ```
 
-字幕保留 `classroom.zju.edu.cn`：先匿名请求，**仅 HTTP 401/403** 时调用现有 `_resolve_cookie`
-（内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → Edge）解析 `_token`，用 Bearer 重试一次。
+字幕保留 `classroom.zju.edu.cn`：先匿名请求，**仅 HTTP 401/403** 时调用 `_resolve_cookie`
+（进程缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 保存的本机登录态 → Edge）
+解析 `_token`，用 Bearer 重试一次。
 兼容两种返回：`ainew` 用 `BeginSec` / `Text`，老课程 `ai` 用 `time` / `zhtext` / `entext`
 （以第一条时间戳为相对零点换算秒数）。
 字幕鉴权属于核心链路，**不需要开启登录辅助工具**（`enableLoginTools` 只控制视频直链与读 Cookie 工具）。
 字幕请求**不发 Cookie 头**；官网实证同一课匿名 403、Bearer-only HTTP 200 / code 0、返回 942 条字幕，
 不需要更换主机。CLI 默认自动重试，`--no-login` 可关闭，`--cookie-file` 可指定本地文件；没有明文 token 参数。
+
+### 一键登录窗口（`zju_login`）
+
+读 Edge 数据库是次级路径：ABE 打开后，外部进程连 DPAPI 也解不开 v20 Cookie，退出 Edge 也没用。
+因此本机没有可用登录态、或登录态被服务端判定失效时，走独立登录窗口：
+
+1. `browser_login.py` 用 `--user-data-dir=<用户状态目录>/login-profile` 启动 Edge / Chrome，
+   带 `--remote-debugging-port=0`；端口只绑 `127.0.0.1`，不碰用户日常 Edge。
+2. 浏览器打开用户给的课堂链接（仅 `https://*.zju.edu.cn`）；用户在页面里完成 SSO / 2FA。
+3. 插件每 1.5s 通过 CDP `Storage.getCookies` 读取 Cookie，只保留课堂主机与
+   `.zju.edu.cn` 父域（`_token` 所在），排除其他 ZJU 子域与相似域名。
+4. 检测到可解析的 `_token` 后，`save_session()` 只保存 Cookie 头：
+   Windows 用 DPAPI（`CryptProtectData`，绑定当前用户），macOS / Linux 用 0600 文件；
+   不保存账号密码。
+5. 关闭浏览器，`zju_login` 把 Cookie 放进本进程缓存；Agent 重试字幕一次。
+6. 服务端仍返回 401/403 时，`_forget_cookie("session")` 删除登录态与专用 profile，
+   下次 `zju_login` 从真正的登录页开始，而不是重放死 Cookie。
+
+`clear=true` 删除登录态与独立浏览器 profile；无图形界面、未安装浏览器或策略禁用远程调试时，
+返回 `no_browser` / `devtools_blocked`，此时才回退到 `ZJU_COOKIE_FILE` 高级方案。
 
 ## 2. 安装形态与依赖
 
@@ -128,6 +152,15 @@ dsh plugin --profile desktop add file:/absolute/path/to/zju-lecture-agent-plugin
 本插件声明 `>=0.2.0-rc.2 <0.3.0-0`，不匹配时需要显式的版本豁免
 （`dsh plugin allow-version`）。
 
+**GitHub 安装的 5 秒预检**：dsh 宿主在启动 pnpm 前会执行
+`git -c credential.helper= ls-remote -- <repo> HEAD`，默认 5 秒超时
+（`plugin-manager` 的 `githubConnectionTimeoutMs`，最小 1000ms）。超时报
+`connection to github.com timed out after 5000ms`，此时 pnpm 尚未启动、profile 不会被修改。
+dsh 只读 `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` / `NO_PROXY`，不读 Windows 系统代理，
+git 也不读；浏览器能打开 GitHub 不代表预检能过。处置顺序：优先用 npm 包名安装（不走 GitHub）；
+必须走 GitHub 源时给 git 配代理，并让 dsh 进程能读到同一组环境变量；或在 profile 的
+`cordis.patch.yml` 里把 `plugin-manager` 的 `githubConnectionTimeoutMs` 调大后重启。
+
 **Python 探测顺序**：插件配置项 → 环境变量 `ZJU_PYTHON` → DeepSeek Harness 自带 Python →
 PATH 上的 `python3` / `python` / `py -3`。
 
@@ -155,23 +188,24 @@ PATH 上的 `python3` / `python` / `py -3`。
 ## 3. 工具与开关分层
 
 v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等可选能力解耦；可选工具按开关注册。
-字幕鉴权是核心链路的一部分：先匿名，401/403 后自动读取本机登录态；登录辅助开关只控制两个可选辅助工具。
+字幕鉴权与一键登录是核心链路的一部分：先匿名，401/403 后自动读取本机登录态，仍失败就由 `zju_login`
+打开独立登录窗口；登录辅助开关只控制两个可选辅助工具。
 
 | 分层 | 工具 | 依赖 | 默认 |
 | :--- | :--- | :--- | :--- |
-| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_doctor` | 字幕接口（先匿名，401/403 自动用本机登录态） + 本地文件 + 可选 Typst | 始终开启 |
+| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_login` / `zju_doctor` | 字幕接口（先匿名，401/403 自动用本机登录态）+ 一键登录窗口 + 本地文件 + 可选 Typst | 始终开启 |
 | **填空笔记** | `zju_build_study_notes` + `scholia-notes` Skill | 本机 Typst | 关闭（`enableStudyNotes`） |
 | **投影抓取** | `zju_fetch_slides` | 登录态 + 截图下载 + PDF 合成 | 关闭（`enableSlides`） |
 | **投影插图** | （`zju_fetch_slides` 的子开关） | 依赖投影抓取 | 关闭（`embedSlideImages`） |
-| **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie`；不影响字幕鉴权 | 内存缓存 / `ZJU_COOKIE` / `ZJU_COOKIE_FILE` / 本机 Edge | 关闭（`enableLoginTools`） |
+| **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie`；不影响字幕鉴权与 `zju_login` | 内存缓存 / `ZJU_COOKIE` / `ZJU_COOKIE_FILE` / 本机 Edge | 关闭（`enableLoginTools`） |
 
-- dsh 默认注册 **6** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
-  全开 **10** 个。
+- dsh 默认注册 **7** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
+  全开 **11** 个。
 - **`.volatile()` 字段是引用，不是布尔值**：dsh 把它们投影成 `{ get() }`，供插件在设置改动后
   读取新值。`lib/index.js` 的 `readSetting()` 统一解包；直接写 `config.enableSlides === true`
   会永远得到 `false`——2.1.1 修的「设置全开仍只有字幕」就是这个原因。新增设置项时务必走
   `readSetting()`，并补一条 ref 形状的测试。
-- MCP 未设置新变量时保持旧行为（10 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（6 个）。
+- MCP 未设置新变量时保持旧行为（11 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（7 个）。
 - 关闭时：不注册对应工具、不加载对应模块、Skill 不追加对应附录；系统提示会说明
   「这个模块已关闭」，Agent 不会调用或假装调用。
 - 实现上，`lib/index.js` 用 `registerableTools()` 过滤；`mcp_server.available_tools()`
@@ -179,13 +213,19 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 - `zju_lecture/__init__.py` 用 PEP 562 懒导出 `download_slides` / `build_slides_pdf` / `SlideError`；
   `mcp_server.py` 只在进入 `zju_fetch_slides` 分支时才导入 `zju_lecture.slides`
   （纯字幕进程的 `sys.modules` 里不会出现截图模块，有子进程测试守住）。
-- dsh 单独把 `zju_fetch_slides` 的超时提高到 600s（下载整节课截图用），其他工具仍用配置值。
+- dsh 单独把 `zju_fetch_slides` / `zju_login` 的超时提高到 600s（下载截图 / 等待用户登录），
+  其他工具仍用配置值。
 - 投影抓取与填空笔记互不依赖；登录辅助也与投影抓取解耦——投影工具会自己解析登录态。
+- 投影截图默认下载到 `<工作区>/ppt-assets/<sub_id>/`（已 gitignore），Agent 挑 **3–8 张**
+  关键页引用进讲义；接口没有文字层 / OCR，需要幻灯片原文时走 `zju_extract_courseware`。
 - 登录辅助默认关闭（dsh `enableLoginTools=false`），只影响视频直链与读 Cookie 工具，不影响字幕。
-  字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，也不新增工具或凭据参数。
-- `zju-lecture-summarizer-help` 是仅用户可调用的 Skill
-  （`userInvocable: true` / `modelInvocable: false`），对应输入框 `/zju-lecture-summarizer-help`；
-  只做登录、401/403、代理与依赖排查，不进入模型技能目录，避免干扰正常的讲义生成。
+  `zju_login` 是核心工具，始终注册；字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，
+  也不新增工具或凭据参数。
+- 三个用户命令：
+  - `zju-lecture-summarizer-help` 做 401/403、代理与依赖排查；
+  - `zju-lecture-summarizer-login` 只做「打开登录窗口 / 清除登录态」；
+  - `scholia-notes` 只在 `enableStudyNotes` 打开时进入模型技能目录。
+  两个命令 Skill 都是 `userInvocable: true` / `modelInvocable: false`，不干扰正常的讲义生成。
 
 ### 环境变量
 
@@ -194,7 +234,9 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 | `ZJU_PYTHON` | 指定 Python 解释器 |
 | `ZJU_WORKSPACE` | 相对路径的解析根；dsh 插件自动传入 session workspace |
 | `ZJU_BACKUP_DIR` | `zju_check_note` / `zju_write_note` 的备份目录（默认系统临时目录） |
-| `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 本地登录态；字幕仅在 HTTP 401/403 后自动使用，投影 / 视频直链沿用原规则 |
+| `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 显式本机登录态（优先级最高）；存在且损坏时会挡住 `zju_login`，字幕仅在 HTTP 401/403 后自动使用 |
+| `ZJU_LOGIN_DIR` | `zju_login` 保存登录态与独立浏览器 profile 的目录（默认用户状态目录） |
+| `ZJU_BROWSER_BIN` | 指定登录窗口使用的浏览器可执行文件（默认 Edge → Chrome → Chromium） |
 | `ZJU_RENDER_PDF` | 默认 `0`（MCP）；对应 dsh `renderPdf`（默认开） |
 | `ZJU_TYPST_AUTO_INSTALL` | 缺 Typst 时自动下载安装（默认 `1`；dsh 对应 `typstAutoInstall`） |
 | `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高） |
@@ -401,20 +443,24 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 
 ### Cookie 从哪里来、到哪里去
 
-1. 来源只有本地：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → 本机 Edge；
+1. 来源只有本地：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 保存的登录态 → 本机 Edge；
 2. 校验：拒绝换行（HTTP 头注入）、空 name、超长；不合法只返回原因，不回显内容；
 3. 使用：字幕先匿名，仅 HTTP 401/403 后自动读取本地登录态、解析 Bearer 重试一次；
    字幕不发 Cookie 头，Bearer 仅发往 `classroom.zju.edu.cn`，跨域重定向拒绝；投影等沿用原边界（见下）；
-4. 缓存：仅 Python 子进程内存；
-5. 回显：没有；工具 schema 中没有 cookie / reveal / domain 参数；
+4. 缓存：Python 子进程内存；
+5. 回显：没有；工具 schema 中没有 cookie / password / reveal / domain 参数；
 6. 日志：所有 stdout / stderr 经过 `SecretRedactor`；
 7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
-   权限 0600，读完覆写并删除。
+   权限 0600，读完覆写并删除；
+8. 落盘：只有 `zju_login` 保存的登录态与独立浏览器 profile。登录态仅含 Cookie（不保存账号密码），
+   Windows 为 DPAPI 密文，macOS / Linux 为 0600 文件；`zju_login(clear=true)` 二者一起删除。
+   CDP 只连接 `127.0.0.1` 随机端口，端口与浏览器生命周期由工具管理。
 
 Cookie 不是工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
-`zju_read_browser_cookie` 也没有参数；登录态只能由本地配置或本机 Edge 提供。
+`zju_read_browser_cookie` 也没有参数；登录态只能由 `zju_login`、本地配置或本机 Edge 提供。
 字幕匿名成功时不读缓存、环境变量、文件或 Edge 凭据；401/403 后读不到凭据 / 遇到 ABE 时，
-提示用户在 Edge 登录或配置 `ZJU_COOKIE_FILE`，不向模型索要 Cookie，也不保证关闭 Edge 能解决。
+调用 `zju_login` 打开独立登录窗口，不向模型索要 Cookie，也不保证关闭 Edge 能解决。
+`ZJU_COOKIE` / `ZJU_COOKIE_FILE` 存在时优先级最高，配置损坏会挡住 `zju_login`——诊断文本会明确要求先修/移除。
 
 ### 本地文件
 
@@ -439,7 +485,8 @@ Cookie 不是工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_g
 ### 数据会离开本机的部分
 
 字幕与课件文本会作为工具结果进入宿主模型上下文，由你选择的模型提供方处理——这是使用大模型
-整理讲义的固有代价。插件本身不收集、不额外上传、不写遥测、不写用户目录。
+整理讲义的固有代价。插件本身不收集、不额外上传、不写遥测；除 `zju_login` 保存的本机登录态与
+独立浏览器 profile（可用 `clear=true` 删除）外，不写用户目录。
 
 ### 可机器验证
 
@@ -467,7 +514,7 @@ python tools/sync_palette.py --check        # 只校验配色三处一致
 node tests/bridge_smoke.mjs                 # 端到端：拉起 Python 核心并调用一次工具
 node tests/bridge_error_smoke.mjs           # 端到端：确认 MCP 的 isError 会冒泡成异常
 node tests/bridge_workspace_smoke.mjs       # 端到端：相对路径按 session workspace 解析
-node tests/plugin_apply_smoke.mjs           # 插件形态：默认 6 工具 / 打开后 10 工具
+node tests/plugin_apply_smoke.mjs           # 插件形态：默认 7 工具 / 打开后 11 工具
 node tests/client_settings_smoke.mjs        # 设置页行注册与写字段
 python tools/refresh_ca_bundle.py --check   # 检查随包 CA 是否完整（≥50 张根证书）
 python tools/smoke_test.py --sub-id <sub_id>  # 对已安装包跑端到端冒烟（--dir 可指定包目录）
@@ -481,6 +528,7 @@ Cookie 不回显与错误 redaction、敏感本地文件拒绝、TLS 不降级�
 讲义公式规范检查与自动修复、隐私扫描器自测、review 批次回归
 （行内代码不被改写、修复前备份、DOCX 段落保留、`chunked`/`json` 截断、切片时长、
 Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语义、系统提示适用范围）、
+登录态安全存储 / Cookie 域过滤 / 登录 URL 白名单 / 失效清除 / `zju_login(clear=true)`、
 阅读版 PDF 的标记装置与真实编译、配色三处一致与字体可再分发性、填空笔记链路。
 
 > 测试中的 `subprocess` / 管道 / 临时文件在受限沙箱里可能被拒绝；这是环境限制，不是插件缺陷。
@@ -504,7 +552,7 @@ npm view dsh-zju-lecture-note version       # 验证
 
 - `package.json` 的 `prepublishOnly` 已挂「全量测试 + 隐私扫描」，测试红了发不出去。
 - registry 必须是 `https://registry.npmjs.org/`：国内镜像只读，`npm publish` 会 403。
-- 版本号不能覆盖：每次发布前必须 bump（六处对齐，见下节）。
+- 版本号不能覆盖：每次发布前必须 bump（八处对齐，见下节）。
 - 发布后用户安装：`dsh plugin --profile desktop add dsh-zju-lecture-note`。
 
 `files` 字段是逐文件枚举的运行时清单（`lib/`、`mcp_server.py`、`zju_lecture/*.py`、`skills/`、
@@ -521,8 +569,8 @@ dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳
 
 ### 版本号
 
-版本在**六处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
-`.minimax-plugin/plugin.json`、三个 Skill manifest（由 `tools/build_skill_manifest.py` 生成）。
+版本在**八处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
+`.minimax-plugin/plugin.json`、四个 Skill manifest（由 `tools/build_skill_manifest.py` 生成）。
 `tests/test_dsh_plugin.py` 会断言。
 
 ### 插件市场条目
@@ -556,9 +604,13 @@ PY
   （已 vendor 包与字体）可在本地完成，但首次安装 Typst 仍需要网络。
 - **投影截图没有文字层 / OCR**：接口只返回图片。需要幻灯片原文时让用户提供 `.pptx` 走
   `zju_extract_courseware`；模型不能看图时 Agent 只列截图索引，不臆造内容。
-- **Edge 登录态的两条死路**：Chromium 对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
-  v20 Cookie 连 DPAPI 也解不开。插件会读 `Local State` 判定 ABE 并直接指向 `ZJU_COOKIE_FILE`；
-  读库兜底复制会带上 `-wal` / `-shm` 并让 SQLite 回放 WAL。
+- **Edge 登录态不再是唯一来源**：Chromium 对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
+  v20 Cookie 连 DPAPI 也解不开。插件会读 `Local State` 判定 ABE，但不再把它当死路——
+  推荐动作改为 `zju_login`（独立 profile + 浏览器进程内取 Cookie，与 ABE 无关）。
+  读库兜底仍会带上 `-wal` / `-shm` 并让 SQLite 回放 WAL。
+- **`zju_login` 的边界**：需要图形界面与允许本机远程调试的浏览器；企业策略 / 安全软件拦截时返回
+  `devtools_blocked`，无图形界面的服务器返回 `no_browser` 或启动失败，此时才用 `ZJU_COOKIE_FILE`。
+  它不会读日常 Edge profile，也不会接收账号密码。
 - **PDF 课件**需要可选依赖 `pypdf`（`pip install pypdf`）；其余格式零依赖。
 - **SSL / 代理**：信任库三级回落，真正会失败的是**代理做了 HTTPS 解密**或**系统时间偏差过大**；
   错误消息会给出当前信任库、CA 张数、代理环境变量与具体修法。插件不会关闭证书校验。
