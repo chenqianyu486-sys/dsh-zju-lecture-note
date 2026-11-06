@@ -404,6 +404,16 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 - 数学转换是**幂等**的：`_plain_word` 认识转换器自己会产出的名字（`frac` / `cal` / `sum` /
   `quad` / `wide` / `slash` / `"Res"` …），所以 `latex_to_typst(latex_to_typst(x)) == latex_to_typst(x)`，
   不会被拆成 `s u m` / `f r a c`。引号串（`"Res"`）原样搬运，不再被二次加工。
+- **上下标里的整体记号不拆**：`_typst_script` 只对「还没转换过的裸字母串」逐字母拆
+  （`a_{ij}` → `a_(i j)`、`u_{tt}` → `u_(t t)`）；转换器自己产出的名字
+  （`alpha` / `theta` / `compose` / `degree` …）属于**一个**记号，按 `_TYPST_BARE_NAMES`
+  原样放行。早先不加区分，`29^{\circ}` 排成 `29^(c o m p o s e)`，PDF 右上角直接印出单词
+  （实地会话 `session-42baa52c` 的截图）；`x^{\alpha}`、`x_{\theta}` 同样中招。
+  `\circ` 出现在上下标里转 `degree`（`29^\circ` 是角度），`f\circ g` 仍是 `compose`；
+  不带花括号的 `^\circ` / `^\alpha` 会补成 `^(…)`，`x_1` / `a_n` 保持原样。
+- **`\left` / `\right` 的分隔符必须留下**：`\left\lvert` / `\left\|` / `\lVert` / `\rVert`
+  分别落 `|` 与 `‖`，`\left.` / `\right.` 是不可见分隔符（早先会印出一个点）；
+  `\big` / `\Big` / `\bigl` / `\Bigr` 这类尺寸命令静默丢弃，不印出单词 `big`。
 - 间距命令走 Typst 的真实间距：`\quad` → `quad`（1em）、`\qquad` → `wide`（2em）、
   `\,` → `thin`、`\;` → `med`。早先映射成空格，而 Typst 会折叠连续空格，
   于是「并排的两条公式」粘成 `0∇×H`（实地会话里 Agent 只能写脚本拆公式块）。

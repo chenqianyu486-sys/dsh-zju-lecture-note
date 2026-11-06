@@ -3,6 +3,27 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与四个 Skill manifest 八处对齐。
 
+## 2.2.6 — 2026-11-06
+
+- **修复上下标里的符号名被逐字母拆开**（实地会话 `session-42baa52c` 的讲义截图）：
+  `$29^{\circ}$` 排成 `29^(c o m p o s e)`，PDF 右上角直接印出单词 `compose`。
+  同一类错误波及**所有**多字母符号名：`x^{\alpha}` → `(a l p h a)`、
+  `x_{\theta}` → `(t h e t a)`、`x^{\pi}` → `(p i)`。
+  拆词规则现在只作用于**没转换过**的裸字母串（`a_{ij}` → `a_(i j)` 照旧），
+  Typst 自己认得的名字按 `_TYPST_BARE_NAMES` 原样放行。
+- **`\circ` 在上下标里转成 `degree`**：LaTeX 的 `29^\circ` 是角度，不是复合运算
+  （`f\circ g` 仍是 `compose`）。不带花括号的写法也补括号——
+  `29^\circ`、`\sum_{n=1}^\infty` 现在都能正常排；`x_1` / `a_n` 保持原样。
+- **`\left` / `\right` 不再吞分隔符**：`\left\lvert … \right\rvert`、
+  `\left\| … \right\|`、`\left\lVert … \right\rVert` 原先整段消失（绝对值与范数
+  竖线没了），`\left.` 还会把那个点印进正文。顺带补上 `\lVert` / `\rVert` / `\|` 的映射。
+- **尺寸命令静默丢弃**：`\big` / `\Big` / `\bigl` / `\Bigr` … 以前会印出单词 `big`；
+  `\%` 也不再被 `note_lint` 误报成「未映射的 LaTeX 命令」。
+- 回归 `tests/test_script_symbols_v226.py`（19 条），其中两条是通则：
+  「符号表里每个多字母值放进上下标都不许被拆」与「转换两遍 == 转换一遍」。
+- 验证：652 tests OK（skipped=2）；讲义 PDF 重排 0 error，页面上 `sin 29°`、
+  `(1+x)^α`、`|Δx/x₀|` 均正常。
+
 ## 2.2.5 — 2026-11-06
 
 - **默认安装即可用**：字幕鉴权改为核心链路的一部分。保留 `classroom.zju.edu.cn`，先匿名；
