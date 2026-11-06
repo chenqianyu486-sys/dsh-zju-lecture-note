@@ -145,15 +145,29 @@ class Finding(NamedTuple):
     rule: str
     description: str
     line_no: int
+    match_length: int
     excerpt: str
 
 
+#: How many characters stay visible at each end of a masked excerpt.
+_MASK_VISIBLE = 6
+
+
 def _mask_excerpt(line: str, limit: int = 160) -> str:
-    """Show the offending line with the matched secret partially masked."""
+    """Keep six characters at each end and ``***`` in the middle.
+
+    The old version only truncated, so a finding printed the secret verbatim
+    a second time — into the terminal or a public CI log. Six characters are
+    enough to recognise which line matched and too few to reuse the value.
+    """
     text = line.strip()
-    if len(text) > limit:
-        text = text[: limit - 1] + "…"
-    return text
+    if len(text) <= _MASK_VISIBLE * 2:
+        masked = "***"
+    else:
+        masked = text[:_MASK_VISIBLE] + "***" + text[-_MASK_VISIBLE:]
+    if len(masked) > limit:
+        masked = masked[: max(0, limit - 1)] + "…"
+    return masked
 
 
 def scan_text(text: str, scope: str, location: str) -> List[Finding]:
@@ -171,6 +185,7 @@ def scan_text(text: str, scope: str, location: str) -> List[Finding]:
                     rule=rule.name,
                     description=rule.description,
                     line_no=line_no,
+                    match_length=len(matched),
                     excerpt=_mask_excerpt(line),
                 ))
                 break
@@ -307,7 +322,7 @@ def scan_tarball(path: str) -> List[Finding]:
     """Scan a ``.tgz`` produced by ``npm pack``."""
     findings: List[Finding] = []
     if not os.path.isfile(path):
-        return [Finding("tarball", path, "missing", "tarball does not exist", 0, "")]
+        return [Finding("tarball", path, "missing", "tarball does not exist", 0, 0, "")]
     try:
         with tarfile.open(path, "r:gz") as archive:
             for member in archive.getmembers():
@@ -324,7 +339,7 @@ def scan_tarball(path: str) -> List[Finding]:
                 text = raw.decode("utf-8", "ignore")
                 findings.extend(scan_text(text, "tarball", member.name))
     except (OSError, tarfile.TarError, gzip.BadGzipFile) as exc:
-        findings.append(Finding("tarball", path, "unreadable", str(exc), 0, ""))
+        findings.append(Finding("tarball", path, "unreadable", str(exc), 0, 0, ""))
     return findings
 
 
@@ -339,10 +354,27 @@ def check_gitignore(root: str = REPO_ROOT) -> List[str]:
     return [pattern for pattern in REQUIRED_GITIGNORE if pattern not in lines]
 
 
-def report(findings: List[Finding], missing_ignores: Sequence[str], as_json: bool = False) -> int:
+def report(
+    findings: List[Finding],
+    missing_ignores: Sequence[str],
+    as_json: bool = False,
+    show_excerpt: bool = False,
+) -> int:
+    """Print findings without echoing the secret.
+
+    Default output is ``path:line`` + rule + match length. ``--show-excerpt``
+    adds the masked line (six characters at each end), which is still bounded
+    so a pasted report cannot leak a reusable value.
+    """
     if as_json:
+        payload = []
+        for finding in findings:
+            item = finding._asdict()
+            if not show_excerpt:
+                item.pop("excerpt", None)
+            payload.append(item)
         print(json.dumps({
-            "findings": [finding._asdict() for finding in findings],
+            "findings": payload,
             "missing_gitignore": list(missing_ignores),
         }, ensure_ascii=False, indent=2))
     else:
@@ -351,8 +383,11 @@ def report(findings: List[Finding], missing_ignores: Sequence[str], as_json: boo
             for finding in findings:
                 print(
                     f"  [{finding.rule}] {finding.location}:{finding.line_no}"
-                    f"\n      {finding.description}\n      {finding.excerpt}"
+                    f"（命中长度 {finding.match_length}）"
+                    f"\n      {finding.description}"
                 )
+                if show_excerpt:
+                    print(f"      {finding.excerpt}")
         else:
             print("隐私扫描通过：未发现 Cookie、密钥、个人路径或邮箱。")
         if missing_ignores:
@@ -366,6 +401,11 @@ def main() -> int:
     parser.add_argument("--history", action="store_true", help="同时扫描 git 历史")
     parser.add_argument("--tarball", help="同时扫描 npm pack 生成的 .tgz")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
+    parser.add_argument(
+        "--show-excerpt",
+        action="store_true",
+        help="显示命中行的掩码摘录（前后各 6 字符，中间 ***；默认不显示）",
+    )
     parser.add_argument("--no-gitignore", action="store_true", help="跳过 .gitignore 规则检查")
     args = parser.parse_args()
 
@@ -376,7 +416,7 @@ def main() -> int:
     if args.tarball:
         findings.extend(scan_tarball(os.path.abspath(args.tarball)))
     missing = [] if args.no_gitignore else check_gitignore(root)
-    return report(findings, missing, as_json=args.json)
+    return report(findings, missing, as_json=args.json, show_excerpt=args.show_excerpt)
 
 
 if __name__ == "__main__":
