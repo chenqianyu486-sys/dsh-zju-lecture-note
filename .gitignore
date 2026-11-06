@@ -9,6 +9,7 @@ venv/
 # Build output
 dist/
 build/
+.tmp/
 *.zip
 *.tgz
 *.tar.gz

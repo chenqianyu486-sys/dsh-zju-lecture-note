@@ -10,6 +10,7 @@ import sys
 
 from .client import (
     BASE_URL,
+    TranscriptAuthError,
     ZJUAPIError,
     fetch_slides,
     fetch_transcript,
@@ -84,8 +85,17 @@ def main():
     p_parse.add_argument("url", help="回放 URL 或 sub_id")
 
     # Command: fetch
-    p_fetch = subparsers.add_parser("fetch", help="抓取课程语音识别字幕（公开免登录）")
+    p_fetch = subparsers.add_parser("fetch", help="抓取课程语音识别字幕（可能需要登录态）")
     p_fetch.add_argument("url", help="回放 URL 或 sub_id")
+    p_fetch.add_argument(
+        "--no-login",
+        action="store_true",
+        help="匿名请求被拒绝时不使用本机登录态（默认会自动读取本地登录态重试一次）",
+    )
+    p_fetch.add_argument(
+        "--cookie-file",
+        help="匿名请求被拒绝时，从指定本地文件读取登录态（不要传 Cookie 明文）",
+    )
     p_fetch.add_argument(
         "--format",
         choices=["min", "seg", "chunk", "json"],
@@ -161,7 +171,24 @@ def main():
             parsed = parse_lecture_url(args.url)
             sub_id = parsed["sub_id"]
             tenant = parsed.get("tenant_code", "112")
-            segs = fetch_transcript(sub_id, tenant)
+            try:
+                segs = fetch_transcript(sub_id, tenant)
+            except TranscriptAuthError as exc:
+                if args.no_login:
+                    raise ZJUAPIError(f"{exc}已按 --no-login 禁用本机登录态。") from exc
+                cookie = _load_cookie(cookie_file=args.cookie_file or os.environ.get("ZJU_COOKIE_FILE", ""))
+                if not cookie:
+                    raise ZJUAPIError(
+                        f"{exc}未读取到本机登录态；请在 Microsoft Edge 登录智云课堂，"
+                        "或使用 --cookie-file 指定本地 Cookie 文件。"
+                    ) from exc
+                try:
+                    segs = fetch_transcript(sub_id, tenant, cookie=cookie)
+                except TranscriptAuthError as auth_exc:
+                    raise ZJUAPIError(
+                        f"携带本地登录态后仍返回 HTTP {auth_exc.status}，已停止重试；"
+                        "请确认官网字幕权限并更新本机登录态。"
+                    ) from auth_exc
 
             start_sec = args.start * 60 if args.start is not None else None
             end_sec = (args.end * 60 + 59) if args.end is not None else None

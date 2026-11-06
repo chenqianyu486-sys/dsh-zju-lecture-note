@@ -6,24 +6,25 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 # 智云课堂课程知识总结 (ZJU Lecture Summarizer)
 
 本 Skill 指导 Agent 把浙江大学「智云课堂」（`classroom.zju.edu.cn`）的长篇课堂录音与回放，
-转化为高浓度、前后一致、方便期末复习的结构化知识讲义。
+转化为高浓度、前后一致、方便期末复习的结构化知识讲义。字幕先匿名，401/403 时由工具自动使用本机登录态重试。
 
 ## 1. 可用工具
 
-| 工具 | 用途 | 鉴权 |
+| 工具 | 用途 | 访问条件 |
 | :--- | :--- | :--- |
-| `zju_fetch_transcript` | 抓取语音识别字幕（支持切片、分块、限长）；**直接吃 URL 或 sub_id** | **公开免登录** |
+| `zju_fetch_transcript` | 抓取语音识别字幕（支持切片、分块、限长）；**直接吃 URL 或 sub_id** | 先匿名；401/403 时自动用本机登录态重试一次 |
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / PDF 课件文本 | 本地文件（拒绝凭据与浏览器数据） |
 | `zju_write_note` | 写入讲义：自动命名、拒绝静默覆盖、写前修正、写后校验，并按设置自动排版同名 PDF | 本地文件（只写工作区） |
 | `zju_check_note` | 检查/修复**已有**讲义（`write_note` 已自动检查，通常不必再调） | 本地文件 |
-| `zju_parse_url` | 只在需要单独拿 `course_id` 时用；抓字幕不需要先解析 | 公开 |
+| `zju_parse_url` | 只在需要单独拿 `course_id` 时用；抓字幕不需要先解析 | 本地解析 |
 
-> **字幕主链路**只依赖公开字幕接口与本地文件工具，**不需要登录态，也不依赖投影 PPT 抓取**。
-> 下面三个是可选模块，只有插件设置打开时才会注册：
+> **字幕主链路**不依赖投影 PPT 抓取。字幕工具先匿名请求；仅 HTTP 401/403 时自动读取本地登录态、
+> 解析 Bearer 重试一次，不需要开启登录辅助工具。字幕只向 `classroom.zju.edu.cn` 发 Bearer，不发 Cookie 头。
+> 下面三个是可选模块，只有插件设置打开时才会注册对应工具：
 >
-> - 投影截图 `zju_fetch_slides`（`enableSlides`）；
+> - 投影截图 `zju_fetch_slides`（`enableSlides`，独立解析登录态）；
 > - 填空笔记 `zju_build_study_notes` + `scholia-notes` Skill（`enableStudyNotes`）；
-> - 登录辅助 `zju_get_video_url` / `zju_read_browser_cookie`（`enableLoginTools`）。
+> - 登录辅助 `zju_get_video_url` / `zju_read_browser_cookie`（`enableLoginTools`，dsh 默认关闭；不影响字幕鉴权）。
 >
 > 未注册的工具不要调用，也不要假装已经拿到它的结果。
 
@@ -55,7 +56,12 @@ flowchart TD
 1. **不要再先调 `zju_parse_url`**：`zju_fetch_transcript` 直接接受回放 URL 或 `sub_id`，
    自己解析 `sub_id` / `tenant_code`。只有投影抓取需要单独提供 `course_id` 时，
    才补一次 `zju_parse_url`。
-2. **抓取语音字幕**（公开免登录，整节课只抓一次）：
+2. **抓取语音字幕**（先匿名，整节课只抓一次）：
+   - HTTP 401/403 后的 Bearer 重试由工具内部自动完成，不需先调读 Cookie 工具，也不需要开启登录辅助；
+     登录态沿用本地缓存 / 环境变量 / 文件 / Edge，模型不传 Cookie 或 token。
+   - 若仍报 401/403，**不要反复重试、不要擅断为校园网限制，也不要擅自更换主机或后端**；
+     按诊断提示用户在 Edge 登录智云课堂或配置 `ZJU_COOKIE_FILE`。
+     **不要索要 Cookie 或让用户贴进对话，也不要保证关闭 Edge 就能解决**。
    - 默认 `view_format="per_minute"`，行首带 `[时:分]` 时间戳；
    - 只关心某段内容时传 `start_minute` / `end_minute` 精确切片；
    - **长课程（超过约 8 万字）或需要分批处理时改用 `view_format="chunked"`**，

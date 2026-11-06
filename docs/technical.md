@@ -62,13 +62,21 @@ dsh-zju-lecture-note/
 
 ```text
 回放 URL / sub_id
-  → zju_fetch_transcript（公开字幕接口，按分钟 / 逐句 / 分块 / JSON）
+  → zju_fetch_transcript（先匿名，按分钟 / 逐句 / 分块 / JSON；鉴权条件见下）
   →（可选）zju_extract_courseware（本地课件校准术语）
   → Agent 写 Markdown
   → zju_write_note：命名 → 修公式 → 校验 → 写文件 → 排版同名 PDF
   →（可选）zju_build_study_notes：讲义 →（draft）填空底稿 →（patch，一次写回挖空）
     →（compile）scholia PDF + 逐页 PNG
 ```
+
+字幕保留 `classroom.zju.edu.cn`：先匿名请求，**仅 HTTP 401/403** 时调用现有 `_resolve_cookie`
+（内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → Edge）解析 `_token`，用 Bearer 重试一次。
+兼容两种返回：`ainew` 用 `BeginSec` / `Text`，老课程 `ai` 用 `time` / `zhtext` / `entext`
+（以第一条时间戳为相对零点换算秒数）。
+字幕鉴权属于核心链路，**不需要开启登录辅助工具**（`enableLoginTools` 只控制视频直链与读 Cookie 工具）。
+字幕请求**不发 Cookie 头**；官网实证同一课匿名 403、Bearer-only HTTP 200 / code 0、返回 942 条字幕，
+不需要更换主机。CLI 默认自动重试，`--no-login` 可关闭，`--cookie-file` 可指定本地文件；没有明文 token 参数。
 
 ## 2. 安装形态与依赖
 
@@ -89,7 +97,7 @@ dsh-zju-lecture-note/
 4. 下载失败会写一个 6 小时的冷却标记，避免每写一份讲义都卡一次超时。
 
 `ZJU_TYPST_AUTO_INSTALL=0` 关闭自动安装；`ZJU_TYPST_MIRROR` 可给下载 URL 加镜像前缀
-（只影响传输路径，哈希仍按清单校验）。`zju_doctor` 报告上述全部状态，`install=true` 立即重试安装。
+（只影响传输路径，哈希仍按清单校验）。`zju_doctor` 报告上述状态，`install=true` 立即重试安装；`login=true` 才读取本机登录态检查可用性。
 
 **离线编译**：6 个 `@preview` 包（scholia / frame-it / marginalia / theoretic / showybox / noteworthy）
 已 vendor 到 `zju_lecture/typst-packages/`，编译统一带 `--package-path` 与工作区内的
@@ -144,16 +152,16 @@ PATH 上的 `python3` / `python` / `py -3`。
 
 ## 3. 工具与开关分层
 
-v2.0.1 起，「字幕 → 讲义 → PDF」主链路与所有可选能力解耦。每个模块有自己的工具、
-Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不读登录态、不加载代码。
+v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等可选能力解耦；可选工具按开关注册。
+字幕鉴权是核心链路的一部分：先匿名，401/403 后自动读取本机登录态；登录辅助开关只控制两个可选辅助工具。
 
 | 分层 | 工具 | 依赖 | 默认 |
 | :--- | :--- | :--- | :--- |
-| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_doctor` | 公开字幕接口 + 本地文件 + 可选 Typst | 始终开启 |
+| **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_doctor` | 字幕接口（先匿名，401/403 自动用本机登录态） + 本地文件 + 可选 Typst | 始终开启 |
 | **填空笔记** | `zju_build_study_notes` + `scholia-notes` Skill | 本机 Typst | 关闭（`enableStudyNotes`） |
 | **投影抓取** | `zju_fetch_slides` | 登录态 + 截图下载 + PDF 合成 | 关闭（`enableSlides`） |
 | **投影插图** | （`zju_fetch_slides` 的子开关） | 依赖投影抓取 | 关闭（`embedSlideImages`） |
-| **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie` | 本机 Edge 或 `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 关闭（`enableLoginTools`） |
+| **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie`；不影响字幕鉴权 | 内存缓存 / `ZJU_COOKIE` / `ZJU_COOKIE_FILE` / 本机 Edge | 关闭（`enableLoginTools`） |
 
 - dsh 默认注册 **6** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
   全开 **10** 个。
@@ -171,6 +179,8 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
   （纯字幕进程的 `sys.modules` 里不会出现截图模块，有子进程测试守住）。
 - dsh 单独把 `zju_fetch_slides` 的超时提高到 600s（下载整节课截图用），其他工具仍用配置值。
 - 投影抓取与填空笔记互不依赖；登录辅助也与投影抓取解耦——投影工具会自己解析登录态。
+- 登录辅助默认关闭（dsh `enableLoginTools=false`），只影响视频直链与读 Cookie 工具，不影响字幕。
+  字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，也不新增工具或凭据参数。
 
 ### 环境变量
 
@@ -179,13 +189,13 @@ Skill 附录和系统提示；关掉就**不存在**，不占工具列表、不�
 | `ZJU_PYTHON` | 指定 Python 解释器 |
 | `ZJU_WORKSPACE` | 相对路径的解析根；dsh 插件自动传入 session workspace |
 | `ZJU_BACKUP_DIR` | `zju_check_note` / `zju_write_note` 的备份目录（默认系统临时目录） |
-| `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 登录态（仅投影 / 视频直链需要） |
+| `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 本地登录态；字幕仅在 HTTP 401/403 后自动使用，投影 / 视频直链沿用原规则 |
 | `ZJU_RENDER_PDF` | 默认 `0`（MCP）；对应 dsh `renderPdf`（默认开） |
 | `ZJU_TYPST_AUTO_INSTALL` | 缺 Typst 时自动下载安装（默认 `1`；dsh 对应 `typstAutoInstall`） |
 | `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高） |
 | `ZJU_TYPST_MIRROR` | Typst 下载 URL 的镜像前缀，例如 `https://ghfast.top/` |
 | `ZJU_TYPST_CACHE` | 覆盖 Typst 缓存目录（默认用户缓存；测试与换盘时用） |
-| `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关 |
+| `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关；最后一项只控制登录辅助工具，字幕鉴权不受影响 |
 | `ZJU_ALLOW_SENSITIVE_PATHS` | 显式关闭本地敏感路径保护（不推荐） |
 
 相对路径解析顺序：绝对路径 → `ZJU_WORKSPACE` → `PWD` → 服务进程 cwd；都找不到时，
@@ -388,15 +398,18 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 
 1. 来源只有本地：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → 本机 Edge；
 2. 校验：拒绝换行（HTTP 头注入）、空 name、超长；不合法只返回原因，不回显内容；
-3. 使用：只放进发往 `classroom.zju.edu.cn` 的请求头；跨域重定向拒绝；
+3. 使用：字幕先匿名，仅 HTTP 401/403 后自动读取本地登录态、解析 Bearer 重试一次；
+   字幕不发 Cookie 头，Bearer 仅发往 `classroom.zju.edu.cn`，跨域重定向拒绝；投影等沿用原边界（见下）；
 4. 缓存：仅 Python 子进程内存；
 5. 回显：没有；工具 schema 中没有 cookie / reveal / domain 参数；
 6. 日志：所有 stdout / stderr 经过 `SecretRedactor`；
 7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
    权限 0600，读完覆写并删除。
 
-Cookie 不是工具参数：`zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
+Cookie 不是工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
 `zju_read_browser_cookie` 也没有参数；登录态只能由本地配置或本机 Edge 提供。
+字幕匿名成功时不读缓存、环境变量、文件或 Edge 凭据；401/403 后读不到凭据 / 遇到 ABE 时，
+提示用户在 Edge 登录或配置 `ZJU_COOKIE_FILE`，不向模型索要 Cookie，也不保证关闭 Edge 能解决。
 
 ### 本地文件
 
@@ -411,8 +424,10 @@ Cookie 不是工具参数：`zju_fetch_slides` / `zju_get_video_url` 不接受 c
 - TLS 证书校验**永远不会被关闭**。信任库按 `certifi` → 随包 `cacert.pem` → 系统根证书三级回落；
   三级都不够时才失败，并返回原因 + 下一步（当前信任库、CA 张数、`HTTPS_PROXY`、该装什么）。
 - 瞬时故障（`IncompleteRead` / `SSLEOFError` / 超时 / 5xx）重试 3 次，指数退避 + 抖动；
-  证书校验失败**不重试**。
-- 跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` 头重发到第三方域。
+  证书校验失败**不重试**。字幕 HTTP 401/403 只做一次 Bearer 重试，不能循环尝试；
+  区分 HTTP 状态、接口业务错误与本地凭据读取失败，不把 403 直接判为校园网限制或要求更换后端。
+- 课堂 API 的 Cookie（投影 / 视频直链）与 Bearer 仅发往 `classroom.zju.edu.cn`；字幕不发 Cookie 头。
+  跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
 - 投影截图只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；
   Cookie 只给 ZJU 图片主机、不发 Bearer；跨主机重定向剥离凭据；写盘限制在工作区。
 
@@ -532,8 +547,8 @@ PY
 - **阅读版 PDF 的失败是软失败**：Markdown 照常写入，只返回 `PDF 跳过`；`zju_doctor` 能说明缺什么。
 - **字体覆盖的边界**：填空笔记的 `fonts:` 参数改不到 `note` / `sidenote` / `label-it`
   （上游包内直接读 `default-fonts`）；随包字体通过 `cjk` 角色进入正文，已能覆盖绝大多数中文。
-- **网络依赖**：离线时字幕抓取、讲义写入、填空笔记编译（已 vendor 包与字体）都可用；
-  只有「首次安装 Typst」需要网络。
+- **网络依赖**：字幕抓取需要网络，部分课程还需要本机登录态；讲义写入、填空笔记编译
+  （已 vendor 包与字体）可在本地完成，但首次安装 Typst 仍需要网络。
 - **投影截图没有文字层 / OCR**：接口只返回图片。需要幻灯片原文时让用户提供 `.pptx` 走
   `zju_extract_courseware`；模型不能看图时 Agent 只列截图索引，不臆造内容。
 - **Edge 登录态的两条死路**：Chromium 对 Cookie 数据库加独占锁；Edge 127+ 若启用应用绑定加密（ABE），
@@ -550,7 +565,7 @@ PY
   用 `python tools/privacy_scan.py --history` 检查，必要时重写历史并轮换凭证。
 - **形态别选错**：`tools/build_plugin.py` 产出的是 **MCode 插件包**；装进 dsh 用的是本仓库根目录的
   npm 包（`dsh plugin ... add`）。两者是两套安装方式，不要混。
-- **字幕接口公开，但请遵守平台条款**：一次一节课，不要批量抓取。
+- **字幕可能需登录，请遵守平台条款**：只抓本人有权访问的回放，一次一节课，不要批量抓取。
 
 ## 12. 上游与归属
 

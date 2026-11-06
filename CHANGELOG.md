@@ -3,6 +3,21 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与两个 Skill manifest 六处对齐。
 
+## 2.2.5 — 2026-11-06
+
+- **默认安装即可用**：字幕鉴权改为核心链路的一部分。保留 `classroom.zju.edu.cn`，先匿名；
+  仅 HTTP 401/403 时自动读取本机登录态、解析 Bearer 重试一次，不再要求开启登录辅助开关。
+  字幕不发 Cookie 头，不用模型传凭据；`enableLoginTools` 只控制视频直链与读 Cookie 工具。
+- **兼容老课程字幕**：`trans_type=ai` 返回 `time` / `zhtext` / `entext` 而非 `BeginSec` / `Text`，
+  现在以第一条时间戳为相对零点换算秒数，旧课程也能生成讲义。
+- **错误诊断更准确**：区分 HTTP 拒绝、接口业务错误与凭据读取失败；不再把 403 直接归因校园网。
+  读不到凭据 / 遇到 ABE 时提示在 Edge 登录或配置 `ZJU_COOKIE_FILE`，不索要 Cookie；
+  代理 URL 的 userinfo 在诊断中掩码。
+- **用户引导**：README 首屏说明首次登录与 401/403 处理；插件设置页、Skill 同步更新；
+  `zju_doctor(login=true)` 可选检查登录态与 Bearer 可用性，默认不读取凭据。
+- **CLI 默认自动重试**：`fetch` 在 401/403 后自动使用本机登录态；`--no-login` 可关闭，
+  `--cookie-file` 可指定本地文件，不新增明文 token 参数。
+
 ## 2.2.4 — 2026-11-05
 
 修一个会误导读者的排版细节：**证明的 qed 方块停在第一行**。

@@ -815,6 +815,19 @@ class TransportResilienceTests(unittest.TestCase):
         self.assertIn("代理", message)
         self.assertIn("HTTPS_PROXY", message)
 
+    def test_proxy_diagnostics_mask_userinfo(self):
+        from zju_lecture import client as client_module
+
+        with mock.patch.dict(
+            os.environ,
+            {"HTTPS_PROXY": "http://proxy-user:proxy-pass@127.0.0.1:8080"},
+            clear=False,
+        ):
+            message = client_module.describe_network_error(ConnectionRefusedError(10061, "refused"))
+        self.assertIn("[REDACTED]@127.0.0.1:8080", message)
+        self.assertNotIn("proxy-user", message)
+        self.assertNotIn("proxy-pass", message)
+
     def test_transcript_error_wraps_actionable_diagnosis(self):
         from zju_lecture import client as client_module
 
@@ -830,7 +843,7 @@ class TransportResilienceTests(unittest.TestCase):
 
         text = str(caught.exception)
         self.assertIn("certifi", text)
-        self.assertIn("已重试", text)
+        self.assertNotIn("已重试", text)
 
     def test_fetch_slides_records_reason_instead_of_swallowing_it(self):
         from zju_lecture import client as client_module
@@ -854,6 +867,268 @@ class TransportResilienceTests(unittest.TestCase):
         diagnostics = []
         self.assertIsNone(client_module.fetch_slides("123456", diagnostics=diagnostics))
         self.assertEqual(diagnostics, ["未提供登录 Cookie"])
+
+
+class TranscriptAuthTests(unittest.TestCase):
+    COOKIE = "_token=unit-test-transcript-bearer"
+    TOKEN = "unit-test-transcript-bearer"
+    SEGMENTS = [{"begin_sec": 1, "text": "测试字幕"}]
+
+    def setUp(self):
+        from zju_lecture import client
+
+        self.client = client
+        self.enterContext(mock.patch.dict(mcp_server._COOKIE_CACHE, {}, clear=True))
+
+    def test_auth_denial_is_not_retried_or_misreported(self):
+        import io
+
+        for status in (401, 403):
+            with self.subTest(status=status):
+                body = io.BytesIO(b"Auth Forbidden")
+                error = urllib.error.HTTPError(self.client.BASE_URL, status, "Forbidden", {}, body)
+                with mock.patch.object(self.client, "_open_request", side_effect=error) as request, mock.patch.object(
+                    self.client.time, "sleep"
+                ) as sleep:
+                    with self.assertRaises(self.client.TranscriptAuthError) as caught:
+                        self.client.fetch_transcript("123456")
+                self.assertEqual(caught.exception.status, status)
+                self.assertNotIn("已重试", str(caught.exception))
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+                self.assertTrue(body.closed)
+
+    def test_cookie_supplies_only_bearer_to_classroom(self):
+        import urllib.parse
+
+        payload = json.dumps({"code": 0, "list": [{"all_content": [{"BeginSec": 1, "Text": "测试字幕"}]}]}).encode()
+        with mock.patch.object(self.client, "_fetch_bytes", return_value=payload) as request:
+            result = self.client.fetch_transcript("123456", cookie=self.COOKIE)
+        url, headers, _timeout = request.call_args.args
+        parsed = urllib.parse.urlparse(url)
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.hostname, "classroom.zju.edu.cn")
+        self.assertEqual(urllib.parse.parse_qs(parsed.query)["format"], ["json"])
+        self.assertEqual(headers["Authorization"], "Bearer " + self.TOKEN)
+        self.assertNotIn("Cookie", headers)
+        self.assertEqual(result, self.SEGMENTS)
+
+    def test_missing_token_does_not_send_request(self):
+        with mock.patch.object(self.client, "_fetch_bytes") as request:
+            with self.assertRaisesRegex(self.client.ZJUAPIError, "缺少可用的 _token"):
+                self.client.fetch_transcript("123456", cookie="session=non-token-session")
+        request.assert_not_called()
+
+    def test_legacy_ai_transcript_uses_clock_relative_to_first_segment(self):
+        payload = json.dumps({"code": 0, "list": [{"trans_type": "ai", "all_content": [
+            {"time": "2026-11-04 08:00:05", "zhtext": "第一句", "entext": "first"},
+            {"time": "2026-11-04 08:00:15", "zhtext": "第二句", "entext": "second"},
+            {"time": "2026-11-04 08:01:20", "entext": "third"},
+        ]}]}).encode()
+        with mock.patch.object(self.client, "_fetch_bytes", return_value=payload):
+            result = self.client.fetch_transcript("123456")
+        self.assertEqual([item["begin_sec"] for item in result], [0, 10, 75])
+        self.assertEqual([item["text"] for item in result], ["第一句", "第二句", "third"])
+
+    def test_ainew_transcript_still_uses_begin_sec(self):
+        payload = json.dumps({"code": 0, "list": [{"trans_type": "ainew", "all_content": [
+            {"BeginSec": 30, "Text": "第三十秒", "TransText": "thirty"},
+            {"BeginSec": 60, "Text": "第六十秒", "TransText": "sixty"},
+        ]}]}).encode()
+        with mock.patch.object(self.client, "_fetch_bytes", return_value=payload):
+            result = self.client.fetch_transcript("123456")
+        self.assertEqual([item["begin_sec"] for item in result], [30, 60])
+        self.assertEqual([item["text"] for item in result], ["第三十秒", "第六十秒"])
+
+    def test_transport_and_business_errors_redact_bearer(self):
+        for response in (RuntimeError(self.TOKEN), json.dumps({"code": 1, "msg": self.TOKEN}).encode()):
+            with self.subTest(kind=type(response).__name__):
+                options = {"side_effect": response} if isinstance(response, Exception) else {"return_value": response}
+                with mock.patch.object(self.client, "_fetch_bytes", **options):
+                    with self.assertRaises(self.client.ZJUAPIError) as caught:
+                        self.client.fetch_transcript("123456", cookie=self.COOKIE)
+                self.assertNotIn(self.TOKEN, str(caught.exception))
+                self.assertIn(REDACTED, str(caught.exception))
+
+    def test_transient_http_errors_still_retry(self):
+        for status in (429, 503):
+            with self.subTest(status=status):
+                error = urllib.error.HTTPError(self.client.BASE_URL, status, "Unavailable", {}, None)
+                with mock.patch.object(self.client, "_open_request", side_effect=error) as request, mock.patch.object(
+                    self.client.time, "sleep"
+                ) as sleep:
+                    with self.assertRaises(self.client.ZJUAPIError):
+                        self.client.fetch_transcript("123456")
+                self.assertEqual(request.call_count, 3)
+                self.assertEqual(sleep.call_count, 2)
+
+    def test_bearer_redirect_rejects_cross_host_and_http(self):
+        request = urllib.request.Request(self.client.BASE_URL, headers={"Authorization": "Bearer " + self.TOKEN})
+        for target in ("http://classroom.zju.edu.cn/path", "https://example.invalid/path"):
+            with self.subTest(target=target):
+                with self.assertRaises(urllib.error.HTTPError):
+                    self.client._SameHostRedirectHandler().redirect_request(request, None, 302, "Found", {}, target)
+
+    def test_core_auth_does_not_require_login_tools(self):
+        with mock.patch.dict(os.environ, {"ZJU_ENABLE_LOGIN_TOOLS": "0"}), mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=[self.client.TranscriptAuthError(403), self.SEGMENTS]
+        ) as request, mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(self.COOKIE, None, "edge", None)
+        ) as resolve:
+            result = handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        resolve.assert_called_once_with()
+        self.assertEqual(request.call_count, 2)
+        self.assertIn("测试字幕", result)
+
+    def test_anonymous_success_never_reads_login(self):
+        with mock.patch.object(mcp_server, "fetch_transcript", return_value=self.SEGMENTS), mock.patch.object(
+            mcp_server, "_resolve_cookie"
+        ) as resolve:
+            result = handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        resolve.assert_not_called()
+        self.assertIn("测试字幕", result)
+
+    def test_auth_retry_uses_existing_local_cookie_resolver(self):
+        with mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=[self.client.TranscriptAuthError(403), self.SEGMENTS]
+        ) as request, mock.patch.object(mcp_server, "_resolve_cookie", return_value=(self.COOKIE, None, "env", None)) as resolve:
+            result = handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        resolve.assert_called_once_with()
+        self.assertEqual(request.call_args_list, [mock.call("123456", "112"), mock.call("123456", "112", cookie=self.COOKIE)])
+        self.assertIn("测试字幕", result)
+        self.assertNotIn(self.TOKEN, result)
+
+    def test_second_auth_denial_stops_and_clears_cached_cookie(self):
+        mcp_server._COOKIE_CACHE[mcp_server.DEFAULT_DOMAIN] = self.COOKIE
+        with mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
+        ) as request:
+            with self.assertRaisesRegex(self.client.ZJUAPIError, "已停止重试"):
+                handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        self.assertEqual(request.call_count, 2)
+        self.assertNotIn(mcp_server.DEFAULT_DOMAIN, mcp_server._COOKIE_CACHE)
+
+    def test_abe_produces_file_guidance_without_auth_request(self):
+        with mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
+        ) as request, mock.patch.object(mcp_server, "_resolve_cookie", return_value=(None, "应用绑定加密", None, "abe")):
+            with self.assertRaises(self.client.ZJUAPIError) as caught:
+                handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        message = str(caught.exception)
+        self.assertIn("ZJU_COOKIE_FILE", message)
+        self.assertIn("退出 Edge 无效", message)
+        self.assertEqual(request.call_count, 1)
+
+    def test_other_errors_never_trigger_login(self):
+        with mock.patch.object(mcp_server, "fetch_transcript", side_effect=self.client.ZJUAPIError("HTTP 503")), mock.patch.object(
+            mcp_server, "_resolve_cookie"
+        ) as resolve:
+            with self.assertRaises(self.client.ZJUAPIError):
+                handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        resolve.assert_not_called()
+
+    def test_auth_failure_remains_mcp_tool_error(self):
+        with mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
+        ), mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(None, "未登录", None, "no_credentials")
+        ):
+            result = handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "zju_fetch_transcript", "arguments": {"url_or_sub_id": "123456"}
+            }})
+        self.assertTrue(result["result"]["isError"])
+        schema = next(tool for tool in TOOLS if tool["name"] == "zju_fetch_transcript")["inputSchema"]
+        self.assertFalse(schema["additionalProperties"])
+        self.assertNotIn("cookie", schema["properties"])
+        self.assertNotIn("token", schema["properties"])
+
+    def test_no_credentials_message_points_to_edge_or_cookie_file(self):
+        with mock.patch.object(
+            mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
+        ), mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(None, "未登录", None, "no_credentials")
+        ):
+            with self.assertRaises(self.client.ZJUAPIError) as caught:
+                handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
+        message = str(caught.exception)
+        self.assertIn("Microsoft Edge", message)
+        self.assertIn("ZJU_COOKIE_FILE", message)
+        self.assertIn("不要把 Cookie 贴进对话", message)
+
+    def test_doctor_does_not_read_login_by_default(self):
+        with mock.patch.object(mcp_server, "_resolve_cookie") as resolve:
+            report = mcp_server._doctor_report(False)
+        resolve.assert_not_called()
+        self.assertIn("登录态: 未检查", report)
+        self.assertIn("login=true", report)
+
+    def test_doctor_reports_login_status_without_credentials(self):
+        with mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(self.COOKIE, None, "edge", None)
+        ):
+            report = mcp_server._doctor_report(False, check_login=True)
+        self.assertIn("登录态: 可用", report)
+        self.assertIn("来源 edge", report)
+        self.assertIn("无需开启登录辅助", report)
+        self.assertNotIn(self.TOKEN, report)
+
+        with mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(None, "未登录", None, "no_credentials")
+        ):
+            report = mcp_server._doctor_report(False, check_login=True)
+        self.assertIn("登录态: 不可用", report)
+        self.assertIn("Microsoft Edge", report)
+
+    def test_doctor_login_check_is_opt_in_via_tool(self):
+        with mock.patch.object(
+            mcp_server, "_resolve_cookie", return_value=(self.COOKIE, None, "edge", None)
+        ) as resolve, mock.patch.object(mcp_server, "_doctor_report", wraps=mcp_server._doctor_report) as doctor:
+            handle_tool_call("zju_doctor", {"login": True})
+        resolve.assert_called_once_with()
+        self.assertTrue(doctor.call_args.args[1])
+
+    def test_cli_auto_retries_with_local_login(self):
+        import io
+        from zju_lecture import cli
+
+        with mock.patch.dict(os.environ, {"ZJU_COOKIE_FILE": ""}), mock.patch.object(
+            sys, "argv", ["zju-lecture", "fetch", "123456"]
+        ), mock.patch.object(
+            cli, "fetch_transcript", side_effect=[self.client.TranscriptAuthError(403), self.SEGMENTS]
+        ) as request, mock.patch.object(
+            cli, "_load_cookie", return_value=self.COOKIE
+        ) as resolve, mock.patch.object(sys, "stdout", io.StringIO()) as stdout:
+            cli.main()
+        self.assertIn("测试字幕", stdout.getvalue())
+        self.assertNotIn(self.TOKEN, stdout.getvalue())
+        resolve.assert_called_once_with(cookie_file="")
+        self.assertEqual(request.call_count, 2)
+
+    def test_cli_cookie_file_and_no_login(self):
+        import io
+        from zju_lecture import cli
+
+        with mock.patch.dict(os.environ, {"ZJU_COOKIE_FILE": ""}), mock.patch.object(
+            sys, "argv", ["zju-lecture", "fetch", "123456", "--cookie-file", "local-session.txt"]
+        ), mock.patch.object(
+            cli, "fetch_transcript", side_effect=[self.client.TranscriptAuthError(403), self.SEGMENTS]
+        ) as request, mock.patch.object(cli, "_load_cookie", return_value=self.COOKIE) as resolve, mock.patch.object(
+            sys, "stdout", io.StringIO()
+        ):
+            cli.main()
+        resolve.assert_called_once_with(cookie_file="local-session.txt")
+        self.assertEqual(request.call_count, 2)
+
+        stderr = io.StringIO()
+        with mock.patch.object(
+            sys, "argv", ["zju-lecture", "fetch", "123456", "--no-login"]
+        ), mock.patch.object(
+            cli, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
+        ), mock.patch.object(cli, "_load_cookie") as resolve, mock.patch.object(sys, "stderr", stderr):
+            with self.assertRaises(SystemExit):
+                cli.main()
+        resolve.assert_not_called()
+        self.assertIn("--no-login", stderr.getvalue())
 
 
 class TrustStoreTests(unittest.TestCase):

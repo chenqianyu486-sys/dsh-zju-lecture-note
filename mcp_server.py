@@ -33,6 +33,7 @@ if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
 from zju_lecture.client import (
+    TranscriptAuthError,
     ZJUAPIError,
     extract_classroom_token,
     fetch_slides,
@@ -87,7 +88,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.2.4"
+SERVER_VERSION = "2.2.5"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -229,7 +230,7 @@ def server_instructions() -> str:
     """MCP initialize instructions, reflecting the current feature gates."""
     parts = [
         "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取。"
-        "字幕接口公开免登录。",
+        "字幕先匿名请求；401/403 时自动使用本机登录态重试一次，无需开启登录辅助工具。",
         "主链路：把链接或 sub_id 直接交给 zju_fetch_transcript（默认 per_minute；"
         "长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用）"
         "→ 可选 zju_extract_courseware → zju_write_note（自动命名、拒绝静默覆盖、"
@@ -247,7 +248,7 @@ def server_instructions() -> str:
         )
     else:
         parts.append(
-            "投影抓取已关闭（ZJU_ENABLE_SLIDES=0）：不读取登录态、不下载投影截图，"
+            "投影抓取已关闭（ZJU_ENABLE_SLIDES=0）：不为投影读取登录态、不下载投影截图，"
             "zju_fetch_slides 不在工具列表里。需要时在 dsh 插件设置里打开"
             "「启用 PPT 投影抓取」（enableSlides），或设置 ZJU_ENABLE_SLIDES=1 后重启。"
         )
@@ -262,11 +263,14 @@ def server_instructions() -> str:
             "普通讲义 PDF 不受影响。"
         )
     if login_tools_enabled():
-        parts.append("视频直链与浏览器登录态工具已注册；登录 Cookie 只在服务端内存，不回显。")
+        parts.append(
+            "登录辅助工具已开启：视频直链与浏览器登录态工具已注册；"
+            "字幕鉴权属于核心链路，匿名被拒时会自行读取本机登录态，不依赖本开关。"
+        )
     else:
         parts.append(
             "登录辅助工具已关闭（ZJU_ENABLE_LOGIN_TOOLS=0）：视频直链与浏览器登录态工具不注册；"
-            "投影抓取仍会自行解析登录态。"
+            "字幕鉴权仍由核心链路自动完成，投影抓取也自行解析登录态。"
         )
     parts.append(
         "任何工具都不接受也不回显 Cookie 明文；登录态只能来自本地配置或本机 Edge。"
@@ -369,7 +373,7 @@ COOKIE_FAILURE_ACTIONS: Dict[str, str] = {
     "db_error": "完全退出 Edge 后重试，或改用 ZJU_COOKIE_FILE。",
     "unsupported_platform": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量。",
     "keychain_denied": "在弹出的钥匙串授权框选择『始终允许』，或改用 ZJU_COOKIE_FILE。",
-    "no_credentials": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量（不要粘贴到对话里）。",
+    "no_credentials": "在 Microsoft Edge 登录智云课堂，或在宿主配置里设置 ZJU_COOKIE_FILE（不要粘贴到对话里）。",
     "env_invalid": "检查 ZJU_COOKIE：需要一行合法的 name=value Cookie 头。",
     "file_unreadable": "检查 ZJU_COOKIE_FILE：需要存在、可读、UTF-8，且只含一行 Cookie 头。",
     "unknown": "在宿主配置里设置 ZJU_COOKIE_FILE 环境变量后重试。",
@@ -417,7 +421,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_transcript",
         "description": (
-            "抓取智云课堂某节课的语音识别字幕（公开接口，无需登录）。"
+            "抓取智云课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态重试一次。"
+            "登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，不要传 Cookie。"
             "默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，"
             "per_segment 仅在确实需要秒级时间戳时用。"
         ),
@@ -782,7 +787,8 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "zju_doctor",
         "description": (
             "检查本机依赖并给出可执行结论：Python、Typst（版本 / 路径 / 来源 / 是否满足 ≥0.13）、"
-            "随包中文字体与离线 Typst 包、缓存目录。install=true 时下载并校验安装 Typst"
+            "随包中文字体与离线 Typst 包、缓存目录；login=true 时额外检查登录态是否可用。"
+            "install=true 时下载并校验安装 Typst"
             "（SHA256 固定，仅官方 Release；可用 ZJU_TYPST_AUTO_INSTALL=0 关闭自动安装）。"
             "PDF 失败或用户问「为什么没有 PDF」时先跑它。"
         ),
@@ -793,6 +799,11 @@ TOOLS: List[Dict[str, Any]] = [
                 "install": {
                     "type": "boolean",
                     "description": "缺少 Typst 时是否立即下载安装（默认否；安装约 20 MB）",
+                    "default": False,
+                },
+                "login": {
+                    "type": "boolean",
+                    "description": "是否读取本机登录态检查可用性（默认否；不会回显凭据）",
                     "default": False,
                 },
             },
@@ -970,8 +981,31 @@ def _note_cover_meta(note_path: str, note_text: str) -> Tuple[str, str]:
     return title, date_match.group(1) if date_match else ""
 
 
-def _doctor_report(install: bool) -> str:
-    """``zju_doctor``：依赖快照；``install`` 为真时先自举 Typst。"""
+def _login_status_text() -> List[str]:
+    """One concise login-status block for ``zju_doctor`` (never prints credential values)."""
+    try:
+        cookie, error, source, reason = _resolve_cookie()
+    except Exception:  # noqa: BLE001 - diagnostics must never fail the doctor
+        return ["登录态: 检查失败（内部错误）"]
+    if cookie:
+        token = extract_classroom_token(cookie)
+        return [
+            f"登录态: 可用（来源 {source}；Bearer {'可用' if token else '缺失'}）",
+            "  字幕匿名被拒时会自动使用；无需开启登录辅助。",
+        ]
+    action = COOKIE_FAILURE_ACTIONS.get(reason or "unknown", COOKIE_FAILURE_ACTIONS["unknown"])
+    lines = [f"登录态: 不可用（原因 {reason or 'unknown'}）"]
+    if error:
+        lines.append(f"  说明: {REDACTOR.redact(error)}")
+    lines.append(f"  修复: {action}")
+    return lines
+
+
+def _doctor_report(install: bool, check_login: bool = False) -> str:
+    """``zju_doctor``：依赖快照；``install`` 为真时先自举 Typst。
+
+    ``check_login`` 默认关闭：诊断依赖不应顺带读取浏览器登录态。
+    """
     from zju_lecture import deps
 
     auto = deps.auto_install_enabled()
@@ -1006,6 +1040,10 @@ def _doctor_report(install: bool) -> str:
     )
     lines.append(f"汇编缓存: {info['compile_cache'] or '(未指定工作区)'}")
     lines.append(f"自动安装: {'开' if auto else '关'}（ZJU_TYPST_AUTO_INSTALL）")
+    if check_login:
+        lines.extend(_login_status_text())
+    else:
+        lines.append("登录态: 未检查（字幕 401/403 时自动读取；需要时用 zju_doctor(login=true)）")
     lines.append(
         "模块: 投影=%s / 填空=%s / 登录=%s / PDF=%s（本进程启动时的设置）"
         % (
@@ -1317,7 +1355,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     _ensure_tool_enabled(name)
 
     if name == "zju_doctor":
-        return _doctor_report(bool(arguments.get("install")))
+        return _doctor_report(bool(arguments.get("install")), bool(arguments.get("login")))
 
     if name == "zju_parse_url":
         parsed = parse_lecture_url(str(arguments.get("url", "")))
@@ -1335,7 +1373,35 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         start_sec = start_min * 60 if start_min is not None else None
         end_sec = (end_min * 60 + 59) if end_min is not None else None
 
-        raw_segments = fetch_transcript(sub_id, tenant)
+        try:
+            raw_segments = fetch_transcript(sub_id, tenant)
+        except TranscriptAuthError as exc:
+            # 字幕鉴权属于核心链路，不依赖「登录辅助」工具开关：用户默认安装
+            # 即可使用。只有匿名请求确实被拒绝时才读取本机登录态。
+            cookie, cookie_error, _source, reason = _resolve_cookie()
+            if not cookie:
+                raise ZJUAPIError(
+                    f"{exc}\n"
+                    + _cookie_failure_text(
+                        "语音字幕",
+                        reason,
+                        cookie_error,
+                        degrade_hint=(
+                            "字幕匿名请求被拒绝；插件只在这一步读取本机登录态。"
+                            "请在 Microsoft Edge 登录智云课堂，或在宿主配置 ZJU_COOKIE_FILE。"
+                            "不要把 Cookie 贴进对话。"
+                        ),
+                    )
+                ) from exc
+            try:
+                raw_segments = fetch_transcript(sub_id, tenant, cookie=cookie)
+            except TranscriptAuthError as auth_exc:
+                _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
+                raise ZJUAPIError(
+                    f"字幕携带本机登录态后仍返回 HTTP {auth_exc.status}，已停止重试。"
+                    "请确认该账号在官网能查看同一节课；若仍失败，请更新本机登录态。"
+                    "不能仅凭此错误断定是校园网限制。"
+                ) from auth_exc
         full_duration = (
             format_timestamp(raw_segments[-1]["begin_sec"]) if raw_segments else "00:00:00"
         )
@@ -1373,8 +1439,8 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     if name == "zju_fetch_slides":
         if not slides_enabled():
             raise SlidesDisabledError(
-                "PPT 投影抓取未启用（ZJU_ENABLE_SLIDES=0）：本进程只提供「语音字幕 + "
-                "本地课件」链路，不读取登录态、不下载投影截图。\n"
+                "PPT 投影抓取未启用（ZJU_ENABLE_SLIDES=0）：本进程不为投影读取登录态、"
+                "不下载投影截图。\n"
                 "需要投影截图时：dsh 插件设置里打开「启用 PPT 投影抓取」（enableSlides），"
                 "或给 MCP server 设置环境变量 ZJU_ENABLE_SLIDES=1 后重启；"
                 "不需要时直接继续用 zju_fetch_transcript 的字幕生成讲义即可。"

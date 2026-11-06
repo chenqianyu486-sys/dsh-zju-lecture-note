@@ -5,7 +5,7 @@
 
 > 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：  
 > - 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。  
-> - 字幕接口公开免登录；登录 Cookie 只在本机进程内存里使用，工具不收、不回显、不落盘。  
+> - 字幕先匿名；401/403 时自动使用本机登录态重试一次。Cookie 只在本机进程内存里使用，工具不收、不回显、不落盘。
 > - 核心只用 Python 标准库；PDF 排版用的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备（PDF 课件另需可选的 `pypdf`）。  
 > - **非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
 
@@ -14,6 +14,7 @@
 - 安装 DeepSeek Harness
 - 进入插件→添加插件，复制 npm 包名 dsh-zju-lecture-note 或仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
 - 安装并启用插件
+- 首次使用：在 **Microsoft Edge**（Windows / macOS）登录智云课堂，或配置 `ZJU_COOKIE_FILE`（一行 Cookie 头）。字幕先匿名，401/403 时自动用本机登录态重试一次，不需要开启「登录辅助」。
 - 在新会话中键入 /zju-lecture-summarizer 即可使用插件总结课堂内容，例：  
 ```text
 /zju-lecture-summarizer 帮我总结课程内容 https://classroom.zju.edu.cn/livingroom?course_id=87517&sub_id=1988617&tenant_code=112
@@ -108,7 +109,7 @@ python -m zju_lecture.cli slides "<回放链接>" --download
   （`知识总结-2026-10-28-复变函数-保角映射.md`），PDF 同名同目录。
 - 同名讲义默认拒绝覆盖，要覆盖请明确说「覆盖」。
 - 讲义不进 Git：`.gitignore` 已挡掉任意层级的 `知识总结*.md` 与 `/notes/`。
-- 字幕接口公开，但请一次只抓一节课，不要批量抓取。
+- 字幕先匿名；HTTP 401/403 时自动用本机登录态重试一次。一次只抓一节课，不要批量抓取。
 
 ### 阅读版 PDF
 
@@ -169,7 +170,7 @@ dsh 默认注册 **6 个**核心工具（含依赖自检 `zju_doctor`）；打�
 | `zju_extract_courseware` | 提取本地 PPTX / DOCX / TXT / MD / CSV / JSON / PDF 文本 | 开 |
 | `zju_check_note` | 检查 / 修复**已有**讲义；`pdf=true` 重排 PDF | 开 |
 | `zju_write_note` | 写入讲义：自动命名、拒绝静默覆盖、修公式、校验、自动排 PDF | 开 |
-| `zju_doctor` | 检查 Python / Typst / 字体 / 包；`install=true` 自动装 Typst | 开 |
+| `zju_doctor` | 检查 Python / Typst / 字体 / 包；`install=true` 装 Typst，`login=true` 检查登录态 | 开 |
 | `zju_build_study_notes` | 讲义 → 填空底稿 →（批量挖空）→ scholia PDF + 逐页 PNG | 关（`enableStudyNotes`） |
 | `zju_fetch_slides` | 抓投影截图清单，可选下载并合成 PDF | 关（`enableSlides`） |
 | `zju_get_video_url` | 解析回放 MP4 直链（供下载或 Whisper 重识别） | 关（`enableLoginTools`） |
@@ -192,11 +193,11 @@ dsh 的六个开关在 **设置 → 左侧导航「浙大智云课堂讲义」**
 | `enableStudyNotes` | 填空式学习笔记（`zju_build_study_notes` + scholia Skill） | 关 |
 | `enableSlides` | 投影抓取总开关（`zju_fetch_slides`） | 关 |
 | `embedSlideImages` | 投影截图是否插进讲义（仅在总开关打开时有效） | 关 |
-| `enableLoginTools` | 登录辅助（视频直链 / 读 Edge Cookie） | 关 |
+| `enableLoginTools` | 视频直链 / 读取 Edge 登录态工具；字幕鉴权由核心链路自动完成，不依赖此开关 | 关 |
 
-MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、`ZJU_ENABLE_STUDY_NOTES`、
-`ZJU_ENABLE_SLIDES`、`ZJU_EMBED_SLIDES`、`ZJU_ENABLE_LOGIN_TOOLS`（仓库自带的 `zju-lecture.mcp.json`
-默认关掉可选模块）。另有 `ZJU_TYPST_BIN`（指定已有 Typst）与 `ZJU_TYPST_MIRROR`（下载镜像前缀）。
+MCP 对应：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、`ZJU_ENABLE_STUDY_NOTES`、`ZJU_ENABLE_SLIDES`、
+`ZJU_EMBED_SLIDES`、`ZJU_ENABLE_LOGIN_TOOLS`（只控制登录辅助工具；字幕鉴权不受影响）。
+另有 `ZJU_TYPST_BIN`（指定已有 Typst）与 `ZJU_TYPST_MIRROR`（下载镜像前缀）。
 
 ## 常见问题
 
@@ -204,14 +205,14 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
 完全重启 DeepSeek Harness。dsh 在启动时缓存 `dsh.client` 元数据，刷新页面或只重装插件都不够。
 
 **返回 `PDF 跳过: …`？**
-先让 Agent 跑 `zju_doctor`：它会报 Typst 版本 / 路径 / 来源、字体与 Typst 包是否就位。
+先让 Agent 跑 `zju_doctor`：它会报 Typst 版本 / 路径 / 来源、字体与 Typst 包；`login=true` 可额外检查登录态。
 缺少 Typst 时 `zju_doctor(install=true)` 会下载并校验安装；也可以自己装好（`typst --version` 能跑）
 后用 `zju_check_note(pdf=true)` 给已有讲义补排。Markdown 本身不受影响。
 若返回 `PDF 跳过: 找不到 typst：…` 且自动安装被关闭（`ZJU_TYPST_AUTO_INSTALL=0`），
 打开设置里的「自动安装 Typst」或手动安装即可。
 
 **看不到投影 / 登录工具？**
-它们默认关闭。到设置里打开 `enableSlides` / `enableLoginTools` 后才注册；字幕主链路不需要登录。
+它们默认关闭。到设置里打开 `enableSlides` / `enableLoginTools` 并完全重启 dsh。字幕工具常驻，鉴权由字幕工具自动完成，不需要开启登录辅助。
 
 **只解压 zip 启用，报 `Cannot find package '@deepseek-ai/schemastery'`？**
 那是 peer 依赖，由 pnpm 在 `dsh plugin add` 时装进 profile。请用 npm 包名、`github:` 或 `file:` 方式安装。
@@ -223,18 +224,17 @@ MCP 宿主的对应环境变量：`ZJU_RENDER_PDF`、`ZJU_TYPST_AUTO_INSTALL`、
 超时的话给 git 配代理，并让 dsh 进程能读到 `HTTPS_PROXY` / `HTTP_PROXY`（它不读 Windows 系统代理）；
 或在该 profile 的 `cordis.patch.yml` 里把 `plugin-manager` 的 `githubConnectionTimeoutMs` 调大后重启。
 
-**字幕抓取失败（证书 / 代理）？**
-插件不会关闭证书校验，按 `certifi` → 随包 `cacert.pem` → 系统根证书三级回落，
-错误里会给出当前信任库、CA 张数与代理设置。详见 [SECURITY.md](SECURITY.md)。
+**字幕抓取失败（401/403 / 证书 / 代理）？**
+HTTP 401/403 表示匿名请求被拒：确认已在 Edge 登录智云课堂，或配置 `ZJU_COOKIE_FILE`；插件会自动重试一次。读不到凭据 / 遇到 ABE 时按诊断配置文件，不要反复重试、贴 Cookie 或直接归因校园网。
+CLI 默认自动重试，`--no-login` 可关闭，`--cookie-file` 可指定本地文件；证书校验不降级，信任库与代理诊断见 [SECURITY.md](SECURITY.md)。
 
 ## 隐私与安全
 
-- **Cookie 不是工具参数**：投影 / 视频直链 / 读 Cookie 工具都不接受 cookie 参数；
-  登录态只能由本地配置或本机 Edge 提供。
+- **Cookie 不是工具参数**：字幕 / 投影 / 视频直链 / 读 Cookie 工具均不接受 Cookie；登录态只能由本地配置或本机 Edge 提供。
 - **Cookie 不回显、不落盘**：读 Cookie 只返回名称、数量、长度与来源类别，
   所有输出经过 redactor；必须复制 Edge 数据库时用 0600 临时文件，读完覆写并删除。
-- **网络边界**：只允许 `classroom.zju.edu.cn` 与 `https://*.zju.edu.cn` 截图主机，跨域重定向拒绝；
-  证书校验不降级，只有瞬时故障才重试。
+- **网络边界**：只允许 `classroom.zju.edu.cn` 与 `https://*.zju.edu.cn` 截图主机，跨域重定向拒绝；证书校验不降级。
+  字幕请求不发 Cookie 头，鉴权只向 `classroom.zju.edu.cn` 发 Bearer；除上述鉴权重试外，仅瞬时故障重试。
 - **本地文件有边界**：课件 / 讲义工具只接受指定扩展名，拒绝凭据、私钥与浏览器数据。
 - **可机器验证**：`python tools/privacy_scan.py` 扫描工作区、git 历史与 npm 产物。
 

@@ -12,7 +12,7 @@
   },
   {
     "name": "zju_fetch_transcript",
-    "description": "抓取智云课堂某节课的语音识别字幕（公开接口，无需登录）。默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用。",
+    "description": "抓取智云课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态重试一次。登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，不要传 Cookie。默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用。",
     "parameters": {
       "url_or_sub_id": {
         "description": "回放 URL 或 sub_id",
@@ -286,10 +286,15 @@
   },
   {
     "name": "zju_doctor",
-    "description": "检查本机依赖并给出可执行结论：Python、Typst（版本 / 路径 / 来源 / 是否满足 ≥0.13）、随包中文字体与离线 Typst 包、缓存目录。install=true 时下载并校验安装 Typst（SHA256 固定，仅官方 Release；可用 ZJU_TYPST_AUTO_INSTALL=0 关闭自动安装）。PDF 失败或用户问「为什么没有 PDF」时先跑它。",
+    "description": "检查本机依赖并给出可执行结论：Python、Typst（版本 / 路径 / 来源 / 是否满足 ≥0.13）、随包中文字体与离线 Typst 包、缓存目录；login=true 时额外检查登录态是否可用。install=true 时下载并校验安装 Typst（SHA256 固定，仅官方 Release；可用 ZJU_TYPST_AUTO_INSTALL=0 关闭自动安装）。PDF 失败或用户问「为什么没有 PDF」时先跑它。",
     "parameters": {
       "install": {
         "description": "缺少 Typst 时是否立即下载安装（默认否；安装约 20 MB）",
+        "default": false,
+        "type": "boolean"
+      },
+      "login": {
+        "description": "是否读取本机登录态检查可用性（默认否；不会回显凭据）",
         "default": false,
         "type": "boolean"
       }

@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from .security import sanitize_cookie_header
+from .security import REDACTOR, sanitize_cookie_header
 
 BASE_URL = "https://classroom.zju.edu.cn"
 BASE_HOST = (urllib.parse.urlparse(BASE_URL).hostname or "classroom.zju.edu.cn").lower()
@@ -109,18 +109,23 @@ def ssl_context_health() -> Dict[str, Any]:
     return {"source": _CA_SOURCE, "path": _CA_PATH, "ca_certs": ca_count}
 
 
+def _mask_proxy_credentials(value: str) -> str:
+    """Hide ``user:password@`` in a proxy URL before it reaches an error message."""
+    return re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@", r"\1[REDACTED]@", value)
+
+
 def _proxy_env() -> str:
     """Describe the proxy environment, naming the variables to inspect.
 
     "未设置" on its own does not tell the user which variable to look at, so the
     unset case spells the names out. Returns a phrase without brackets: the
-    callers already wrap it in （）.
+    callers already wrap it in （）. Proxy userinfo is masked.
     """
     found = []
     for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         value = os.environ.get(key)
         if value:
-            found.append(f"{key}={value}")
+            found.append(f"{key}={_mask_proxy_credentials(value)}")
     if found:
         return "，".join(found)
     return "HTTPS_PROXY / HTTP_PROXY 均未设置"
@@ -256,12 +261,13 @@ class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
-        target = (urllib.parse.urlparse(newurl).hostname or "").lower()
-        if target != BASE_HOST:
+        parsed = urllib.parse.urlparse(newurl)
+        target = (parsed.hostname or "").lower()
+        if target != BASE_HOST or parsed.scheme != "https":
             raise urllib.error.HTTPError(
                 req.full_url,
                 code,
-                f"拒绝跨域重定向到 {target or '(未知主机)'}（保护登录 Cookie）",
+                f"拒绝跨域或非 HTTPS 重定向到 {target or '(未知主机)'}（保护登录凭据）",
                 headers,
                 fp,
             )
@@ -314,6 +320,12 @@ class ZJUAPIError(Exception):
     pass
 
 
+class TranscriptAuthError(ZJUAPIError):
+    def __init__(self, status: int):
+        self.status = status
+        super().__init__(f"字幕接口返回 HTTP {status}，当前请求未获访问许可。")
+
+
 def parse_lecture_url(url_or_sub_id: str) -> Dict[str, str]:
     """Extract course_id, sub_id, and tenant_code from a classroom URL or sub_id.
     
@@ -359,34 +371,69 @@ def parse_lecture_url(url_or_sub_id: str) -> Dict[str, str]:
     }
 
 
+_CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
+
+
+def _clock_seconds(value: Any) -> Optional[int]:
+    """Parse ``HH:MM[:SS]`` (or a full datetime) into seconds of day."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    match = _CLOCK_RE.search(text)
+    if not match:
+        return None
+    hour, minute, second = match.group(1), match.group(2), match.group(3) or "0"
+    return int(hour) * 3600 + int(minute) * 60 + int(second)
+
+
+def _transcript_text(item: Dict[str, Any]) -> str:
+    for key in ("Text", "zhtext", "TransText", "entext"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def fetch_transcript(
     sub_id: str,
     tenant_code: str = "112",
-    timeout: int = 60
+    timeout: int = 60,
+    *,
+    cookie: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch speech-to-text transcript segments from public ZJU classroom API.
-    
-    NOTE: This endpoint is completely PUBLIC and requires no login or cookies.
-    Returns:
-        List of dicts: [{"begin_sec": int, "text": str}]
-    """
-    url = (
-        f"{BASE_URL}/courseapi/v3/web-socket/search-trans-result"
-        f"?sub_id={sub_id}&tenant_code={tenant_code}"
-    )
+    """Fetch transcript segments, optionally authenticating with a locally supplied session."""
+    query = urllib.parse.urlencode({"sub_id": sub_id, "tenant_code": tenant_code, "format": "json"})
+    url = f"{BASE_URL}/courseapi/v3/web-socket/search-trans-result?{query}"
     req_headers = {"User-Agent": USER_AGENT}
+    if cookie is not None:
+        cookie = sanitize_cookie_header(cookie)
+        REDACTOR.add_cookie(cookie)
+        token = extract_classroom_token(cookie)
+        if not token:
+            raise ZJUAPIError(
+                "本地登录态缺少可用的 _token，无法进行字幕鉴权；请重新登录智云课堂并更新本机登录态。"
+            )
+        REDACTOR.add(token)
+        req_headers["Authorization"] = f"Bearer {token}"
     try:
         data = json.loads(_fetch_bytes(url, req_headers, timeout).decode("utf-8"))
     except urllib.error.HTTPError as e:
-        raise ZJUAPIError(f"字幕接口返回 HTTP {e.code}（已重试 {_RETRY_ATTEMPTS} 次）") from e
+        e.close()
+        if e.code in (401, 403):
+            raise TranscriptAuthError(e.code) from e
+        raise ZJUAPIError(f"字幕接口返回 HTTP {e.code}。") from e
     except Exception as e:
         raise ZJUAPIError(
-            f"请求字幕接口失败（已重试 {_RETRY_ATTEMPTS} 次）。\n" + describe_network_error(e)
+            "请求字幕接口失败。\n" + REDACTOR.redact(describe_network_error(e))
         ) from e
 
     code = data.get("code")
     if code != 0:
-        msg = data.get("msg") or f"未知错误 (code={code})"
+        msg = REDACTOR.redact(data.get("msg") or f"未知错误 (code={code})")
         raise ZJUAPIError(f"字幕接口返回非零状态码: {msg}")
 
     items = data.get("list") or []
@@ -394,12 +441,32 @@ def fetch_transcript(
         raise ZJUAPIError("字幕数据列表为空，可能课程刚结束尚未生成字幕或该课程未开启录制转写")
 
     raw_segments = items[0].get("all_content") or []
+    # 老课程（trans_type="ai"）只有 time/zhtext/entext，没有 BeginSec；
+    # 用第一条时间戳作为相对零点，至少保证顺序与间隔正确。
+    uses_clock = not any(item.get("BeginSec") not in (None, "") for item in raw_segments)
+    clock_base: Optional[int] = None
+    if uses_clock:
+        clock_base = next(
+            (clock for clock in (_clock_seconds(item.get("time")) for item in raw_segments) if clock is not None),
+            None,
+        )
+
     segments: List[Dict[str, Any]] = []
     for item in raw_segments:
-        text = (item.get("Text") or "").strip()
-        if text:
-            sec = int(item.get("BeginSec", 0))
-            segments.append({"begin_sec": sec, "text": text})
+        text = _transcript_text(item)
+        if not text:
+            continue
+        if uses_clock:
+            clock = _clock_seconds(item.get("time"))
+            if clock is None or clock_base is None:
+                continue
+            sec = max(0, clock - clock_base)
+        else:
+            try:
+                sec = int(item.get("BeginSec"))
+            except (TypeError, ValueError):
+                continue
+        segments.append({"begin_sec": sec, "text": text})
 
     segments.sort(key=lambda x: x["begin_sec"])
     if not segments:
