@@ -1961,7 +1961,19 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
 
 
 def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
-    """Execute a tool and redact secrets from whatever it returns."""
+    """Execute a tool and redact secrets from whatever it returns.
+
+    Before dispatch, every key must be declared in the tool's inputSchema.
+    dsh 0.2.x does not close the root object, so an undeclared ``cookie`` /
+    ``token`` field reaches the Python side and would already have been written
+    to the host's call log. Refusing the call keeps the failure local.
+    """
+    tool = next((item for item in TOOLS if item["name"] == name), None)
+    if tool is not None and isinstance(arguments, dict):
+        allowed = set((tool["inputSchema"].get("properties") or {}).keys())
+        unknown = sorted(key for key in arguments if key not in allowed)
+        if unknown:
+            raise ValueError("未知参数: " + ", ".join(unknown))
     return REDACTOR.redact(_dispatch_tool(name, arguments))
 
 
@@ -2034,6 +2046,7 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             SlidesDisabledError,
             StudyNotesDisabledError,
             LoginToolsDisabledError,
+            ValueError,
         ) as exc:
             message_text = REDACTOR.redact(str(exc))
             _log(f"{tool_name}: {message_text}")
