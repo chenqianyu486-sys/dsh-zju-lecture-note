@@ -1,6 +1,6 @@
 [project]
 name = "zju-lecture-agent-plugin"
-version = "2.2.5"
+version = "2.2.6"
 description = "浙大智云课堂（classroom.zju.edu.cn）回放提取、知识蒸馏与自动 PDF 讲义的 Agent Plugin / MCP Server"
 readme = "README.md"
 requires-python = ">=3.9"
