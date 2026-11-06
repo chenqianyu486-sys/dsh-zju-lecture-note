@@ -16,7 +16,8 @@ dependencies = []
 
 [project.optional-dependencies]
 # PDF 课件文本提取需要；其余功能零依赖。
-pdf = ["pypdf>=3.0"]
+# 4.0 起修复了若干解析崩溃；8.0 之后 API 可能变动，先不跨大版本。
+pdf = ["pypdf>=4.0,<8"]
 # macOS 上部分 Python 安装的根证书不全时，安装后可避免关闭 SSL 校验。
 cert = ["certifi"]
 

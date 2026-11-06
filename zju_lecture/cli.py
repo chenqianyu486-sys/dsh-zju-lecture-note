@@ -38,6 +38,30 @@ from .paths import artifact_dir
 from .security import describe_cookie, sanitize_cookie_header
 
 
+def _confirm_cookie_reveal() -> bool:
+    """Ask for a second confirmation before printing a Cookie in clear text.
+
+    ``--reveal`` puts a live session credential into the terminal scrollback
+    and shell history. A non-interactive invocation (CI, a pipe) is refused
+    outright; an interactive one must type ``yes``.
+    """
+    if not sys.stdin.isatty():
+        print(
+            "已拒绝 --reveal：非交互式终端不显示 Cookie 明文。"
+            "如需本机排查，请在终端里交互执行，或改用 `zju-lecture login`。",
+            file=sys.stderr,
+        )
+        return False
+    try:
+        answer = input("将回显 Cookie 明文（会进入终端历史），输入 yes 继续：")
+    except EOFError:
+        return False
+    if answer.strip().lower() != "yes":
+        print("已取消。")
+        return False
+    return True
+
+
 def _read_cookie_file(path: str) -> str:
     """Read a cookie header from a local file (never printed)."""
     with open(os.path.expanduser(path), "r", encoding="utf-8") as handle:
@@ -357,6 +381,8 @@ def main():
             print("现在可以运行 `zju-lecture fetch <url>`。")
 
         elif args.command == "cookie":
+            if args.reveal and not _confirm_cookie_reveal():
+                return
             c = get_edge_cookie()
             if not c:
                 print("未能在本机 Edge 找到 classroom.zju.edu.cn 的 Cookie。")

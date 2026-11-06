@@ -3,6 +3,54 @@
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
 `.minimax-plugin/plugin.json` 与四个 Skill manifest 八处对齐。
 
+## 未发布（安全修复，基于 2.2.6）
+
+### Security
+
+按 2026-11-06 的只读安全审查结论逐项修复（分支 `fix/security-audit-2026-11`）。
+详细威胁模型、边界与逐条验证见 `SECURITY.md` 第 7 / 9 / 10 节。
+
+**P0 — 可被直接利用**
+
+- **7.1 会话工作区隔离**（`c69fbdf`）：bridge 改为按绝对 workspace 维护
+  `Map<key, WorkspaceSession>`（LRU 2），每个会话独立 cwd / `ZJU_WORKSPACE` / pending；
+  删除 `PLUGIN_ROOT` 回退，工作区缺失或不存在时直接拒绝。
+- **7.2 重定向与 SSRF**（`a45e551`）：按完整 origin（scheme + host + port）比较；
+  拒绝 HTTPS→HTTP、URL userinfo、IP 字面量、localhost 与私网；截图只跟随浙大主机，
+  跨 origin 剥离 Cookie / Authorization / Proxy-Authorization，阻断原因写入 diagnostics。
+- **7.3 工作区外读写**（`0d7f037`）：新增 `require_workspace_path()`（resolve → realpath →
+  工作区 → guard → 写入复检），`zju_extract_courseware` / `zju_check_note` /
+  `mode=patch` 全部接入；外读需显式 `allow_outside_workspace=true` 且首行标注。
+- **7.8 Typst 封面注入**（`25862cb`）：拆 `escape_typst_text()` / `escape_typst_string()`；
+  封面改 `#scholia-cover(title: "…", …)` 命名参数，值按字符串字面量转义。
+
+**P1 — 凭据、权限与资源**
+
+- **7.4 镜像 URL 脱敏**（`db46f38`）：`_redact_url()` 去掉 userinfo / query / fragment，
+  describe / progress / 异常全走脱敏；bridge.js 对 Python stderr 再做一层 JS 脱敏。
+- **7.5 隐私扫描器掩码**（`d6f0668`）：默认只输出 path:line、规则名与命中长度；
+  `--show-excerpt` 才输出前后各 6 字符、中间 `***` 的摘录；JSON 默认不含 excerpt。
+- **7.6 临时文件与备份权限**（`2f2de09`）：session / 截图 / PDF 统一 `mkstemp` +
+  `os.replace`；备份目录 0700、文件 0600、随机文件名；写入前 `lstat` 拒绝符号链接。
+- **7.9 资源上限**（`b3864a6`）：课件单成员 16 MiB / 合计 64 MiB 预检；PNG 用
+  `decompressobj(max_length)`；截图总量达到上限即停止；Typst 下载 256 MiB 上限并删半成品；
+  tar 拒绝符号链接 / 硬链接。
+
+**P2 — 入口、副作用与文档**
+
+- **7.7 参数白名单**（`ea2f6d6`）：`handle_tool_call` 以 `inputSchema.properties` 为白名单，
+  未知键直接拒绝，工具不执行，错误只含键名。
+- **副作用确认**（`d7ccae0`）：`zju_login(clear=true)`、`zju_doctor(install=true)`、
+  `zju_fetch_slides(download=true)` 必须同时传 `confirm=true`，否则不产生任何副作用。
+- **CLI 与依赖**（本次提交）：`zju-lecture cookie --reveal` 在非 TTY 下拒绝、交互式需输入
+  `yes`；`pypdf` 收紧为 `>=4.0,<8`；补 `package-lock.json` 使 `npm audit` 可运行。
+- **文档**：`SECURITY.md` 第 7 节改为逐条「修复 commit + 回归测试」，新增第 9 节
+  「工作区边界」与第 10 节「重定向 origin 校验与 SSRF」。
+
+验证：734 tests OK（skipped=6）；`node tests/bridge_smoke.mjs` / `bridge_workspace_smoke.mjs` /
+`bridge_workspace_isolation.mjs` 均 `ok:true`；`python tools/privacy_scan.py` 通过；
+`npm pack --dry-run` 文件清单无临时 / 备份产物。
+
 ## 2.2.6 — 2026-11-06
 
 - **修复上下标里的符号名被逐字母拆开**（实地会话 `session-42baa52c` 的讲义截图）：

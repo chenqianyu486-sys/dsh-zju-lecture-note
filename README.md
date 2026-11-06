@@ -180,27 +180,26 @@ Markdown 已经正常写入，只是 PDF 没排出来。让 Agent 跑一次 `zju
 
 ## 隐私与安全
 
-> **当前安全状态（2026-11-06）**：最近一轮安全审查确认若干问题尚未修复，重点包括
-> 多会话工作区隔离、截图重定向、部分修复/填空路径的工作区外回写、镜像 URL 诊断、
-> 隐私扫描器输出和 POSIX 备份权限。修复前请不要在共享多用户机器上处理敏感课程材料，
-> 不要让不同工作区的会话并发处理课程，也不要给 `ZJU_TYPST_MIRROR` 配置带凭据的 URL。
-> 完整清单与临时规避见 [SECURITY.md](SECURITY.md) 第 7 节。
+> **当前安全状态（2026-11-07）**：2026-11-06 安全审查发现的 9 项问题已全部修复，
+> 包括多会话工作区隔离、截图重定向/SSRF、工作区外回写、镜像 URL 脱敏、隐私扫描器输出、
+> POSIX 临时文件与备份权限、参数白名单、封面注入与资源上限。逐条修复与边界见
+> [SECURITY.md](SECURITY.md) 第 7 / 9 / 10 节。
 
 - **登录态不是正常工具参数**：字幕 / 投影 / 视频直链 / 读 Cookie 工具不要求 Cookie；
-  登录态只能由 `zju_login`、本地配置或本机 Edge 提供。dsh 对未声明额外字段的校验
-  仍有缺口，不要把凭据粘进工具调用。
+  登录态只能由 `zju_login`、本地配置或本机 Edge 提供。工具调用入口会拒绝任何
+  未在 schema 中声明的字段，不要把凭据粘进工具调用。
 - **登录态落盘、不回显**：`zju_login` 只保存 Cookie（不保存账号密码），
   Windows 用 DPAPI 绑定当前用户，macOS / Linux 是 **0600 权限的明文文件**；
-  `zju_login(clear=true)` 会一并删除登录态与独立浏览器配置。Cookie/Bearer 输出脱敏，
-  但镜像 URL 等非 Cookie 秘密尚未覆盖。
+  `zju_login(clear=true, confirm=true)` 会一并删除登录态与独立浏览器配置。
+  Cookie / Bearer 输出脱敏，镜像 URL 等诊断也会去掉 userinfo 与签名 query。
 - **网络边界**：正常请求只到 `classroom.zju.edu.cn`、`https://*.zju.edu.cn` 截图主机
-  与 Typst 官方下载地址；课堂 API 拒绝跨域重定向。投影截图的重定向目标尚未逐跳校验，
-  这是已知缺口；证书校验不降级。
+  与 Typst 官方下载地址；课堂 API 只允许同 origin 重定向。投影截图的每一跳都校验
+  浙大域、HTTPS 与私网地址，非浙大目标不跟随；证书校验不降级。
 - **本地文件有边界**：课件 / 讲义工具只接受指定扩展名，拒绝凭据、私钥与浏览器数据；
-  `zju_write_note` 只写工作区，但部分修复/填空路径可以写回工作区外文件，详见
-  [SECURITY.md](SECURITY.md)。
+  所有回写（含 `fix=true` 与填空 `mode=patch`）都限制在工作区内；读取工作区外课件
+  必须显式传 `allow_outside_workspace=true`，且结果首行会标注。
 
-完整威胁模型和已知缺口见 [SECURITY.md](SECURITY.md)。
+完整威胁模型与边界见 [SECURITY.md](SECURITY.md)。
 
 ## 许可与致谢
 

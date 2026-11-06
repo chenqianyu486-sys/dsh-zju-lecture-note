@@ -23,7 +23,7 @@ dsh-zju-lecture-note/
 ├── server.mjs                     # 启动器：解析 Python 解释器并拉起 MCP 服务
 ├── mcp_server.py                  # MCP stdio 服务器（JSON-RPC 2.0，隐私边界在这里）
 ├── zju_lecture/                   # 核心库（纯标准库）
-│   ├── client.py                  # 智云课堂 API 客户端（TLS 校验 + 同域重定向）
+│   ├── client.py                  # 智云课堂 API 客户端（TLS 校验 + origin/SSRF 重定向校验）
 │   ├── cookies.py                 # Edge Cookie 读取与安全清理
 │   ├── browser_login.py           # 一键登录窗口：CDP 取 Cookie + 安全保存 + 清除
 │   ├── security.py                # Cookie 校验 / redactor / 本地文件边界
@@ -473,7 +473,8 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 5. 回显：Cookie / 密码 / Bearer 没有；工具 schema 中没有 cookie / password / reveal / domain 参数。
    签名视频直链是例外，会作为预期结果返回给调用方；
 6. 日志：MCP 工具结果、异常、JSON-RPC 输出以及 Python `_log()` 经过 `SecretRedactor`；
-   依赖模块直接写 stderr 的镜像 URL 尚未覆盖（见 [SECURITY.md](../SECURITY.md) §7.4）；
+   依赖模块的镜像 URL 先由 `deps._redact_url()` 去掉 userinfo / query / fragment，
+   bridge.js 转发 stderr 前再做一层 JS 脱敏（见 [SECURITY.md](../SECURITY.md) §7.4）；
 7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
    权限 0600，读完覆写并删除；
 8. 落盘：只有 `zju_login` 保存的登录态与独立浏览器 profile。登录态仅含 Cookie（不保存账号密码），
@@ -483,8 +484,9 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 
 Cookie 不是正常工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
 `zju_read_browser_cookie` 也没有参数；登录态只能由 `zju_login`、本地配置或本机 Edge 提供。
-dsh 适配层目前对未声明额外字段的校验不完整，模型传入的 `cookie` / `token` / `password`
-不会被 Python 读取，但可能已进入宿主调用日志（见 [SECURITY.md](../SECURITY.md) §7.7）。
+dsh 0.2.x 不为工具参数生成根级封闭声明，但 `handle_tool_call` 会按
+`inputSchema.properties` 拒绝未声明的字段（`未知参数: cookie`），工具不执行
+（见 [SECURITY.md](../SECURITY.md) §7.7）。
 字幕匿名成功时不读缓存、环境变量、文件或 Edge 凭据；401/403 后读不到凭据 / 遇到 ABE 时，
 调用 `zju_login` 打开独立登录窗口，不向模型索要 Cookie，也不保证关闭 Edge 能解决。
 显式配置优先：`ZJU_COOKIE` → `ZJU_COOKIE_FILE`；两者损坏都会挡住后续来源——诊断文本会明确要求先修/移除。
@@ -497,10 +499,11 @@ dsh 适配层目前对未声明额外字段的校验不完整，模型传入的 
 （`my-secret.txt` 拒绝、`secret sharing 第5章.md` 放行），`config.json` 这类通用名不再被拒。
 符号链接会先解析真实路径再判定。确有必要时可用 `ZJU_ALLOW_SENSITIVE_PATHS=1` 显式关闭保护。
 
-写入边界并不完全统一：`zju_write_note`、截图输出和 PDF 工程限制在工作区；但
-`zju_check_note(fix=true)` 与 `zju_build_study_notes(mode="patch")` 可以写回工作区外的
-Markdown，且 `patch` 没有备份。这是待修复缺口（见 [SECURITY.md](../SECURITY.md) §7.3）。
-在修复前，只把工作区内的文件交给这两个写回分支。
+写入边界统一由 `paths.require_workspace_path()` 仲裁：`zju_write_note`、截图输出与 PDF
+工程限制在工作区；`zju_check_note(fix=true)` 与 `zju_build_study_notes(mode="patch")`
+在任何情况下都拒绝工作区外目标。读取工作区外课件只有
+`zju_extract_courseware(allow_outside_workspace=true)` 一个显式入口，结果首行标注
+「已读取工作区外文件」，且仍受扩展名/凭据防护（见 [SECURITY.md](../SECURITY.md) §9）。
 
 ### 网络
 
@@ -512,10 +515,10 @@ Markdown，且 `patch` 没有备份。这是待修复缺口（见 [SECURITY.md](
 - 课堂 API 的 Cookie（投影 / 视频直链）与 Bearer 仅发往 `classroom.zju.edu.cn`；字幕不发 Cookie 头。
   课堂 API 的跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
 - 投影截图的**初始**地址只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；
-  Cookie 只给 ZJU 图片主机。**当前实现仍有两个已知例外**：图片返回 401/403 时会把 Bearer
-  重试到图片主机；跨主机重定向会剥离凭据，但目标没有逐跳校验，且同主机 HTTPS→HTTP
-  或换端口不会剥离。由此可能形成降级泄凭据与盲 SSRF，见 [SECURITY.md](../SECURITY.md) §7.2。
-  修复前应关闭投影下载，或在可信网络中只处理自己信任的课程。
+  Cookie 只给 ZJU 图片主机。图片返回 401/403 时 Bearer 只重试到同一图片主机。
+  重定向逐跳校验：目标必须是浙大主机，拒绝 HTTPS→HTTP、URL userinfo、IP 字面量与
+  私网/loopback；跨 origin 时剥离 Cookie / Authorization / Proxy-Authorization，
+  被阻止的跳转只写 diagnostics（见 [SECURITY.md](../SECURITY.md) §10）。
 - 可选的 Typst 自动安装会访问 GitHub 官方 Release，并通过 `ZJU_TYPST_MIRROR` 支持镜像；
   `@preview` 包已 vendor，但底稿显式引用未 vendor 的包时仍可能访问包注册表。
 
@@ -527,8 +530,10 @@ Markdown，且 `patch` 没有备份。这是待修复缺口（见 [SECURITY.md](
 （可用 `clear=true` 删除）、Typst 缓存与讲义/备份文件外，不写用户目录。
 
 自动修复备份默认位于系统临时目录的 `zju-lecture-backups/`，可用 `ZJU_BACKUP_DIR` 指定；
-在 POSIX 多用户机器上当前权限和可预测路径尚不安全（见 [SECURITY.md](../SECURITY.md) §7.6）。
-`ZJU_TYPST_MIRROR` 不应包含凭据，`zju_doctor` 目前会原样显示它（§7.4）。
+目录按 0700 创建、备份文件 0600、文件名带 8 位随机后缀，写入前拒绝符号链接
+（见 [SECURITY.md](../SECURITY.md) §7.6）。
+`ZJU_TYPST_MIRROR` 仍不应包含凭据；`zju_doctor`、下载进度与异常只显示
+`scheme://host[:port]/path`（§7.4）。
 
 ### 可机器验证
 
@@ -573,9 +578,10 @@ Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语
 登录态安全存储 / Cookie 域过滤 / 登录 URL 白名单 / 失效清除 / `zju_login(clear=true)`、
 阅读版 PDF 的标记装置与真实编译、配色三处一致与字体可再分发性、填空笔记链路。
 
-> 测试覆盖的是当前已实现行为，不等于安全审计结论。2026-11-06 的审查仍确认了
-> 并发工作区、截图重定向、外部回写、镜像脱敏、隐私扫描与备份权限等待修复缺口，
-> 清单见 [SECURITY.md](../SECURITY.md) 第 7 节。
+> 2026-11-06 安全审查确认的问题已在 `fix/security-audit-2026-11` 分支全部修复，
+> 每条都有独立回归测试（工作区隔离、重定向、边界、脱敏、掩码、权限、资源上限、
+> 参数白名单、副作用确认、封面注入）。逐条 commit 与验证见
+> [SECURITY.md](../SECURITY.md) 第 7 节。
 
 > 测试中的 `subprocess` / 管道 / 临时文件在受限沙箱里可能被拒绝；这是环境限制，不是插件缺陷。
 
