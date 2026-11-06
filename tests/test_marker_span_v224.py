@@ -142,6 +142,133 @@ class TestReadingHandoutSpans(unittest.TestCase):
             self.assertIn(label, typst)
         self.assertNotIn("求 $X$。题目：", typst)
 
+    def test_bold_lead_with_timecode_ends_the_span(self):
+        # `**矛盾从哪里来** `[00:05]`：…` 是小标题 + 正文，不是定理陈述的一部分；
+        # 旧规则只认「整行粗体」，这类抬头会被定理框整段吞掉。
+        text = (
+            "## 一节\n\n"
+            "[定理] 麦克斯韦方程组 —— 四个方程为\n\n"
+            "$$\n\\nabla\\cdot\\mathbf{D}=\\rho\n$$\n\n"
+            "配合本构关系才封闭。\n\n"
+            "**矛盾从哪里来** `[00:05]`–`[00:06]`：对同一回路取两个曲面。\n\n"
+            "**怎么修**：补上位移电流。\n"
+        )
+        typst = render_handout(text).typst
+        self.assertIn("配合本构关系才封闭。]", typst)
+        self.assertIn("#h(2em)*矛盾从哪里来*", typst)
+        self.assertIn("#h(2em)*怎么修*", typst)
+
+    def test_example_review_labels_do_not_end_the_span(self):
+        text = (
+            "## 一节\n\n"
+            "[例] 题面 —— 求 $X$。\n"
+            "**题目**：条件。\n"
+            "**切入点**：思路。\n"
+            "**关键步骤**：步骤。\n"
+            "**易错点**：坑。\n\n"
+            "**历史意义** `[00:31]`：下一话题。\n"
+        )
+        typst = render_handout(text).typst
+        example = typst[typst.index("#example("):typst.index("#h(2em)*历史意义*")]
+        for label in ("题目", "切入点", "关键步骤", "易错点"):
+            self.assertIn("*" + label + "*", example)
+        self.assertIn("#h(2em)*历史意义*", typst)
+
+    def test_unknown_marker_ends_the_span_without_printing_brackets(self):
+        text = (
+            "## 一节\n\n"
+            "[定义] 坡印廷矢量 —— 能流密度\n\n"
+            "推导要点。\n\n"
+            "[推导] 能量密度 —— 具体形式\n\n"
+            "结论：只用 $E$ 表达。\n"
+        )
+        typst = render_handout(text).typst
+        self.assertIn("[能流密度\n\n推导要点。]", typst)
+        self.assertNotIn("[推导]", typst)
+        # 推导按旧规范的 Proof 排：Proof. + 块末 qed，不套框。
+        self.assertIn("#proof[能量密度 —— 具体形式", typst)
+
+    def test_quote_block_ends_the_span(self):
+        text = (
+            "## 一节\n\n"
+            "[定理] 结论 —— 正文。\n\n"
+            "证明性的补充一段。\n\n"
+            "> [!IMPORTANT]\n"
+            "> 老师强调的注意事项。\n"
+        )
+        typst = render_handout(text).typst
+        self.assertIn("[正文。\n\n证明性的补充一段。]", typst)
+        theorem = typst[typst.index('#theorem("1.1"'):typst.index("#keypoint[")]
+        self.assertNotIn("老师强调的注意事项", theorem)
+
+    def test_important_is_a_blue_paragraph_not_a_box(self):
+        text = "## 一节\n\n> [!IMPORTANT]\n> 这是重点提示。\n"
+        typst = render_handout(text).typst
+        self.assertIn("#keypoint[*重点*　这是重点提示。]", typst)
+        self.assertNotIn(")[*重点*", typst)
+
+    def test_derivation_qed_lands_before_the_warning_paragraph(self):
+        text = (
+            "## 一节\n\n"
+            "[推导] 推导正文：\n\n"
+            "$$\na = b\n$$\n\n"
+            "结论：成立。\n\n"
+            "⚠ 原字幕有误。\n\n"
+            "- 本节无例题。\n"
+        )
+        typst = render_handout(text).typst
+        start = typst.index("#proof[")
+        proof = typst[start:typst.index("#h(2em)\u26a0", start)]
+        self.assertIn("结论：成立。", proof)
+        self.assertNotIn("原字幕有误", proof)
+
+    def test_plain_lead_with_timecode_ends_the_span(self):
+        text = (
+            "## 一节\n\n"
+            "[定理] 最大功率传输 —— 条件是 $R_L=R_{th}$。\n\n"
+            "老师反复强调的方法论 `[01:15]`：\n\n"
+            "1. 先做戴维南等效；\n"
+            "2. 再代条件。\n"
+        )
+        typst = render_handout(text).typst
+        self.assertIn("条件是 $R_L=", typst)
+        self.assertIn("。]", typst)
+        self.assertIn("#h(2em)老师反复强调的方法论", typst)
+
+    def test_proof_ignores_plain_leads(self):
+        text = (
+            "## 一节\n\n"
+            "[证明] 直接算：\n\n"
+            "第一步 `[00:12]`：先化简。\n\n"
+            "第二步 `[00:13]`：再代入。\n\n"
+            "[练习] 算一算。\n"
+        )
+        typst = render_handout(text).typst
+        proof = _proof_fragment(typst)
+        self.assertIn("第一步", proof)
+        self.assertIn("第二步", proof)
+
+    def test_example_review_labels_with_timecode_stay_inside(self):
+        text = (
+            "## 一节\n\n"
+            "[例] 题面 —— 求 $X$。\n\n"
+            "关键步骤 `[00:12]`：先化简。\n\n"
+            "[定理] 结论 —— 正文\n"
+        )
+        typst = render_handout(text).typst
+        example = typst[typst.index("#example("):typst.index('#theorem("1.2"')]
+        self.assertIn("关键步骤", example)
+
+    def test_trailing_separator_does_not_leak_into_the_body(self):
+        text = (
+            "## 一节\n\n"
+            "[例] 例 1：题目名称 ——\n\n"
+            "**题目**：题面。\n"
+        )
+        typst = render_handout(text).typst
+        self.assertIn("title: [例 1：题目名称]", typst)
+        self.assertIn(")[*题目*：题面。]", typst)
+
     def test_single_line_devices_do_not_absorb(self):
         text = (
             "## 一节\n\n"
@@ -234,6 +361,89 @@ class TestFillInDraftSpans(unittest.TestCase):
         self.assertIn("#proof[直接算：\n\n$ a = b $]", typst)
         self.assertIn("#h(2em)*下一小节*", typst)
 
+    def test_bold_lead_with_timecode_ends_the_span(self):
+        draft = (
+            "## 一节\n\n"
+            "[定理] 麦克斯韦方程组 —— 四个方程为\n\n"
+            "$$\n\\nabla\\cdot\\mathbf{D}=\\rho\n$$\n\n"
+            "配合本构关系才封闭。\n\n"
+            "**矛盾从哪里来** `[00:05]`–`[00:06]`：对同一回路取两个曲面。\n"
+        )
+        typst = render_typst(draft).typst
+        self.assertIn("配合本构关系才封闭。]", typst)
+        self.assertIn("#h(2em)*矛盾从哪里来*", typst)
+
+    def test_plain_lead_with_timecode_ends_the_span(self):
+        draft = (
+            "## 一节\n\n"
+            "[定义] 坡印廷矢量 —— 能流密度\n\n"
+            "$$\nS = wv\n$$\n\n"
+            "推导要点 `[00:43]`–`[00:45]`：$S=wv$，方向沿传播方向。\n"
+        )
+        typst = render_typst(draft).typst
+        self.assertIn("能流密度\n\n$ S = w v $]", typst)
+        self.assertIn("#h(2em)推导要点", typst)
+
+    def test_proof_ignores_plain_leads(self):
+        draft = (
+            "## 一节\n\n"
+            "[证明] 直接算：\n\n"
+            "第一步 `[00:12]`：先化简。\n\n"
+            "第二步 `[00:13]`：再代入。\n"
+        )
+        typst = render_typst(draft).typst
+        proof = typst[typst.index("#proof["):]
+        self.assertIn("第二步", proof)
+        self.assertTrue(proof.rstrip().endswith("再代入。]"))
+
+    def test_example_review_labels_do_not_end_the_span(self):
+        draft = (
+            "## 一节\n\n"
+            "[例] 题面 —— 求 $X$。\n"
+            "**题目**：条件。\n"
+            "**易错点**：坑。\n\n"
+            "**历史意义** `[00:31]`：下一话题。\n"
+        )
+        typst = render_typst(draft).typst
+        body = typst[typst.index("#example"):typst.index("#h(2em)*历史意义*")]
+        self.assertIn("*题目*", body)
+        self.assertIn("*易错点*", body)
+        self.assertIn("#h(2em)*历史意义*", typst)
+
+    def test_unknown_marker_ends_the_span_without_printing_brackets(self):
+        draft = (
+            "## 一节\n\n"
+            "[定义] 坡印廷矢量 —— 能流密度\n\n"
+            "推导要点。\n\n"
+            "[推导] 能量密度 —— 具体形式\n\n"
+            "结论：只用 $E$ 表达。\n"
+        )
+        typst = render_typst(draft).typst
+        self.assertIn("推导要点。]", typst)
+        self.assertNotIn("[推导]", typst)
+        # 推导按旧规范的 Proof 排：Proof. + 块末 qed，不套框。
+        self.assertIn("#proof[能量密度 —— 具体形式", typst)
+
+    def test_important_becomes_a_keypoint_paragraph(self):
+        draft = "## 一节\n\n> [!IMPORTANT]\n> 这是重点提示。\n"
+        typst = render_typst(draft).typst
+        self.assertIn("#keypoint[*重点*　这是重点提示。]", typst)
+        self.assertNotIn("[!IMPORTANT]", typst)
+
+    def test_derivation_qed_lands_before_the_warning_paragraph(self):
+        draft = (
+            "## 一节\n\n"
+            "[推导] 推导正文：\n\n"
+            "$$\na = b\n$$\n\n"
+            "结论：成立。\n\n"
+            "⚠ 原字幕有误。\n"
+        )
+        typst = render_typst(draft).typst
+        start = typst.index("#proof[")
+        proof = typst[start:typst.index("#h(2em)\u26a0", start)]
+        self.assertIn("结论：成立。", proof)
+        self.assertNotIn("原字幕有误", proof)
+
     def test_review_labels_get_their_own_line(self):
         draft = (
             "## 一节\n\n"
@@ -262,6 +472,22 @@ class TestFillInDraftSpans(unittest.TestCase):
         )
         rendered = render_typst(draft)
         self.assertGreaterEqual(rendered.paragraphs, 1)
+
+
+class TestUnknownMarkerLint(unittest.TestCase):
+    def test_unknown_marker_is_reported(self):
+        from zju_lecture.note_lint import check_markdown
+
+        issues = check_markdown("## 一节\n\n[推导] 能量密度 —— 具体形式\n")
+        hits = [issue for issue in issues if issue.code == "unknown_marker"]
+        self.assertEqual(len(hits), 1, issues)
+        self.assertIn("推导", hits[0].message)
+
+    def test_known_marker_is_not_reported(self):
+        from zju_lecture.note_lint import check_markdown
+
+        issues = check_markdown("## 一节\n\n[定义] 坡印廷矢量 —— 能流密度\n")
+        self.assertFalse([issue for issue in issues if issue.code == "unknown_marker"])
 
 
 # --------------------------------------------------------------- 渲染几何
