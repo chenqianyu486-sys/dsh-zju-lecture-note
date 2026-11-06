@@ -1008,15 +1008,16 @@ class TranscriptAuthTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertNotIn(mcp_server.DEFAULT_DOMAIN, mcp_server._COOKIE_CACHE)
 
-    def test_abe_produces_file_guidance_without_auth_request(self):
+    def test_abe_points_at_the_login_window_without_auth_request(self):
         with mock.patch.object(
             mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
         ) as request, mock.patch.object(mcp_server, "_resolve_cookie", return_value=(None, "应用绑定加密", None, "abe")):
             with self.assertRaises(self.client.ZJUAPIError) as caught:
                 handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
         message = str(caught.exception)
-        self.assertIn("ZJU_COOKIE_FILE", message)
-        self.assertIn("退出 Edge 无效", message)
+        self.assertIn("zju_login", message)
+        self.assertIn("打开独立登录窗口", message)
+        self.assertNotIn("2. 老师授课时", message)
         self.assertEqual(request.call_count, 1)
 
     def test_other_errors_never_trigger_login(self):
@@ -1042,7 +1043,7 @@ class TranscriptAuthTests(unittest.TestCase):
         self.assertNotIn("cookie", schema["properties"])
         self.assertNotIn("token", schema["properties"])
 
-    def test_no_credentials_message_points_to_edge_or_cookie_file(self):
+    def test_no_credentials_message_points_to_the_login_window(self):
         with mock.patch.object(
             mcp_server, "fetch_transcript", side_effect=self.client.TranscriptAuthError(403)
         ), mock.patch.object(
@@ -1051,9 +1052,10 @@ class TranscriptAuthTests(unittest.TestCase):
             with self.assertRaises(self.client.ZJUAPIError) as caught:
                 handle_tool_call("zju_fetch_transcript", {"url_or_sub_id": "123456"})
         message = str(caught.exception)
-        self.assertIn("Microsoft Edge", message)
-        self.assertIn("ZJU_COOKIE_FILE", message)
+        self.assertIn("zju_login", message)
+        self.assertIn("独立登录窗口", message)
         self.assertIn("不要把 Cookie 贴进对话", message)
+        self.assertIn("不要向用户索要 Cookie", message)
 
     def test_doctor_does_not_read_login_by_default(self):
         with mock.patch.object(mcp_server, "_resolve_cookie") as resolve:

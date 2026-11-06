@@ -87,9 +87,10 @@ class TestToolDefinitions(unittest.TestCase):
         payload = json.loads(result.stdout.strip())
         self.assertTrue(payload.get("ok"), payload)
         if not payload.get("skipped"):
-            # 每个可选模块都是 opt-in；默认配置注册 5 个字幕核心工具，
-            # 外加始终常驻的依赖自检 zju_doctor。
-            self.assertEqual(len(payload["tools"]), 6)
+            # 每个可选模块都是 opt-in；默认配置注册 5 个字幕核心工具、
+            # 一键登录 zju_login，外加始终常驻的依赖自检 zju_doctor。
+            self.assertEqual(len(payload["tools"]), 7)
+            self.assertIn("zju_login", payload["tools"])
             self.assertIn("zju_doctor", payload["tools"])
             for optional in (
                 "zju_fetch_slides",
@@ -103,14 +104,18 @@ class TestToolDefinitions(unittest.TestCase):
             self.assertIn("zju_build_study_notes", payload["toolsWithStudy"])
             self.assertEqual(
                 payload["skills"],
-                ["zju-lecture-summarizer", "zju-lecture-summarizer-help"],
+                ["zju-lecture-summarizer", "zju-lecture-summarizer-help", "zju-lecture-summarizer-login"],
             )
             self.assertEqual(
                 payload["skillsWithStudy"],
-                ["zju-lecture-summarizer", "zju-lecture-summarizer-help", "scholia-notes"],
+                ["zju-lecture-summarizer", "zju-lecture-summarizer-help", "zju-lecture-summarizer-login", "scholia-notes"],
             )
             self.assertEqual(
                 payload["helpInvocation"],
+                {"modelInvocable": False, "userInvocable": True},
+            )
+            self.assertEqual(
+                payload["loginInvocation"],
                 {"modelInvocable": False, "userInvocable": True},
             )
             self.assertTrue(payload["skillHasSlides"])
@@ -202,6 +207,7 @@ class TestPackage(unittest.TestCase):
         self.assertNotIn("zju_lecture", manifest["files"])
         self.assertIn("skills/zju-lecture-summarizer", manifest["files"])
         self.assertIn("skills/zju-lecture-summarizer-help", manifest["files"])
+        self.assertIn("skills/zju-lecture-summarizer-login", manifest["files"])
         self.assertIn("SECURITY.md", manifest["files"])
         self.assertIn("@deepseek-ai/dsh-tools", manifest["peerDependencies"])
         # 隐私：不要声明用不到的 peer，减少版本不匹配面。
@@ -237,6 +243,14 @@ class TestPackage(unittest.TestCase):
         self.assertIn("zju_doctor(login=true)", content)
         self.assertIn("不要建议关闭 TLS", content)
         self.assertIn("401/403", content)
+        self.assertIn("zju_login", content)
+
+    def test_login_command_is_shipped(self):
+        content = read_text("skills", "zju-lecture-summarizer-login", "SKILL.md")
+        self.assertIn("zju_login", content)
+        self.assertIn("zju_login(clear=true)", content)
+        self.assertIn("不要", content)
+        self.assertIn("Cookie", content)
 
     def test_bridge_points_at_the_python_core(self):
         content = read_text("lib", "bridge.js")

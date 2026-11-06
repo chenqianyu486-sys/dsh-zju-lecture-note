@@ -7,13 +7,13 @@
  *   - 最后通过桥接真实调用一次 Python 核心
  *
  * 同时验证 v2.0.1 的功能解耦：
- *   - 默认配置：字幕核心 6 个工具 + 自动 PDF，可选模块全部不注册；
+ *   - 默认配置：字幕核心 7 个工具（含一键登录）+ 自动 PDF，可选模块全部不注册；
  *   - 打开填空笔记：额外注册 zju_build_study_notes，并加载 scholia-notes Skill；
  *   - 打开投影/登录辅助：额外注册对应工具，Skill 追加 SLIDES.md 附录。
  *
- * 随包分发三个 Skill（zju-lecture-summarizer / zju-lecture-summarizer-help /
- * scholia-notes）；help 只面向用户命令、不进入模型目录，scholia-notes 只在
- * enableStudyNotes 打开时注册。
+ * 随包分发四个 Skill（zju-lecture-summarizer / zju-lecture-summarizer-help /
+ * zju-lecture-summarizer-login / scholia-notes）；help 与 login 只面向用户命令、不进入
+ * 模型目录，scholia-notes 只在 enableStudyNotes 打开时注册。
  *
  * 依赖 `node_modules/@deepseek-ai/*`（开发环境从本机 dsh 安装链接即可）。
  * 缺失时输出 {"ok":true,"skipped":true} 并以 0 退出，方便在无 dsh 的机器上跑测试。
@@ -142,15 +142,16 @@ try {
   const namesWithStudy = study.tools.map((tool) => tool.name);
   const namesFull = full.tools.map((tool) => tool.name);
   const namesLive = live.tools.map((tool) => tool.name);
-  if (names.length !== 6) throw new Error(`expected 6 core tools, got ${names.length}: ${names}`);
+  if (names.length !== 7) throw new Error(`expected 7 core tools, got ${names.length}: ${names}`);
+  if (!names.includes("zju_login")) throw new Error("core mode is missing zju_login");
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (names.includes(optional)) throw new Error(`core mode registered optional tool ${optional}`);
   }
-  if (namesWithStudy.length !== 7 || !namesWithStudy.includes("zju_build_study_notes")) {
+  if (namesWithStudy.length !== 8 || !namesWithStudy.includes("zju_build_study_notes")) {
     throw new Error(`study mode tools are wrong: ${namesWithStudy}`);
   }
-  if (namesFull.length !== 10) throw new Error(`expected 10 tools with every module, got ${namesFull.length}`);
-  if (namesLive.length !== 10) throw new Error(`volatile refs registered ${namesLive.length} tools, expected 10`);
+  if (namesFull.length !== 11) throw new Error(`expected 11 tools with every module, got ${namesFull.length}`);
+  if (namesLive.length !== 11) throw new Error(`volatile refs registered ${namesLive.length} tools, expected 11`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (!namesFull.includes(optional)) throw new Error(`full mode missing ${optional}`);
     if (!namesLive.includes(optional)) throw new Error(`volatile refs missing ${optional}`);
@@ -162,12 +163,13 @@ try {
     if (typeof tool.execute !== "function") throw new Error(`${tool.name}: no execute`);
   }
 
-  if (core.skills.length !== 2) throw new Error(`expected 2 core skills, got ${core.skills.length}`);
-  if (study.skills.length !== 3) throw new Error(`expected 3 skills with study mode, got ${study.skills.length}`);
-  if (full.skills.length !== 3) throw new Error(`expected 3 full skills, got ${full.skills.length}`);
+  if (core.skills.length !== 3) throw new Error(`expected 3 core skills, got ${core.skills.length}`);
+  if (study.skills.length !== 4) throw new Error(`expected 4 skills with study mode, got ${study.skills.length}`);
+  if (full.skills.length !== 4) throw new Error(`expected 4 full skills, got ${full.skills.length}`);
   const coreSkill = core.skills[0];
   const helpSkill = core.skills[1];
-  const studySkill = study.skills[2];
+  const loginSkill = core.skills[2];
+  const studySkill = study.skills[3];
   const fullSkill = full.skills[0];
   if (coreSkill.name !== "zju-lecture-summarizer") throw new Error(`unexpected skill name ${coreSkill.name}`);
   if (helpSkill.name !== "zju-lecture-summarizer-help") throw new Error(`unexpected help skill name ${helpSkill.name}`);
@@ -176,6 +178,11 @@ try {
   if (!helpSkill.description) throw new Error("help skill description is empty");
   if (helpSkill.invocation?.modelInvocable !== false || helpSkill.invocation?.userInvocable !== true) {
     throw new Error(`help skill must be user-only: ${JSON.stringify(helpSkill.invocation)}`);
+  }
+  if (loginSkill.name !== "zju-lecture-summarizer-login") throw new Error(`unexpected login skill name ${loginSkill.name}`);
+  if (!loginSkill.content.includes("zju_login")) throw new Error("login skill does not mention zju_login");
+  if (loginSkill.invocation?.modelInvocable !== false || loginSkill.invocation?.userInvocable !== true) {
+    throw new Error(`login skill must be user-only: ${JSON.stringify(loginSkill.invocation)}`);
   }
   if (studySkill.name !== "scholia-notes") throw new Error(`unexpected second skill name ${studySkill.name}`);
   if (!studySkill.content.includes("zju_build_study_notes")) throw new Error("scholia-notes skill does not mention the study-notes tool");
@@ -224,6 +231,7 @@ try {
     skills: core.skills.map((item) => item.name),
     skillsWithStudy: study.skills.map((item) => item.name),
     helpInvocation: helpSkill.invocation,
+    loginInvocation: loginSkill.invocation,
     skillHasSlides: fullSkill.content.includes("投影抓取模块（可选附录）"),
     section: core.sections[0].name,
     result: result.text.trim().replace(/\s+/g, " "),

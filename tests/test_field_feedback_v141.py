@@ -242,10 +242,11 @@ class TestSlideFailureMessage(unittest.TestCase):
         ):
             return handle_tool_call("zju_fetch_slides", {"url_or_sub_id": "123456"})
 
-    def test_abe_points_at_cookie_file_and_not_at_quitting_edge(self):
+    def test_abe_points_at_login_window_and_not_at_quitting_edge(self):
         output = self._slides_output("abe")
         self.assertIn("原因: abe", output)
-        self.assertIn("ZJU_COOKIE_FILE", output)
+        self.assertIn("zju_login", output)
+        self.assertNotIn("ZJU_COOKIE_FILE", output)
         self.assertNotIn("后重试；本机 Edge 已启用", output)
         self.assertNotIn("2. 老师授课时", output)
 

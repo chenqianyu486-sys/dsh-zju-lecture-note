@@ -341,10 +341,10 @@ class TestFeatureGates(unittest.TestCase):
         with mock.patch.dict(os.environ, base, clear=False):
             return [tool["name"] for tool in mcp_server.available_tools()]
 
-    def test_default_has_six_tools(self):
+    def test_default_has_seven_tools(self):
         names = self.names()
-        # 核心链路 5 个 + 依赖自检 zju_doctor（PDF 出问题时先查它）。
-        self.assertEqual(len(names), 6)
+        # 核心链路 5 个 + 一键登录 zju_login + 依赖自检 zju_doctor。
+        self.assertEqual(len(names), 7)
         self.assertEqual(
             names,
             [
@@ -353,6 +353,7 @@ class TestFeatureGates(unittest.TestCase):
                 "zju_extract_courseware",
                 "zju_check_note",
                 "zju_write_note",
+                "zju_login",
                 "zju_doctor",
             ],
         )
@@ -376,7 +377,7 @@ class TestFeatureGates(unittest.TestCase):
             ZJU_ENABLE_LOGIN_TOOLS="1",
             ZJU_ENABLE_SLIDES="1",
         )
-        self.assertEqual(len(everything), 10)
+        self.assertEqual(len(everything), 11)
 
     def test_disabled_tool_call_is_an_actionable_error(self):
         env = {
@@ -405,7 +406,7 @@ class TestFeatureGates(unittest.TestCase):
         }
         with mock.patch.dict(os.environ, env, clear=True):
             names = [tool["name"] for tool in mcp_server.available_tools()]
-            self.assertEqual(len(names), 10)
+            self.assertEqual(len(names), 11)
             self.assertFalse(mcp_server.render_pdf_enabled())
 
 
