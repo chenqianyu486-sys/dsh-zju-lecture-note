@@ -5,7 +5,7 @@
 
 > 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：
 > - 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。
-> - 字幕先匿名；401/403 时自动使用本机登录态重试一次。仍不可用时插件会打开独立登录窗口，你正常登录即可；登录态安全保存在本机，不回显、不进入对话、不保存密码。
+> - 字幕先匿名；401/403 时自动使用本机登录态重试一次。仍不可用时插件会打开独立登录窗口，你正常登录即可；登录态按系统能力保存在本机（Windows DPAPI；macOS/Linux 0600），不回显、不进入对话、不保存密码。
 > - 核心只用 Python 标准库；PDF 排版所需的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备。
 > - **非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
 
@@ -14,7 +14,7 @@
 - 安装 DeepSeek Harness。
 - 进入插件 → 添加插件，填入 npm 包名 `dsh-zju-lecture-note` 或仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note 。
 - 安装并启用插件。
-- 首次使用**不需要配置 Cookie**：字幕被拒时，Agent 会调用 `zju_login` 打开独立登录窗口；你在窗口里正常登录，成功后窗口自动关闭并安全保存登录态。也可主动输入 `/zju-lecture-summarizer-login`。
+- 首次使用**不需要配置 Cookie**：字幕被拒时，Agent 会调用 `zju_login` 打开独立登录窗口；你在窗口里正常登录，成功后窗口自动关闭并按系统能力保存登录态。也可主动输入 `/zju-lecture-summarizer-login`。
 - 新会话输入 `/zju-lecture-summarizer` 总结课程；`/zju-lecture-summarizer-login` 管理登录；`/zju-lecture-summarizer-help` 排查 401/403 与依赖问题。例：
 ```text
 /zju-lecture-summarizer 帮我总结课程内容 https://classroom.zju.edu.cn/livingroom?course_id=87517&sub_id=1988617&tenant_code=112
@@ -26,12 +26,12 @@
 ## 功能特色
 
 - **一句话出讲义**：给回放链接或 `sub_id`，Agent 抓字幕、写 Markdown、修公式、校验、命名，一次完成。
-- **登录不用配 Cookie**：401/403 时自动打开独立登录窗口，登录后安全保存；不碰日常 Edge，也不用开发者工具。
+- **登录不用配 Cookie**：401/403 时自动打开独立登录窗口，登录后保存在本机；不碰日常 Edge，也不用开发者工具。
 - **装完即用**：缺少 Typst 时首次排版自动准备（可关）；中文字体与 Typst 包随插件分发，填空笔记离线也能编译；遇到问题可让 Agent 跑 `zju_doctor` 自检。
 - **自动 PDF**：写完讲义就在本地排同名 PDF；PDF 失败不影响 Markdown。
 - **内容不丢**：字幕按分钟 / 逐句 / 分块读取；可读本地 PPTX / DOCX / PDF 课件校准术语；可选把课堂投影截图合成 PDF。
 - **能动手复习**：可选「填空式学习笔记」——基于 Typst scholia 模板排版的填空式学习笔记；配色与段落规范由本项目定义。
-- **隐私优先**：Cookie 不进工具参数与返回值，全输出脱敏；敏感文件拒绝；TLS 永不降级。
+- **隐私优先**：常规工具不要求或读取 Cookie 参数，登录态不回显，Cookie/Bearer 输出脱敏；敏感文件拒绝；TLS 永不降级。当前版本仍有已知安全缺口，见 [SECURITY.md](SECURITY.md)。
 - **到处能用**：dsh 原生插件、标准 MCP、MiniMax Code 插件包、命令行四种入口。
 
 ## 安装
@@ -179,16 +179,27 @@ Markdown 已经正常写入，只是 PDF 没排出来。让 Agent 跑一次 `zju
 
 ## 隐私与安全
 
-- **Cookie 不是工具参数**：字幕 / 投影 / 视频直链 / 读 Cookie 工具均不接受 Cookie；
-  登录态只能由 `zju_login`、本地配置或本机 Edge 提供。
-- **登录态安全落盘、不回显**：`zju_login` 只保存登录态（不保存账号密码），
-  Windows 用 DPAPI 绑定当前用户，macOS / Linux 用 0600 文件；
-  `zju_login(clear=true)` 会一并删除登录态与独立浏览器配置；所有输出经过脱敏。
-- **网络边界**：只允许 `classroom.zju.edu.cn` 与 `https://*.zju.edu.cn` 截图主机，
-  跨域重定向拒绝；证书校验不降级。
-- **本地文件有边界**：课件 / 讲义工具只接受指定扩展名，拒绝凭据、私钥与浏览器数据。
+> **当前安全状态（2026-11-06）**：最近一轮安全审查确认若干问题尚未修复，重点包括
+> 多会话工作区隔离、截图重定向、部分修复/填空路径的工作区外回写、镜像 URL 诊断、
+> 隐私扫描器输出和 POSIX 备份权限。修复前请不要在共享多用户机器上处理敏感课程材料，
+> 不要让不同工作区的会话并发处理课程，也不要给 `ZJU_TYPST_MIRROR` 配置带凭据的 URL。
+> 完整清单与临时规避见 [SECURITY.md](SECURITY.md) 第 7 节。
 
-完整威胁模型见 [SECURITY.md](SECURITY.md)。
+- **登录态不是正常工具参数**：字幕 / 投影 / 视频直链 / 读 Cookie 工具不要求 Cookie；
+  登录态只能由 `zju_login`、本地配置或本机 Edge 提供。dsh 对未声明额外字段的校验
+  仍有缺口，不要把凭据粘进工具调用。
+- **登录态落盘、不回显**：`zju_login` 只保存 Cookie（不保存账号密码），
+  Windows 用 DPAPI 绑定当前用户，macOS / Linux 是 **0600 权限的明文文件**；
+  `zju_login(clear=true)` 会一并删除登录态与独立浏览器配置。Cookie/Bearer 输出脱敏，
+  但镜像 URL 等非 Cookie 秘密尚未覆盖。
+- **网络边界**：正常请求只到 `classroom.zju.edu.cn`、`https://*.zju.edu.cn` 截图主机
+  与 Typst 官方下载地址；课堂 API 拒绝跨域重定向。投影截图的重定向目标尚未逐跳校验，
+  这是已知缺口；证书校验不降级。
+- **本地文件有边界**：课件 / 讲义工具只接受指定扩展名，拒绝凭据、私钥与浏览器数据；
+  `zju_write_note` 只写工作区，但部分修复/填空路径可以写回工作区外文件，详见
+  [SECURITY.md](SECURITY.md)。
+
+完整威胁模型和已知缺口见 [SECURITY.md](SECURITY.md)。
 
 ## 许可与致谢
 

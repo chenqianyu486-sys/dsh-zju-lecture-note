@@ -316,11 +316,20 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 
   **标记块的边界**：框类装置与 `[证明]` 是「块」而不是「一行」——从标记行一直收到
   下一个标记行 / 标题 / 整行粗体的伪标题（`**周期函数的处理** \`[00:22]\``）。
-  块内的空行是段落分隔，`$$…$$`、列表、表格都留在装置里；`_render_block_sequence()`
+  另有五种「作者显然在开新块」的结构也会收尾：引用 / 提示块（`>`）、
+  以 `⚠` 开头的提醒段（qed 因此落在推导的最后一条公式之后，而不是列表末尾）、
+  粗体小标题 + 冒号（可带时间码，如 `**矛盾从哪里来** \`[00:05]\`：…`；例题四段式的
+  `**题目**` / `**切入点**` / `**关键步骤**` / `**易错点**` 除外）、
+  没加粗的「短引导词 + 时间码 + 冒号」（`推导要点 \`[00:43]\`：…`；`[证明]` 块除外，
+  避免把证明截成两半），以及未知的中文标记
+  （如 `[推导]`：按 `[证明]` 的 Proof 样式兜底，斜体 `Proof.` + 块末 qed，不套框；
+  其余未知标记排成加粗小标题）。块内的空行是段落分隔，
+  `$$…$$`、列表、表格都留在装置里；`_render_block_sequence()`
   负责把它们排成装置内容（块内段落不加 `#h(2em)`）。单段装置（`[直觉]` / `[练习]` /
   `[边注]` / `[强调]` …）仍只吃标记行那一句。
-  这条规则同时修掉两个实地问题：定理陈述里的块级公式被甩到框外；`[证明]` 遇到空行就
-  收尾，qed 方块停在一两行之后，读起来像「证明到这就结束了」。两条链路（
+  这条规则同时修掉三个实地问题：定理陈述里的块级公式被甩到框外；`[证明]` 遇到空行就
+  收尾，qed 方块停在一两行之后，读起来像「证明到这就结束了」；框一直收到下一个标题，
+  把后续讲解、提示块和结论整段吞进框里。两条链路（
   `handout.py` 与 `study_notes.py`）用同一套口径；块内段落仍计入「方框:正文」的分母，
   避免比例检查误报。
 
@@ -402,6 +411,9 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
   `$1/r$` 不再把行距顶高，不必手改成 `r^{-1}`。
 - Markdown 的 `>` 引用块 → `#quoted[…]`（左侧细线 + 灰色小字）。Typst **没有** `>`
   引用语法，旧实现把 `>` 原样印进 PDF；多条 `> **字段**：…` 按行换行，不再粘成一句。
+- `> [!IMPORTANT]`（GitHub alert）不再套方框，两条链路都渲染成 `#keypoint[…]`：
+  取自规范的蓝色（`palette.thm` / `#33609B`）无框文字段落，标签「重点」加粗；
+  其余 alert 类型（注意 / 说明 / 提示）在阅读版仍走提示块，填空版退化成带标签的灰色引用。
 - 方框预算按**最小**小节统计：`## 二、分章详解` 下挂 7 个 `### 2.x` 时逐 `2.x` 计数，
   不会把整章的框算到同一节。
 - GFM 表格 / `- ` 与 `1.` 列表 / 行内反引号在 `render_typst` 里有对应分支：表格 → `#table(…)`、
@@ -446,29 +458,39 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 1. 来源只有本地：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 保存的登录态 → 本机 Edge；
 2. 校验：拒绝换行（HTTP 头注入）、空 name、超长；不合法只返回原因，不回显内容；
 3. 使用：字幕先匿名，仅 HTTP 401/403 后自动读取本地登录态、解析 Bearer 重试一次；
-   字幕不发 Cookie 头，Bearer 仅发往 `classroom.zju.edu.cn`，跨域重定向拒绝；投影等沿用原边界（见下）；
+   字幕不发 Cookie 头，Bearer 仅发往 `classroom.zju.edu.cn`，课堂 API 跨域重定向拒绝；投影边界见下；
 4. 缓存：Python 子进程内存；
-5. 回显：没有；工具 schema 中没有 cookie / password / reveal / domain 参数；
-6. 日志：所有 stdout / stderr 经过 `SecretRedactor`；
+5. 回显：Cookie / 密码 / Bearer 没有；工具 schema 中没有 cookie / password / reveal / domain 参数。
+   签名视频直链是例外，会作为预期结果返回给调用方；
+6. 日志：MCP 工具结果、异常、JSON-RPC 输出以及 Python `_log()` 经过 `SecretRedactor`；
+   依赖模块直接写 stderr 的镜像 URL 尚未覆盖（见 [SECURITY.md](../SECURITY.md) §7.4）；
 7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
    权限 0600，读完覆写并删除；
 8. 落盘：只有 `zju_login` 保存的登录态与独立浏览器 profile。登录态仅含 Cookie（不保存账号密码），
-   Windows 为 DPAPI 密文，macOS / Linux 为 0600 文件；`zju_login(clear=true)` 二者一起删除。
-   CDP 只连接 `127.0.0.1` 随机端口，端口与浏览器生命周期由工具管理。
+   Windows 为 DPAPI 密文；macOS / Linux 为 **0600 权限的明文文件**。
+   `zju_login(clear=true)` 二者一起删除。CDP 只连接 `127.0.0.1` 随机端口，
+   端口与浏览器生命周期由工具管理；端口本身没有应用层认证，见 SECURITY.md 的已知边界。
 
-Cookie 不是工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
+Cookie 不是正常工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
 `zju_read_browser_cookie` 也没有参数；登录态只能由 `zju_login`、本地配置或本机 Edge 提供。
+dsh 适配层目前对未声明额外字段的校验不完整，模型传入的 `cookie` / `token` / `password`
+不会被 Python 读取，但可能已进入宿主调用日志（见 [SECURITY.md](../SECURITY.md) §7.7）。
 字幕匿名成功时不读缓存、环境变量、文件或 Edge 凭据；401/403 后读不到凭据 / 遇到 ABE 时，
 调用 `zju_login` 打开独立登录窗口，不向模型索要 Cookie，也不保证关闭 Edge 能解决。
-`ZJU_COOKIE` / `ZJU_COOKIE_FILE` 存在时优先级最高，配置损坏会挡住 `zju_login`——诊断文本会明确要求先修/移除。
+显式配置优先：`ZJU_COOKIE` → `ZJU_COOKIE_FILE`；两者损坏都会挡住后续来源——诊断文本会明确要求先修/移除。
 
 ### 本地文件
 
-`zju_extract_courseware` 和 `zju_check_note` 只接受指定扩展名，并拒绝敏感文件名/目录
-（`.env*`、`*credential*`、`*.pem`、`Cookies`、`Login Data`、`.ssh`、`.dsh` 等）。
-凭据类单词按分隔符**整词匹配**（`my-secret.txt` 拒绝、`secret sharing 第5章.md` 放行），
-`config.json` 这类通用名不再被拒。符号链接会先解析真实路径再判定。
-确有必要时可用 `ZJU_ALLOW_SENSITIVE_PATHS=1` 显式关闭保护。
+`zju_extract_courseware`、`zju_check_note` 与 `zju_build_study_notes` 的源文件读取只接受
+指定扩展名，并拒绝敏感文件名/目录（`.env*`、`*credential*`、`*.pem`、`Cookies`、
+`Login Data`、`.ssh`、`.dsh` 等）。凭据类单词按分隔符**整词匹配**
+（`my-secret.txt` 拒绝、`secret sharing 第5章.md` 放行），`config.json` 这类通用名不再被拒。
+符号链接会先解析真实路径再判定。确有必要时可用 `ZJU_ALLOW_SENSITIVE_PATHS=1` 显式关闭保护。
+
+写入边界并不完全统一：`zju_write_note`、截图输出和 PDF 工程限制在工作区；但
+`zju_check_note(fix=true)` 与 `zju_build_study_notes(mode="patch")` 可以写回工作区外的
+Markdown，且 `patch` 没有备份。这是待修复缺口（见 [SECURITY.md](../SECURITY.md) §7.3）。
+在修复前，只把工作区内的文件交给这两个写回分支。
 
 ### 网络
 
@@ -478,15 +500,25 @@ Cookie 不是工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_g
   证书校验失败**不重试**。字幕 HTTP 401/403 只做一次 Bearer 重试，不能循环尝试；
   区分 HTTP 状态、接口业务错误与本地凭据读取失败，不把 403 直接判为校园网限制或要求更换后端。
 - 课堂 API 的 Cookie（投影 / 视频直链）与 Bearer 仅发往 `classroom.zju.edu.cn`；字幕不发 Cookie 头。
-  跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
-- 投影截图只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；
-  Cookie 只给 ZJU 图片主机、不发 Bearer；跨主机重定向剥离凭据；写盘限制在工作区。
+  课堂 API 的跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
+- 投影截图的**初始**地址只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；
+  Cookie 只给 ZJU 图片主机。**当前实现仍有两个已知例外**：图片返回 401/403 时会把 Bearer
+  重试到图片主机；跨主机重定向会剥离凭据，但目标没有逐跳校验，且同主机 HTTPS→HTTP
+  或换端口不会剥离。由此可能形成降级泄凭据与盲 SSRF，见 [SECURITY.md](../SECURITY.md) §7.2。
+  修复前应关闭投影下载，或在可信网络中只处理自己信任的课程。
+- 可选的 Typst 自动安装会访问 GitHub 官方 Release，并通过 `ZJU_TYPST_MIRROR` 支持镜像；
+  `@preview` 包已 vendor，但底稿显式引用未 vendor 的包时仍可能访问包注册表。
 
 ### 数据会离开本机的部分
 
 字幕与课件文本会作为工具结果进入宿主模型上下文，由你选择的模型提供方处理——这是使用大模型
-整理讲义的固有代价。插件本身不收集、不额外上传、不写遥测；除 `zju_login` 保存的本机登录态与
-独立浏览器 profile（可用 `clear=true` 删除）外，不写用户目录。
+整理讲义的固有代价。`zju_get_video_url` 返回的签名 MP4 直链也会进入上下文，应视为短期凭证。
+插件本身不收集、不额外上传、不写遥测；除 `zju_login` 保存的本机登录态、独立浏览器 profile
+（可用 `clear=true` 删除）、Typst 缓存与讲义/备份文件外，不写用户目录。
+
+自动修复备份默认位于系统临时目录的 `zju-lecture-backups/`，可用 `ZJU_BACKUP_DIR` 指定；
+在 POSIX 多用户机器上当前权限和可预测路径尚不安全（见 [SECURITY.md](../SECURITY.md) §7.6）。
+`ZJU_TYPST_MIRROR` 不应包含凭据，`zju_doctor` 目前会原样显示它（§7.4）。
 
 ### 可机器验证
 
@@ -530,6 +562,10 @@ Cookie 不回显与错误 redaction、敏感本地文件拒绝、TLS 不降级�
 Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语义、系统提示适用范围）、
 登录态安全存储 / Cookie 域过滤 / 登录 URL 白名单 / 失效清除 / `zju_login(clear=true)`、
 阅读版 PDF 的标记装置与真实编译、配色三处一致与字体可再分发性、填空笔记链路。
+
+> 测试覆盖的是当前已实现行为，不等于安全审计结论。2026-11-06 的审查仍确认了
+> 并发工作区、截图重定向、外部回写、镜像脱敏、隐私扫描与备份权限等待修复缺口，
+> 清单见 [SECURITY.md](../SECURITY.md) 第 7 节。
 
 > 测试中的 `subprocess` / 管道 / 临时文件在受限沙箱里可能被拒绝；这是环境限制，不是插件缺陷。
 
