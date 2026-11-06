@@ -20,6 +20,8 @@ import tempfile
 import time
 from typing import List, NamedTuple
 
+from .study_notes import MARKERS, _UNKNOWN_MARKER_RE
+
 ERROR = "error"
 WARN = "warn"
 
@@ -203,6 +205,16 @@ def check_markdown(text: str) -> List[Issue]:
                 "这几行写成了小标题/粗体，PDF 里不会排成方框",
                 "改成 `[例] 例 1：标题 —— 正文`（`[定义]` / `[定理]` / `[证明]` 同理）："
                 "方框才有编号、主题色与左侧竖线，读者一眼能认出这是哪一类内容。",
+                _excerpt(stripped),
+            ))
+
+        unknown = _UNKNOWN_MARKER_RE.match(probe.strip())
+        if unknown and unknown.group(1) not in MARKERS:
+            issues.append(Issue(
+                idx, WARN, "unknown_marker",
+                f"未知标记 `[{unknown.group(1)}]`，PDF 里只会排成加粗小标题",
+                "换成已支持的标记（`[定义]` / `[定理]` / `[证明]` / `[例]` / `[直觉]` / "
+                "`[强调]` / `[弱注]` 等），或去掉方括号写成普通段落。",
                 _excerpt(stripped),
             ))
 

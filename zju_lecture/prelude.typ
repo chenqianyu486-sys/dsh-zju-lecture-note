@@ -62,6 +62,19 @@
 // 易错点：粗体 + 紫。刻意不做成方框，避免多一个色块。
 #let warn(body) = accent(body, tone: "warn", strong: true)
 
+// 重点：蓝色文字段落（不是方框）。用于 `> [!IMPORTANT]`：块级容器只提供
+// 段距与首行缩进，没有底色 / 竖线，读起来仍是正文。
+#let keypoint(body) = context block(
+  width: 100%,
+  above: 6pt,
+  below: 6pt,
+  {
+    set text(fill: active.get().thm)
+    h(2em)
+    body
+  },
+)
+
 // ── 3. 细分隔线：比方框轻得多的段落切分 ──
 #let divider = context block(width: 100%, above: 0.6em, below: 0.6em)[
   #line(length: 100%, stroke: 0.4pt + active.get().hairline)

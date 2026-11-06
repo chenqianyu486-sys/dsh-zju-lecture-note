@@ -298,6 +298,18 @@
 #let accent(body) = text(weight: "bold", fill: palette.thm)[#body]
 #let warn(body) = text(weight: "bold", fill: palette.warn)[#body]
 #let aside(body) = text(size: 0.9em, fill: palette.muted)[#body]
+// 重点：蓝色文字段落（不是方框）。用于 `> [!IMPORTANT]`：块级容器只提供
+// 段距与首行缩进，没有底色 / 竖线，读起来仍是正文。
+#let keypoint(body) = block(
+  width: 100%,
+  above: 6pt,
+  below: 6pt,
+  {
+    set text(fill: palette.thm)
+    h(2em)
+    body
+  },
+)
 #let gap(hint) = text(font: fonts.sans, size: 0.92em, fill: palette.eg)[[ fill in: #hint ]]
 #let fillin(width: 2.2cm) = box(
   width: width,

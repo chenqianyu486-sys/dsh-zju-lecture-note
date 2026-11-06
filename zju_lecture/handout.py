@@ -41,6 +41,8 @@ from .study_notes import (
     StudyNotesError,
     _run_typst,
     _SUMMARY_LINE_RE,
+    _UNKNOWN_MARKER_RE,
+    block_boundary,
     find_typst,
     latex_to_typst,
     pad_inline_math,
@@ -98,11 +100,8 @@ _TABLE_SEP_RE = re.compile(
 )
 _IMAGE_RE = re.compile(r'^!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)$')
 _HR_RE = re.compile(r"^\s*([-*_])(?:\s*\1){2,}\s*$")
-#: 伪标题：整行只有一段粗体（可带 `[mm:ss]` 时间码）。讲义里常拿它当小标题，
-#: 它是**下一个话题**的抬头，不属于前一个装置的正文；跨段收集到这里收尾。
-_PSEUDO_HEADING_RE = re.compile(
-    r"^\*\*[^*\n]{1,40}\*\*(?:\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?)?\s*$"
-)
+#: 只剩破折号的「正文」：`[例] 标题 ——` 拆出来的残渣。
+_DASH_ONLY_RE = re.compile(r"^[—–-]+$")
 _LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
 _DETAILS_OPEN_RE = re.compile(r"<details[^>]*>", re.IGNORECASE)
 _DETAILS_CLOSE_RE = re.compile(r"</details\s*>", re.IGNORECASE)
@@ -331,12 +330,20 @@ def _extract_label(text: str) -> Tuple[str, str]:
 
 
 def _split_knot_title(body: str) -> Tuple[str, str]:
-    """按 ``标题 —— 正文`` 拆开 knot 的内容。"""
+    """按 ``标题 —— 正文`` 拆开 knot 的内容。
+
+    标题单独占一行、以 ``——`` 收尾时（正文从下一行开始），残留的破折号不是
+    正文的一部分 —— 否则 ``[例] 例 1：… ——`` 会在框里多排一个「—」。
+    """
     for separator in ("——", "—", " – ", " - "):
         if separator in body:
             head, rest = body.split(separator, 1)
-            if head.strip() and rest.strip():
-                return head.strip(), rest.strip()
+            if not head.strip():
+                continue
+            rest = rest.strip()
+            if not rest or _DASH_ONLY_RE.match(rest):
+                return head.strip(), ""
+            return head.strip(), rest
     return "", body.strip()
 
 
@@ -665,6 +672,10 @@ def _quote_block(
         "NOTE": ("说明", "def"),
         "TIP": ("提示", "def"),
     }.get(kind, ("", "thm"))
+    if kind == "IMPORTANT":
+        # 「重点」不再套方框：走 prelude 的 keypoint —— 规范蓝色的文字段落，
+        # 只保留首行缩进与段距，没有底色 / 左侧竖线。
+        return "#keypoint[*" + label + "*　" + body + "]"
     if kind:
         accent = _PALETTE[tone]
         return (
@@ -787,12 +798,14 @@ def _collect_marker_body(
     index: int,
     first: str,
     absorb: bool,
+    proof: bool = False,
 ) -> Tuple[List[str], int]:
     """收集标记行之后的正文行，返回 ``(行列表, 下一个待处理下标)``。
 
     ``absorb=False`` 沿用旧规则：遇到空行、标题、公式、列表、表格、代码块
-    或下一个标记就停。``absorb=True`` 一直收到下一个标题或下一个标记，
-    空行保留为段落分隔。
+    或下一个标记就停。``absorb=True`` 一直收到下一个标题 / 标记 / 新话题，
+    空行保留为段落分隔；``proof=True`` 时不把「短引导词 + 时间码」当边界，
+    免得证明被从中间截断。
     """
     body: List[str] = [first] if first else []
     total = len(lines)
@@ -800,11 +813,7 @@ def _collect_marker_body(
         while index < total:
             raw = lines[index]
             stripped = raw.strip()
-            if (
-                _HEADING_RE.match(stripped)
-                or _is_marker_start(stripped)
-                or _PSEUDO_HEADING_RE.match(stripped)
-            ):
+            if block_boundary(stripped, proof=proof):
                 break
             body.append(raw)
             index += 1
@@ -1047,6 +1056,7 @@ def _is_block_start(line: str) -> bool:
         or (stripped.startswith("|") and stripped.endswith("|"))
         or _IMAGE_RE.match(stripped)
         or _is_marker_start(stripped)
+        or _UNKNOWN_MARKER_RE.match(stripped)
         or stripped.lower().startswith("<details")
         or stripped.lower().startswith("</details")
     )
@@ -1101,7 +1111,7 @@ def _collect_refs(lines: Sequence[str]) -> Dict[str, str]:
         # 与 _render_body 用同一个收集器：框可以跨段，<label> 也可能写在
         # 最后一段末尾；两处必须同进同退，编号才不会漂。
         body_lines, index = _collect_marker_body(
-            lines, index, marker.group(2), _absorbs_blocks(name)
+            lines, index, marker.group(2), _absorbs_blocks(name), name == "证明"
         )
         counts["knot"] = counts.get("knot", 0) + 1
         number = (str(section) + "." if section else "") + str(counts["knot"])
@@ -1173,7 +1183,7 @@ def _render_body(
         if marker and marker.group(1) in MARKERS:
             name = marker.group(1)
             body_lines, index = _collect_marker_body(
-                lines, index + 1, marker.group(2), _absorbs_blocks(name)
+                lines, index + 1, marker.group(2), _absorbs_blocks(name), name == "证明"
             )
             call, _shape = MARKERS[name]
             number = ""
@@ -1190,6 +1200,30 @@ def _render_body(
                 # 分母不能凭空变小，否则比例检查会把正常的讲义判成框框滥用。
                 count("paragraph", inner_paragraphs)
             count(call or name)
+            continue
+
+        # 未知的中文标记（`[推导] …`）：推导按旧规范的 Proof 排（斜体 Proof. +
+        # 块末 qed，跨段、不套框）；其余未知标记按加粗小标题兜底。
+        unknown = _UNKNOWN_MARKER_RE.match(stripped)
+        if unknown:
+            if unknown.group(1) == "推导":
+                body_lines, index = _collect_marker_body(
+                    lines, index + 1, unknown.group(2), True, True
+                )
+                fragment, inner_paragraphs = _render_marker_block(
+                    "证明", body_lines, "", warnings, image_resolver, refs
+                )
+                out.append(fragment)
+                if inner_paragraphs:
+                    count("paragraph", inner_paragraphs)
+                count("proof")
+                continue
+            lead = "**" + unknown.group(1) + "**"
+            if unknown.group(2):
+                lead += "　" + unknown.group(2)
+            out.append(_paragraph(lead, warnings, image_resolver, refs))
+            count("paragraph")
+            index += 1
             continue
 
         # 自测题的答案块：`<details><summary>答案</summary>…</details>`。

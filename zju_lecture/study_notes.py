@@ -291,6 +291,32 @@ _PSEUDO_HEADING_RE = re.compile(
     r"^\*\*[^*\n]{1,40}\*\*(?:\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?)?\s*$"
 )
 
+#: 行内粗体小标题：`**矛盾从哪里来** \`[00:05]\`–\`[00:06]\`：…`。
+#: 它和整行粗体的伪标题是同一个意思（下一个话题的抬头），只是后面直接接了正文。
+#: 例题四段式的标签（`**题目**：` 等）必须排除，否则 `[例]` 会被拆散。
+_BOLD_LEAD_RE = re.compile(
+    r"^\*\*([^*\n]{1,40})\*\*\s*"
+    r"(?:`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?\s*"
+    r"(?:[–—~-]\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?)?\s*)?"
+    r"[：:]"
+)
+_REVIEW_HEAD_LABELS = frozenset({"题目", "切入点", "关键步骤", "易错点", "易错"})
+
+#: 短引导词 + 时间码 + 冒号：`推导要点 \`[00:43]\`–\`[00:45]\`：…`。
+#: 与粗体小标题同一个意思，只是作者没加粗；框在这一行收尾。证明块例外 ——
+#: 证明的 qed 必须落在整段推导的末尾，不能因为一个「第一步 [00:12]：」就截断。
+_PLAIN_LEAD_RE = re.compile(
+    r"^([\u4e00-\u9fff][^\s：:，。；、（）()]{0,11})\s*"
+    r"`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?\s*"
+    r"(?:[–—~-]\s*`?\[\d{1,2}:\d{2}(?::\d{2})?\]`?\s*)?"
+    r"[：:]"
+)
+
+#: 未知的中文块标记：`[推导] …`。只认中文标签 —— 行首的 `[1]` 引用、公式里
+#: 的 `[S]` 都不是标记。跨段收集在这里收尾，渲染时按加粗小标题排，
+#: 不再把方括号原样印进 PDF。
+_UNKNOWN_MARKER_RE = re.compile(r"^\[([\u4e00-\u9fff][^\]\n]{0,7})\]\s*(.*)$")
+
 #: 斜杠分式：`\partial D/\partial t`、`\mathrm{d}i/\mathrm{d}t`、
 #: `\sqrt{\mu_0/\varepsilon_0}`。这些写法在行内会与上下标挤在一起，
 #: 渲染层统一改成 `\frac{…}{…}`；只处理**明确的微分/根式**，不碰一般 `a/b`。
@@ -1393,21 +1419,60 @@ def _is_marker_line(text: str) -> bool:
     )
 
 
+def block_boundary(text: str, proof: bool = False) -> bool:
+    """跨段装置是否应该在这一行**收尾**（两条 PDF 链路共用）。
+
+    框与证明本来就该跨段（v2.2.4：公式与段落不能掉出框外），但「跨段」不能
+    等于「吞到下一个标题」：一份讲义里 `[定理]` 后面紧跟的普通段落往往是
+    下一段讲解，`[定义]` 后面常跟着推导与结论。旧规则只认标题、已知标记与
+    整行粗体，实地讲义里出现过一个定义框吞掉推导、提示块甚至列表的情况。
+
+    这里补四条**结构性**边界，都是「作者显然在开一个新块」的信号：
+
+    * 引用 / 提示块（``>``）—— 独立块，不属于上一个装置；
+    * 以 ``⚠`` 开头的提醒段 —— 同样是独立提示，不应该被 qed 或方框包住；
+    * 粗体小标题 + 冒号（可带时间码）—— 例题四段式标签例外；
+    * 短引导词 + 时间码 + 冒号 —— 与上一条同义，只是没加粗；
+      ``proof=True`` 时跳过，避免把证明从中间截断（qed 会停在半路）；
+    * 未知的中文标记（``[推导]``）—— 作者想开新块，只是名字不在表里。
+
+    普通段落、块级公式、列表、表格仍然留在装置里，证明与例题的多段正文不受影响。
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if re.match(r"^#{1,6}\s+", stripped):
+        return True
+    if _is_marker_line(stripped) or _PSEUDO_HEADING_RE.match(stripped):
+        return True
+    if stripped.startswith(">") or stripped.startswith("\u26a0"):
+        return True
+    bold = _BOLD_LEAD_RE.match(stripped)
+    if bold and bold.group(1).strip() not in _REVIEW_HEAD_LABELS:
+        return True
+    if not proof:
+        lead = _PLAIN_LEAD_RE.match(stripped)
+        if lead and lead.group(1).strip() not in _REVIEW_HEAD_LABELS:
+            return True
+    unknown = _UNKNOWN_MARKER_RE.match(stripped)
+    if unknown and unknown.group(1) not in MARKERS:
+        return True
+    return False
+
+
 def _collect_block_lines(
     lines: Sequence[str],
     cursor: int,
+    name: str = "",
 ) -> Tuple[List[str], int]:
-    """收集标记行之后、到下一个标题/标记为止的底稿行（空行保留）。"""
+    """收集标记行之后、到下一个标题/标记/新话题为止的底稿行（空行保留）。"""
     body: List[str] = []
     total = len(lines)
+    proof = name == "证明"
     while cursor < total:
         raw = lines[cursor]
         stripped = raw.strip()
-        if stripped and (
-            re.match(r"^#{1,6}\s+", stripped)
-            or _is_marker_line(stripped)
-            or _PSEUDO_HEADING_RE.match(stripped)
-        ):
+        if stripped and block_boundary(stripped, proof=proof):
             break
         body.append(raw)
         cursor += 1
@@ -1869,7 +1934,7 @@ def render_typst(
                 continue
             if _marker_absorbs_blocks(name):
                 # 框与证明跨段：同一装置的公式、段落、列表都留在块内。
-                extra, cursor = _collect_block_lines(input_lines, cursor)
+                extra, cursor = _collect_block_lines(input_lines, cursor, name)
                 fragment, label, body_paragraphs = _render_block_marker(
                     name, body, extra, known_labels, warnings
                 )
@@ -1885,20 +1950,71 @@ def render_typst(
                 knots.append({"call": call, "section": section})
             continue
 
+        # 未知的中文标记（`[推导] …`）：作者想开一个新块，但名字不在 MARKERS 表里。
+        # 推导按旧规范的 Proof 排（斜体 Proof. + 块末 qed，跨段、不套框）；
+        # 其余未知标记按「加粗小标题 + 正文」兜底。note_lint 仍会提示改成已支持的标记。
+        unknown = _UNKNOWN_MARKER_RE.match(stripped)
+        if unknown:
+            if unknown.group(1) == "推导":
+                extra, cursor = _collect_block_lines(input_lines, cursor, "证明")
+                fragment, label, body_paragraphs = _render_block_marker(
+                    "证明", unknown.group(2), extra, known_labels, warnings
+                )
+                lines_out.append(fragment)
+                paragraphs += body_paragraphs
+                if label:
+                    labels.append(label)
+                _count("proof")
+                continue
+            lead = "**" + unknown.group(1) + "**"
+            if unknown.group(2):
+                lead += "　" + unknown.group(2)
+            lines_out.append(BODY_INDENT + escape_typst(lead, known_labels))
+            paragraph_raw[len(lines_out) - 1] = lead
+            paragraphs += 1
+            _count("paragraph")
+            continue
+
         # Markdown 引用块。Typst **没有** `>` 引用语法（0.15 实测：`>` 会被
         # 当成字面量印出来，整段抬头变成「> 来源：… > 上课时间：…」），
         # 所以走 prelude 里的 `#quoted` 内容块；字段之间用行间断行。
+        # `> [!IMPORTANT]` 这类 GitHub alert 先摘掉标记行：重点走 `#keypoint`
+        # （规范蓝色的文字段落，不是方框），其余 alert 退化成带标签的灰色引用。
         if stripped.startswith(">"):
             quote_lines = [raw_line]
             while cursor < len(input_lines) and input_lines[cursor].strip().startswith(">"):
                 quote_lines.append(input_lines[cursor])
                 cursor += 1
-            items = split_quote_items(quote_lines)
+            kind = ""
+            cleaned: List[str] = []
+            for line in quote_lines:
+                text_line = line.strip()
+                if text_line.startswith(">"):
+                    text_line = text_line[1:].lstrip()
+                alert = re.match(
+                    r"^\[!(IMPORTANT|WARNING|CAUTION|NOTE|TIP)\]$", text_line, re.I
+                )
+                if alert and not cleaned:
+                    kind = alert.group(1).upper()
+                    continue
+                cleaned.append(line)
+            items = split_quote_items(cleaned)
             body = " \\\n".join(
                 escape_typst(join_cjk_lines(item), known_labels) for item in items
             )
-            lines_out.append("#quoted[\n" + body + "\n]")
-            _count("quote")
+            if kind == "IMPORTANT":
+                lines_out.append("#keypoint[*重点*　" + body + "]")
+                _count("keypoint")
+            elif kind:
+                label = {
+                    "WARNING": "注意", "CAUTION": "注意",
+                    "NOTE": "说明", "TIP": "提示",
+                }.get(kind, "提示")
+                lines_out.append("#quoted[*" + label + "*　" + body + "]")
+                _count("quote")
+            else:
+                lines_out.append("#quoted[\n" + body + "\n]")
+                _count("quote")
             continue
 
         # Markdown 水平分隔线 → Typst 的细分隔线。不处理的话 `---` 会被
