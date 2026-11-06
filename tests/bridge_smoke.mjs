@@ -7,13 +7,20 @@
  * 这里只使用虚构的课程/回放编号，仓库里不出现任何真实课程标识。
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { ZjuBridge } from "../lib/bridge.js";
 import { ZJU_TOOLS } from "../lib/tools.js";
 
 const SAMPLE_URL = "https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456&tenant_code=112";
 
+// 每个会话必须显式声明工作区；bridge 不再回退到插件目录。
+const workspace = mkdtempSync(join(tmpdir(), "zju-smoke-"));
 const bridge = new ZjuBridge({ timeoutMs: 60000 });
 try {
+  bridge.useWorkspace(workspace);
   const result = await bridge.call("zju_parse_url", { url: SAMPLE_URL });
   process.stdout.write(`${JSON.stringify({ ok: true, tools: ZJU_TOOLS.length, result })}\n`);
 } catch (error) {
@@ -21,4 +28,9 @@ try {
   process.exitCode = 1;
 } finally {
   bridge.dispose();
+  try {
+    rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    /* the OS reclaims %TEMP% on its own */
+  }
 }

@@ -22,6 +22,10 @@
 // The plugin imports the dsh peer packages statically, so a missing peer set
 // fails while loading the module. Import dynamically to keep this smoke test
 // runnable (as a skip) on machines without a dsh installation.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 let apply;
 let featureFlags;
 let readSetting;
@@ -80,6 +84,9 @@ function makeContext(state) {
 }
 
 const allStates = [];
+// A real dsh tool call always carries the session; the bridge refuses to run
+// without a workspace (it must never fall back to the plugin directory).
+const sessionWorkspace = mkdtempSync(join(tmpdir(), "zju-plugin-apply-"));
 
 function runApply(config) {
   const state = { tools: [], skills: [], sections: [], disposers: [] };
@@ -218,7 +225,13 @@ try {
   const rendered = parseTool.output.render({}, { text: "hello" });
   if (rendered?.[0]?.text !== "hello") throw new Error("output renderer wraps text in JSON");
 
-  const result = await parseTool.execute({ url: SAMPLE_URL }, { signal: new AbortController().signal });
+  const result = await parseTool.execute(
+    { url: SAMPLE_URL },
+    {
+      signal: new AbortController().signal,
+      agent: { session: { header: { cwd: sessionWorkspace } } },
+    },
+  );
   if (!result?.text || !result.text.includes("123456")) throw new Error(`unexpected tool result: ${result?.text}`);
 
   process.stdout.write(`${JSON.stringify({
@@ -253,5 +266,10 @@ try {
         /* ignore */
       }
     }
+  }
+  try {
+    rmSync(sessionWorkspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    /* Windows 会稍后回收 %TEMP% */
   }
 }

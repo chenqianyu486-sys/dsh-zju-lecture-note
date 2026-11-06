@@ -497,8 +497,12 @@ class TestEntrypointWorkspaceWiring(unittest.TestCase):
         source = self._source("lib", "bridge.js")
         self.assertIn("ZJU_WORKSPACE", source)
         self.assertIn("useWorkspace(", source)
-        # A workspace change may only recycle the child while it is idle.
-        self.assertIn("this.pending.size > 0", source)
+        # P0-1: one child per workspace instead of recycling a shared one, and
+        # no silent fallback to the plugin directory.
+        self.assertIn("this.sessions", source)
+        self.assertIn("WORKSPACE_UNAVAILABLE", source)
+        self.assertNotIn("PLUGIN_ROOT : this.workspace", source)
+        self.assertNotIn("cwd: cwd", source)
 
     def test_write_note_is_presented_as_an_edit_tool(self):
         source = self._source("lib", "index.js")

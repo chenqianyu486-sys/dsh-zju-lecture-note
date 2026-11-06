@@ -323,7 +323,10 @@ class TestStaticPluginWiring(unittest.TestCase):
 
     def test_bridge_only_recycles_the_child_when_idle(self):
         source = self._read("lib", "bridge.js")
-        self.assertIn("this.pending.size === 0", source)
+        # P0-1: an idle workspace session may be evicted by the LRU cap; an
+        # in-flight one is only recycled when no other call shares it.
+        self.assertIn("session.pending.size === 0", source)
+        self.assertIn("#disposeSession", source)
 
 
 if __name__ == "__main__":
