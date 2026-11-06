@@ -32,9 +32,9 @@ file is opened or created, and note writing refuses to leave the workspace.
 
 import os
 import re
-from typing import List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
-from .security import LocalFileError
+from .security import LocalFileError, guard_local_file
 
 #: The session workspace, injected by the host (dsh plugin sets it per call).
 WORKSPACE_ENV = "ZJU_WORKSPACE"
@@ -269,6 +269,61 @@ def is_inside_workspace(path: str) -> bool:
         if _is_inside(root, candidate):
             return True
     return False
+
+
+def require_workspace_path(
+    raw: str,
+    *,
+    extensions: Iterable[str],
+    kind: str = "文件",
+    write: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve, guard and confine a model-supplied path to the workspace.
+
+    Returns ``(resolved, error)``. ``error`` is a user-facing sentence that
+    never contains file contents. Order matters: resolve → realpath →
+    workspace check → credential/extension guard → (for writes) realpath
+    again, so a symlink planted between the two checks cannot move the
+    target outside the workspace.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None, f"{kind}路径不能为空"
+
+    resolved, tried = resolve_path(text)
+    if resolved is None:
+        return None, f"找不到{kind}: {text}{describe_attempts(tried)}"
+
+    base = primary_workspace()
+    if not _is_inside(base, resolved):
+        return None, f"拒绝访问工作区之外的文件: {resolved}"
+
+    try:
+        real_path = os.path.realpath(resolved)
+    except OSError as exc:
+        return None, f"无法解析{kind}路径: {exc}"
+
+    if not _is_inside(base, real_path):
+        return None, f"拒绝访问工作区之外的文件: {resolved}"
+
+    try:
+        guarded = guard_local_file(real_path, extensions, kind=kind)
+    except LocalFileError as exc:
+        return None, str(exc)
+
+    if not _is_inside(base, guarded):
+        return None, f"拒绝访问工作区之外的文件: {guarded}"
+
+    if write:
+        try:
+            again = os.path.realpath(guarded)
+        except OSError as exc:
+            return None, f"无法解析{kind}路径: {exc}"
+        if not _is_inside(base, again):
+            return None, f"拒绝访问工作区之外的文件: {guarded}"
+        guarded = again
+
+    return guarded, None
 
 
 def artifact_dir(

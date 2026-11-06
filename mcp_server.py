@@ -64,6 +64,7 @@ from zju_lecture.paths import (
     is_inside_workspace,
     note_target,
     primary_workspace,
+    require_workspace_path,
     resolve_path,
 )
 from zju_lecture.formatter import (
@@ -76,6 +77,7 @@ from zju_lecture.formatter import (
     transcript_quality,
 )
 from zju_lecture.security import (
+    COURSEWARE_EXTENSIONS,
     NOTE_EXTENSIONS,
     REDACTOR,
     LocalFileError,
@@ -590,6 +592,15 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "最多提取字符数（默认 10000 字符）",
                     "default": 10000,
                 },
+                "allow_outside_workspace": {
+                    "type": "boolean",
+                    "description": (
+                        "是否允许读取工作区之外的课件（默认 false）。"
+                        "显式设为 true 时仍拒绝凭据/浏览器数据/密钥文件，"
+                        "并在结果首行标注「已读取工作区外文件」"
+                    ),
+                    "default": False,
+                },
             },
             "required": ["file_path"],
         },
@@ -627,7 +638,7 @@ TOOLS: List[Dict[str, Any]] = [
             "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。"
             "write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。"
             "fix=true 自动修正机械问题并先备份；报告按问题类型聚合。"
-            "pdf=true 时检查后重新排版一份同名 PDF。"
+            "pdf=true 时检查后重新排版一份同名 PDF。只处理工作区内的讲义。"
         ),
         "inputSchema": {
             "type": "object",
@@ -1226,13 +1237,11 @@ def _patch_draft(arguments: Dict[str, Any]) -> str:
     if not isinstance(raw_edits, list) or not raw_edits:
         return "错误: mode=patch 需要非空的 edits（每项 {old, new}）"
 
-    resolved, tried = resolve_path(draft_path)
-    if resolved is None:
-        return f"错误: 找不到填空底稿: {draft_path}{describe_attempts(tried)}"
-    try:
-        resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="填空底稿")
-    except LocalFileError as exc:
-        return f"错误: {exc}"
+    resolved, path_error = require_workspace_path(
+        draft_path, extensions=NOTE_EXTENSIONS, kind="填空底稿", write=True
+    )
+    if path_error:
+        return f"错误: {path_error}"
     try:
         with open(resolved, "r", encoding="utf-8") as handle:
             draft_text = handle.read()
@@ -1743,15 +1752,32 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     if name == "zju_extract_courseware":
         file_path = str(arguments.get("file_path", ""))
         max_chars = arguments.get("max_chars") or 10000
-        resolved, tried = resolve_path(file_path)
-        if resolved is None:
-            return f"错误: 找不到课件文件: {file_path}{describe_attempts(tried)}"
+        allow_outside = arguments.get("allow_outside_workspace") is True
+        outside_note = ""
+        if allow_outside:
+            # 显式开关：仍然走同一套扩展名/凭据防护，只是不要求在工作区内。
+            resolved, tried = resolve_path(file_path)
+            if resolved is None:
+                return f"错误: 找不到课件文件: {file_path}{describe_attempts(tried)}"
+            try:
+                resolved = guard_local_file(resolved, COURSEWARE_EXTENSIONS, kind="课件文件")
+            except LocalFileError as exc:
+                return f"错误: {exc}"
+            if not is_inside_workspace(resolved):
+                outside_note = f"已读取工作区外文件: {resolved}\n"
+        else:
+            resolved, path_error = require_workspace_path(
+                file_path, extensions=COURSEWARE_EXTENSIONS, kind="课件文件"
+            )
+            if path_error:
+                return f"错误: {path_error}"
         try:
             text = extract_courseware_text(resolved, max_chars)
         except CoursewareError as exc:
             return f"错误: {exc}"
         return (
-            f"=== 课件文件提取成功 ({os.path.basename(resolved)}) ===\n"
+            outside_note
+            + f"=== 课件文件提取成功 ({os.path.basename(resolved)}) ===\n"
             f"提取字数: {len(text)} 字符\n\n"
             f"{text}"
         )
@@ -1787,14 +1813,12 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         file_path = str(arguments.get("file_path", "")).strip()
         if not file_path:
             raise ValueError("zju_check_note 需要 file_path 参数")
-        resolved, tried = resolve_path(file_path)
-        if resolved is None:
-            return f"错误: 找不到讲义文件: {file_path}{describe_attempts(tried)}"
-        file_path = resolved
-        try:
-            file_path = guard_local_file(file_path, NOTE_EXTENSIONS, kind="讲义文件")
-        except LocalFileError as exc:
-            return f"错误: {exc}"
+        wants_fix = arguments.get("fix") is True
+        file_path, path_error = require_workspace_path(
+            file_path, extensions=NOTE_EXTENSIONS, kind="讲义文件", write=wants_fix
+        )
+        if path_error:
+            return f"错误: {path_error}"
         try:
             with open(file_path, "r", encoding="utf-8") as handle:
                 note_text = handle.read()
@@ -1806,7 +1830,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         max_samples = _clamped_max_samples(arguments.get("max_samples"), 3)
         applied = []
         backup_path = ""
-        if arguments.get("fix"):
+        if wants_fix:
             fixed_text, applied = fix_markdown(note_text)
             if fixed_text != note_text:
                 try:

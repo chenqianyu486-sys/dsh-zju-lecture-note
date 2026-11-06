@@ -96,6 +96,11 @@
         "description": "最多提取字符数（默认 10000 字符）",
         "default": 10000,
         "type": "integer"
+      },
+      "allow_outside_workspace": {
+        "description": "是否允许读取工作区之外的课件（默认 false）。显式设为 true 时仍拒绝凭据/浏览器数据/密钥文件，并在结果首行标注「已读取工作区外文件」",
+        "default": false,
+        "type": "boolean"
       }
     }
   },
@@ -121,7 +126,7 @@
   },
   {
     "name": "zju_check_note",
-    "description": "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。fix=true 自动修正机械问题并先备份；报告按问题类型聚合。pdf=true 时检查后重新排版一份同名 PDF。",
+    "description": "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。fix=true 自动修正机械问题并先备份；报告按问题类型聚合。pdf=true 时检查后重新排版一份同名 PDF。只处理工作区内的讲义。",
     "parameters": {
       "file_path": {
         "description": "讲义 Markdown 文件的绝对路径，或相对当前工作区的路径",

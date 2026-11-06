@@ -372,7 +372,9 @@ class TestMCPTools(unittest.TestCase):
         with open(note, "w", encoding="utf-8") as handle:
             handle.write("| A | B |\n| :--- | :--- |\n| $x$ | $|y|=1$ |\n")
         try:
-            report = handle_tool_call("zju_check_note", {"file_path": note})
+            # P0-2: note tools only accept workspace paths.
+            with mock.patch.dict(os.environ, {"ZJU_WORKSPACE": os.path.dirname(note)}):
+                report = handle_tool_call("zju_check_note", {"file_path": note})
             self.assertIn("不通过", report)
             self.assertIn("table_bare_pipe", report)
         finally:
@@ -390,7 +392,9 @@ class TestMCPTools(unittest.TestCase):
         with open(note, "w", encoding="utf-8") as handle:
             handle.write("| A | B |\n| :--- | :--- |\n| $x$ | $|y|=1$ |\n")
         try:
-            report = handle_tool_call("zju_check_note", {"file_path": note, "fix": True})
+            # P0-2: note tools only accept workspace paths.
+            with mock.patch.dict(os.environ, {"ZJU_WORKSPACE": os.path.dirname(note)}):
+                report = handle_tool_call("zju_check_note", {"file_path": note, "fix": True})
             self.assertIn("已自动修复", report)
             self.assertIn("结论: 通过", report)
             with open(note, "r", encoding="utf-8") as handle:
@@ -649,11 +653,15 @@ class TestPrivacy(unittest.TestCase):
             shutil.rmtree(os.path.dirname(path), ignore_errors=True)
 
     def test_check_note_rejects_non_markdown(self):
-        path = os.path.join(tempfile.mkdtemp(prefix="zju-note-"), "note.txt")
+        directory = tempfile.mkdtemp(prefix="zju-note-")
+        path = os.path.join(directory, "note.txt")
         try:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("$x$")
-            report = handle_tool_call("zju_check_note", {"file_path": path})
+            # P0-2: the extension guard runs after the workspace check, so the
+            # fixture must live inside the declared workspace.
+            with mock.patch.dict(os.environ, {"ZJU_WORKSPACE": directory}):
+                report = handle_tool_call("zju_check_note", {"file_path": path})
             self.assertIn("错误", report)
             self.assertIn("只允许", report)
         finally:
