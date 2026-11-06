@@ -387,10 +387,21 @@ _LATEX_SYMBOLS: Dict[str, str] = {
     "sup": '"sup"', "inf": '"inf"', "Pr": '"Pr"',
     # 省略号 / 竖排省略号（Typst 的符号名与 LaTeX 不同，这里直接给字符）
     "cdots": "dots", "vdots": "⋮", "ddots": "⋱",
-    # 绝对值 / 范数 / 集合分隔
+    # 绝对值 / 范数 / 集合分隔。amsmath 的 `\lVert` / `\rVert` 与 `\|` 是范数
+    # 竖线，早先漏映射：`\lVert x \rVert` 直接印成 `lVert x rVert`，
+    # `\left\lVert … \right\rVert` 更惨，被 `\left` 分支整段吞掉（竖线消失）。
     "lvert": "|", "rvert": "|", "vert": "|", "mid": "|", "Vert": "‖",
+    "lVert": "‖", "rVert": "‖", "|": "‖",
     # 花括号本身在 Typst 数学里就是字面量，直接放行
     "{": "{", "}": "}",
+    # 定界符尺寸命令只是排版开关，后面的括号由正常流程输出；
+    # 不映射的话 `\big(` 会印出单词 `big`。
+    "big": "", "Big": "", "bigg": "", "Bigg": "",
+    "bigl": "", "bigr": "", "Bigl": "", "Bigr": "",
+    "biggl": "", "biggr": "", "Biggl": "", "Biggr": "",
+    "middle": "",
+    # 百分号：Typst 数学里 `%` 是合法符号，映射一下免得 note_lint 误报「未映射」
+    "%": "%",
     # 反斜杠 + 空格：LaTeX 的显式空格（`0,\ 1,\ 2`）
     " ": " ",
     # 长箭头
@@ -470,7 +481,7 @@ _TYPST_BARE_NAMES = (
         "mat", "cases", "quad", "wide", "thin", "med", "slash",
         "product", "integral", "sum", "dots",
         "overbrace", "underbrace", "overline", "underline",
-        "hat", "tilde", "bar", "vec", "dot", "ddot", "compose",
+        "hat", "tilde", "bar", "vec", "dot", "ddot", "compose", "degree",
     })
 )
 
@@ -547,16 +558,39 @@ def _typst_script(content: str) -> str:
 
     内容先递归转换一遍：``a_{n=-\\infty}`` 里的 ``\\infty`` 不转换的话，
     到 Typst 那里就是一个不认识的变量名。
+
+    **逐字母拆词只针对「还没转换过的裸字母串」。** 转换器自己会产出
+    ``alpha`` / ``theta`` / ``compose`` 这类 Typst 名字，它们本身就是**一个**
+    记号；早先不加区分地按 ``[A-Za-z]{2,}`` 拆，于是 ``29^{\\circ}`` 排成
+    ``(c o m p o s e)``、``x^{\\alpha}`` 排成 ``(a l p h a)`` —— PDF 的右上角
+    直接印出单词（实地会话 session-42baa52c 的 ``sin 29^{compose}``）。
+    判据就是 :data:`_TYPST_BARE_NAMES`：能裸写的名字不拆，其余照旧拆。
     """
     text, _ = latex_to_typst(content)
     text = text.strip()
     if not text:
         return "()"
-    if re.fullmatch(r"[A-Za-z]{2,}", text):
+    if text == "compose":
+        # LaTeX 把 ``29^{\\circ}`` 当角度写，``\\circ`` 在上下标里就是度数符号。
+        # Typst 的 ``compose`` 是数学轴上的 ∘，``degree`` 才是 °。
+        text = "degree"
+    if re.fullmatch(r"[A-Za-z]{2,}", text) and text not in _TYPST_BARE_NAMES:
         return "(" + " ".join(text) + ")"
     # `=` 在上下标里补空格：Typst 对关系符号更宽容，但补上更稳。
     text = re.sub(r"\s*=\s*", " = ", text)
     return "(" + text + ")"
+
+
+def _read_script_command(text: str, index: int) -> Tuple[Optional[str], int]:
+    """从 ``index`` 处读一个**不带花括号**的上下标记号（只认反斜杠命令）。
+
+    ``29^\\circ`` / ``\\sum_{n=1}^\\infty`` 里的记号没有花括号，Typst 侧要补一层
+    ``(...)`` 才不会被后面紧跟的字母粘住。返回 ``(记号的原文, 结束后的下标)``。
+    """
+    match = _LATEX_COMMAND_RE.match(text, index)
+    if not match:
+        return None, index
+    return text[index:match.end()], match.end()
 
 
 def _read_environment(
@@ -805,17 +839,28 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
                 continue
 
             if command in ("left", "right"):
-                # `\left\{` / `\right\}` 是花括号字面量，必须保留转义。
+                # `\left⟨分隔符⟩ … \right⟨分隔符⟩` 里**分隔符本身要留下来**。
+                # 早先只认 `\{` / `\}`，其余分两种坏法：`\left\lvert`、
+                # `\left\|`、`\left\lVert` 被整段吞掉（绝对值 / 范数竖线消失），
+                # `\left.` 又把那个点的字面量印进 PDF。这里按符号表落字符，
+                # `\left.` / `\right.` 是不可见分隔符，直接跳过。
                 if index < length and expression[index] == "\\":
                     nxt = _LATEX_COMMAND_RE.match(expression, index)
                     if nxt:
-                        if nxt.group(1) == "{":
-                            out.append("\\{")
-                        elif nxt.group(1) == "}":
-                            out.append("\\}")
+                        name = nxt.group(1)
                         index = nxt.end()
-                    else:
-                        index += 1
+                        if name == ".":
+                            continue
+                        if name in ("{", "}"):
+                            out.append("\\" + name)
+                            continue
+                        _emit(_LATEX_SYMBOLS.get(name, name), index)
+                        continue
+                    index += 1
+                    continue
+                if index < length and expression[index] == ".":
+                    index += 1
+                    continue
                 continue
 
             if command in _LATEX_FRACTIONS:
@@ -1074,6 +1119,19 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
                     out.append(char + _typst_script(content))
                     index = next_index
                     continue
+            # 不带花括号的命令：`29^\circ`、`x^\alpha`、`\sum_{n=1}^\infty`。
+            # 只有反斜杠命令需要补括号；裸字母/数字（`x_1`、`a_n`）在 Typst 里
+            # 本来就是一个记号，动了反而破坏既有输出、也会破坏幂等。
+            if index + 1 < length and expression[index + 1] == "\\":
+                token, after = _read_script_command(expression, index + 1)
+                if token is not None:
+                    converted = latex_to_typst(token)[0].strip()
+                    if converted:
+                        if converted == "compose":
+                            converted = "degree"
+                        out.append(char + "(" + converted + ")")
+                        index = after
+                        continue
             out.append(char)
             index += 1
             continue
@@ -1645,7 +1703,7 @@ _TYPST_SAFE_WORDS = (
         "frac", "sqrt", "root", "mat", "cases", "cal", "frak", "bold",
         "upright", "op", "compose", "norm", "abs", "floor", "ceil", "round",
         "diag", "rank", "Res", "tr", "det", "lim", "max", "min", "sup", "inf",
-        "wide", "thin", "med", "slash",
+        "wide", "thin", "med", "slash", "degree",
     })
 )
 
