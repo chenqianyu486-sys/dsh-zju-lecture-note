@@ -14,10 +14,12 @@
 - 安装 DeepSeek Harness
 - 进入插件→添加插件，复制 npm 包名 dsh-zju-lecture-note 或仓库链接 https://github.com/chenqianyu486-sys/dsh-zju-lecture-note
 - 安装并启用插件
-- 首次使用：在 **Microsoft Edge**（Windows / macOS）登录智云课堂，或配置 `ZJU_COOKIE_FILE`（一行 Cookie 头）。字幕先匿名，401/403 时自动用本机登录态重试一次，不需要开启「登录辅助」。
-- 新会话输入 /zju-lecture-summarizer 总结课程；登录 / 401/403 / 依赖问题输入 /zju-lecture-summarizer-help。例：
+- 在新会话使用指令 /zju-lecture-summarizer 总结课程；遇到时可使用指令 /zju-lecture-summarizer-help。例：
 ```text
 /zju-lecture-summarizer 帮我总结课程内容 https://classroom.zju.edu.cn/livingroom?course_id=87517&sub_id=1988617&tenant_code=112
+```
+```text
+/zju-lecture-summarizer-help 帮我解决当前无法使用的问题
 ```
 
 ## 功能特色
@@ -117,21 +119,7 @@ python -m zju_lecture.cli slides "<回放链接>" --download
 Agent 只多收到一行 `PDF: <路径>（N 页）`。失败时 Markdown 照常写入，只回一行 `PDF 跳过: …`。
 关掉自动排版（`renderPdf`）后只交付 Markdown；已有讲义可用 `zju_check_note(pdf=true)` 补排。
 
-讲义里可以直接写这些标记：
-
-| 你写 | 得到 |
-| :--- | :--- |
-| `[直觉]` / `[定义] 标题 —— 正文` / `[定理]` / `[例]` | 淡彩方框（青绿 / 蓝 / 琥珀） |
-| `[证明]` | 斜体 `Proof.` + **块末** qed |
-| `[练习]` | 带 3 行书写横线的练习块 |
-| `[边注]` / `[边注!]` | 右侧留白栏的边注 |
-| `[强调]` / `[易错]` / `[弱注]` / `[分隔]` | 行内高亮 / 提示 / 弱化 / 分隔 |
-| `____` / `[缺口: …]` | 灰色填空线 / 留白 |
-| `<def:x>` + `@def:x` | 编号与回指（原生交叉引用） |
-
-方框与 `[证明]` 是「块」不是「一行」：从标记行排到下一个标记 / 标题 / 整行粗体的小标题，
-块里的空行是段落分隔，`$$…$$`、列表、表格都留在装置里 —— 证明的 qed 因此落在真正的结尾。
-语义、预算（每节方框 ≤ 2 个）与数学写法由
+语义、预算与数学写法由
 [格式规范](skills/scholia-notes/references/format-spec.md) 统一规定；字体、字号、版心、
 边注等排版数值以[排版规范](skills/scholia-notes/references/typography-spec.md) 为唯一真相源；
 两条链路共用同一套参数。
