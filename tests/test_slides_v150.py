@@ -592,6 +592,7 @@ class TestMcpHandler(unittest.TestCase):
                     "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
                 ),
                 "download": True,
+                "confirm": True,
             })
         self.assertIn("PDF: /tmp/ppt/PPT-123.pdf", output)
         self.assertIn("截图文件: /tmp/slide-0001.jpg", output)
@@ -651,6 +652,7 @@ class TestMcpHandler(unittest.TestCase):
                 "url_or_sub_id": (
                     "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
                 ),
+                "confirm": True,
             })
         download_mock.assert_called_once()
         self.assertIn("讲义插图模式: 开启", output)

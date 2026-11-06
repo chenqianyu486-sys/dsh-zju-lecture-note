@@ -198,7 +198,7 @@ class TestLoginTool(LoginDirTestCase):
         self.assertIn("zju_login", names)
         tool = next(item for item in mcp_server.TOOLS if item["name"] == "zju_login")
         properties = tool["inputSchema"]["properties"]
-        self.assertEqual(set(properties), {"url", "timeout_seconds", "clear"})
+        self.assertEqual(set(properties), {"url", "timeout_seconds", "clear", "confirm"})
         for forbidden in ("cookie", "password", "token", "reveal"):
             self.assertNotIn(forbidden, properties)
 
@@ -236,7 +236,7 @@ class TestLoginTool(LoginDirTestCase):
     def test_clear_action_removes_the_saved_session(self):
         browser_login.save_session(COOKIE)
         mcp_server._COOKIE_CACHE[mcp_server.DEFAULT_DOMAIN] = COOKIE
-        output = mcp_server.handle_tool_call("zju_login", {"clear": True})
+        output = mcp_server.handle_tool_call("zju_login", {"clear": True, "confirm": True})
         self.assertIn("已清除", output)
         self.assertFalse(os.path.exists(browser_login.session_file()))
         self.assertNotIn(mcp_server.DEFAULT_DOMAIN, mcp_server._COOKIE_CACHE)

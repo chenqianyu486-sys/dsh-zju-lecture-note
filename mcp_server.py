@@ -567,6 +567,14 @@ TOOLS: List[Dict[str, Any]] = [
                     ),
                     "default": True,
                 },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "确认执行有副作用的操作（默认 false）。confirm=true 才批量下载截图"
+                        "（最多 2000 张）到工作区并合成 PDF；否则只返回清单，不写盘"
+                    ),
+                    "default": False,
+                },
             },
             "required": ["url_or_sub_id"],
         },
@@ -755,6 +763,14 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "只清除本机保存的登录态与独立登录窗口配置，不打开窗口（默认 false）",
                     "default": False,
                 },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "确认执行有副作用的操作（默认 false）。clear=true 时必须同时传 "
+                        "confirm=true 才会删除登录态与浏览器配置"
+                    ),
+                    "default": False,
+                },
             },
         },
     },
@@ -892,6 +908,14 @@ TOOLS: List[Dict[str, Any]] = [
                 "login": {
                     "type": "boolean",
                     "description": "是否读取本机登录态检查可用性（默认否；不会回显凭据）",
+                    "default": False,
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": (
+                        "确认执行有副作用的操作（默认 false）。install=true 时必须同时传 "
+                        "confirm=true 才会下载安装 Typst（约 20 MB）"
+                    ),
                     "default": False,
                 },
             },
@@ -1481,7 +1505,13 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     _ensure_tool_enabled(name)
 
     if name == "zju_doctor":
-        return _doctor_report(bool(arguments.get("install")), bool(arguments.get("login")))
+        install = bool(arguments.get("install"))
+        if install and arguments.get("confirm") is not True:
+            return (
+                "该操作会下载并安装 Typst（约 20 MB，按固定 SHA256 校验）；"
+                "确认后以 confirm=true 重试。只想查看依赖状态时不要传 install=true。"
+            )
+        return _doctor_report(install, bool(arguments.get("login")))
 
     if name == "zju_parse_url":
         parsed = parse_lecture_url(str(arguments.get("url", "")))
@@ -1489,6 +1519,11 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
 
     if name == "zju_login":
         if arguments.get("clear"):
+            if arguments.get("confirm") is not True:
+                return (
+                    "该操作会删除本机保存的登录态与独立登录窗口的浏览器配置；"
+                    "确认后以 confirm=true 重试。只想登录时不要传 clear=true。"
+                )
             result = clear_session(delete_profile=True)
             _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
             lines = [
@@ -1640,6 +1675,12 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         dedup_arg = arguments.get("dedup")
         dedup = True if dedup_arg is None else bool(dedup_arg)
         output_dir = str(arguments.get("output_dir") or "").strip()
+
+        if download and arguments.get("confirm") is not True:
+            return (
+                "该操作会把投影截图（最多 2000 张）下载到工作区并合成 PDF；"
+                "确认后以 confirm=true 重试。只想查看截图清单时传 download=false。"
+            )
 
         cookie, cookie_error, source, reason = _resolve_cookie()
         if not cookie:

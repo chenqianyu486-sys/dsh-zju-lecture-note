@@ -66,11 +66,11 @@ description: 浙大智云课堂插件的登录辅助与故障排查（401/403、
   填空笔记（`enableStudyNotes`）、登录辅助工具（`enableLoginTools`）是独立可选开关。
 - 修改设置后必须**完全重启 DeepSeek Harness**，当前会话不会热加载新工具集。
 - 字幕鉴权与 `zju_login` 都不受 `enableLoginTools` 影响，不要把“登录辅助关闭”误判成字幕不可用。
-- 用户想清除本机登录态时，调用 `zju_login(clear=true)`，不要手工删文件。
+- 用户想清除本机登录态时，调用 `zju_login(clear=true, confirm=true)`，不要手工删文件。
 
 ### C. PDF / Typst
 
-- 先跑 `zju_doctor`；缺少 Typst 时用 `zju_doctor(install=true)`。
+- 先跑 `zju_doctor`；缺少 Typst 时用 `zju_doctor(install=true, confirm=true)`。
 - 检查 `renderPdf` 是否开启；Markdown 写入成功而 PDF 失败时，先交付 Markdown。
 - 不要让用户关闭证书校验或从非官方来源安装 Typst。
 

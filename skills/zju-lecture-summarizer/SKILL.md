@@ -135,7 +135,7 @@ zju_write_note(
   **先写文件，再校验，不要只在回复里贴公式。**
 - 交付时把两条路径都给用户：Markdown 是源文件，同名 `.pdf` 是阅读版。
   返回里出现 `PDF 跳过: …` 时照常交付 Markdown，**不要重试或假装 PDF 已生成**；
-  若原因是 `找不到 typst`，调用一次 `zju_doctor(install=true)` 后重试 `zju_check_note(pdf=true)`，
+  若原因是 `找不到 typst`，调用一次 `zju_doctor(install=true, confirm=true)` 后重试 `zju_check_note(pdf=true)`，
   仍失败就把 `zju_doctor` 的结论原样转告用户。
 - **`---` 不用手动清理**：渲染器会把独占一行的 `---` 排成细分隔线。
   不要为它写脚本，更不要用 `知识总结*.md` 这类通配批量改文件——

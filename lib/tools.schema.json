@@ -80,6 +80,11 @@
         "description": "是否折叠连续字节完全相同的截图（默认 true，只影响 PDF 页数，下载的原图都会保留）",
         "default": true,
         "type": "boolean"
+      },
+      "confirm": {
+        "description": "确认执行有副作用的操作（默认 false）。confirm=true 才批量下载截图（最多 2000 张）到工作区并合成 PDF；否则只返回清单，不写盘",
+        "default": false,
+        "type": "boolean"
       }
     }
   },
@@ -213,6 +218,11 @@
         "description": "只清除本机保存的登录态与独立登录窗口配置，不打开窗口（默认 false）",
         "default": false,
         "type": "boolean"
+      },
+      "confirm": {
+        "description": "确认执行有副作用的操作（默认 false）。clear=true 时必须同时传 confirm=true 才会删除登录态与浏览器配置",
+        "default": false,
+        "type": "boolean"
       }
     }
   },
@@ -320,6 +330,11 @@
       },
       "login": {
         "description": "是否读取本机登录态检查可用性（默认否；不会回显凭据）",
+        "default": false,
+        "type": "boolean"
+      },
+      "confirm": {
+        "description": "确认执行有副作用的操作（默认 false）。install=true 时必须同时传 confirm=true 才会下载安装 Typst（约 20 MB）",
         "default": false,
         "type": "boolean"
       }

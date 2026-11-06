@@ -9,7 +9,7 @@
 `zju_fetch_slides` 抓取智云课堂该节课的投影 PPT **截图清单**。`search-ppt` 接口返回的是
 投影画面截图（`pptimgurl`），**不是文字层，也不提供 OCR**。需要阅读幻灯片内容时：
 
-- 设置 `download=true` 下载截图并合成 PDF，交给支持视觉的模型查看；
+- 设置 `download=true, confirm=true` 下载截图并合成 PDF，交给支持视觉的模型查看；
 - 宿主/模型不能看图时，只把截图当作索引，**不要臆造幻灯片文字**；
 - 需要幻灯片原文时，优先请用户提供原始 `.pptx`，改用 `zju_extract_courseware`。
 
@@ -24,16 +24,18 @@
        url_or_sub_id="<完整回放 URL>",
        course_id="<course_id>",
        download=true,
+       confirm=true,
    )
    ```
 
    - 只传纯 `sub_id` 时**必须同时传 `course_id`**（完整回放 URL 会自动解析）；
+   - `confirm=true` 是写盘确认：缺少时工具只返回清单、不下载；确需下载时一次带上；
    - `output_dir` 默认 `ppt-assets/<sub_id>/`，必须位于当前工作区内；
    - `dedup=true`（默认）只折叠**连续字节完全相同**的截图，只影响 PDF 页数，下载的原图都保留。
 
 ## 3. 下载与输出
 
-`download=true` 时：
+`download=true, confirm=true` 时：
 
 - 截图存到工作区 `ppt-assets/<sub_id>/images/slide-XXXX.jpg`（JPEG 原样写入）；
 - 合成 `PPT-<sub_id>.pdf`；
@@ -62,7 +64,7 @@
 - 相对路径只在工作区内有效；要离线分享或换机器，直接发 `PPT-<sub_id>.pdf`。
 
 讲义插图模式关闭时：不要主动下载或插入截图；用户明确要求画面时，
-可以按需调用 `download=true`，并在文末放截图索引。
+可以按需调用 `download=true, confirm=true`，并在文末放截图索引。
 
 ## 5. 登录态与隐私
 

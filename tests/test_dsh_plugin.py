@@ -248,7 +248,7 @@ class TestPackage(unittest.TestCase):
     def test_login_command_is_shipped(self):
         content = read_text("skills", "zju-lecture-summarizer-login", "SKILL.md")
         self.assertIn("zju_login", content)
-        self.assertIn("zju_login(clear=true)", content)
+        self.assertIn("zju_login(clear=true, confirm=true)", content)
         self.assertIn("不要", content)
         self.assertIn("Cookie", content)
 
