@@ -1,13 +1,7 @@
 # 浙大智云课堂讲义插件（ZJU Lecture Agent Plugin）
-
 由 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-) 改编的 DeepSeek Harness 原生插件，提供开箱即用的体验。
 面向 **DeepSeek Harness（dsh）** 与任意 **MCP 宿主**（Claude Code / Cursor / Cline / MiniMax Code…）。
-
-> 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：
-> - 结构化 Markdown + 同名 PDF（封面、目录、公式、三线表、边注），在**本机**排好。
-> - 字幕先匿名；401/403 时自动使用本机登录态重试一次。仍不可用时插件会打开独立登录窗口，你正常登录即可；登录态按系统能力保存在本机（Windows DPAPI；macOS/Linux 0600），不回显、不进入对话、不保存密码。
-> - 核心只用 Python 标准库；PDF 排版所需的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备。
-> - **非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
+<img width="2288" height="916" alt="image" src="https://github.com/user-attachments/assets/a7c62c79-bb7a-4770-9893-859f75692059" />
 
 ## 开始使用
 
@@ -23,16 +17,23 @@
 /zju-lecture-summarizer-help 帮我解决当前无法使用的问题
 ```
 
+> 把浙大智云课堂（`classroom.zju.edu.cn`）的课程回放，变成一份**能直接复习的讲义**：
+> - Agent 生成结构化 Markdown ，并按内置排版器在本机排成易读的 PDF 讲义，单次总结成本约 ￥0.3，耗时约 1.5min 。
+> - 字幕先匿名；401/403 时自动使用本机登录态重试一次。仍不可用时插件会打开独立登录窗口，你正常登录即可；登录态按系统能力保存在本机（Windows DPAPI；macOS/Linux 0600），不回显、不进入对话、不保存密码。
+> - 核心只用 Python 标准库；PDF 排版所需的 Typst、中文字体与 Typst 包由插件自带或首次使用时自动准备。
+> - **非官方工具**：与浙江大学及其「智云课堂」平台无隶属关系，也未获其背书。
+
 ## 功能特色
 
 - **一句话出讲义**：给回放链接或 `sub_id`，Agent 抓字幕、写 Markdown、修公式、校验、命名，一次完成。
-- **登录不用配 Cookie**：401/403 时自动打开独立登录窗口，登录后保存在本机；不碰日常 Edge，也不用开发者工具。
-- **装完即用**：缺少 Typst 时首次排版自动准备（可关）；中文字体与 Typst 包随插件分发，填空笔记离线也能编译；遇到问题可让 Agent 跑 `zju_doctor` 自检。
-- **自动 PDF**：写完讲义就在本地排同名 PDF；PDF 失败不影响 Markdown。
-- **内容不丢**：字幕按分钟 / 逐句 / 分块读取；可读本地 PPTX / DOCX / PDF 课件校准术语；可选把课堂投影截图合成 PDF。
-- **能动手复习**：可选「填空式学习笔记」——基于 Typst scholia 模板排版的填空式学习笔记；配色与段落规范由本项目定义。
+- **便捷获取登录态**：缺登录态导致 401/403 时自动打开独立登录窗口，登录后保存在本机，无需额外使用开发者工具。
+- **装完即用**：缺少 Typst 时首次排版自动准备（可关）；中文字体与 Typst 包随插件分发，填空笔记离线也能编译。
+- **自动 PDF**：使用内置脚本在本地排同名 PDF，无需额外 token 花销；PDF 失败不影响 Markdown 讲义。
+- **填空式复习**：可选「填空式学习笔记」——基于 Typst scholia 模板排版的填空式学习笔记；配色与段落规范由本项目定义。
 - **隐私优先**：常规工具不要求或读取 Cookie 参数，登录态不回显，Cookie/Bearer 输出脱敏；敏感文件拒绝；TLS 永不降级。当前版本仍有已知安全缺口，见 [SECURITY.md](SECURITY.md)。
-- **到处能用**：dsh 原生插件、标准 MCP、MiniMax Code 插件包、命令行四种入口。
+
+PDF 渲染效果预览：
+<img width="1098" height="1472" alt="image" src="https://github.com/user-attachments/assets/610d5f5d-5dd0-45bb-abfc-924e629132da" />
 
 ## 安装
 
