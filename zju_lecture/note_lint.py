@@ -15,7 +15,9 @@ Two severity levels:
 
 import os
 import re
+import secrets
 import shutil
+import stat
 import tempfile
 import time
 from typing import List, NamedTuple
@@ -523,20 +525,25 @@ def backup_directory() -> str:
     ``ZJU_BACKUP_DIR`` lets a host point it at a directory of its own.
     """
     override = os.environ.get(BACKUP_DIR_ENV, "").strip()
-    if override:
-        return os.path.abspath(os.path.expanduser(override))
-    return os.path.join(tempfile.gettempdir(), _BACKUP_DIRNAME)
+    directory = (
+        os.path.abspath(os.path.expanduser(override))
+        if override
+        else os.path.join(tempfile.gettempdir(), _BACKUP_DIRNAME)
+    )
+    # 讲义原文的副本只给当前系统用户看：目录必须是 0700，而不是继承 umask。
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    return directory
 
 
 def _unique_backup_path(directory: str, source: str) -> str:
+    """Predictable names let another local user pre-create/read the backup."""
     stem = os.path.splitext(os.path.basename(source))[0] or "note"
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    candidate = os.path.join(directory, f"{stem}.{stamp}.bak")
-    counter = 1
-    while os.path.exists(candidate):
-        counter += 1
-        candidate = os.path.join(directory, f"{stem}.{stamp}-{counter}.bak")
-    return candidate
+    return os.path.join(directory, f"{stem}.{stamp}.{secrets.token_hex(4)}.bak")
 
 
 def write_atomic(path: str, text: str) -> None:
@@ -570,14 +577,31 @@ def write_with_backup(path: str, text: str, backup_dir: str = None) -> str:
     ``backup_dir`` (or ``ZJU_BACKUP_DIR``) selects the destination; when it
     cannot be created the backup falls back to ``<path>.bak`` so the data is
     never silently unprotected.
+
+    Symbolic links are refused before anything is copied: ``copyfile`` and a
+    plain ``open`` would follow them and let a pre-planted link redirect the
+    write outside the workspace.
     """
+    try:
+        if stat.S_ISLNK(os.lstat(path).st_mode):
+            raise OSError(f"拒绝写入符号链接: {path}")
+    except FileNotFoundError:
+        pass
+
     directory = os.path.abspath(os.path.expanduser(backup_dir)) if backup_dir else backup_directory()
     try:
-        os.makedirs(directory, exist_ok=True)
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        os.chmod(directory, 0o700)
         backup = _unique_backup_path(directory, path)
     except OSError:
         backup = path + ".bak"
+    if os.path.islink(backup):
+        raise OSError(f"拒绝写入符号链接备份: {backup}")
     shutil.copyfile(path, backup)
+    try:
+        os.chmod(backup, 0o600)
+    except OSError:
+        pass
     write_atomic(path, text)
     return backup
 

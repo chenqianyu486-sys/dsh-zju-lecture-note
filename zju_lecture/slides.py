@@ -18,6 +18,7 @@ Security boundaries:
 
 import hashlib
 import os
+import tempfile
 import urllib.error
 import urllib.parse
 import zlib
@@ -132,16 +133,21 @@ def _download_one(
         return index, None, "响应不是 JPEG/PNG（可能是登录失效页或错误页）"
 
     path = os.path.join(target_dir, f"slide-{index + 1:04d}{extension}")
-    part = path + ".part"
+    part = ""
     try:
-        with open(part, "wb") as handle:
+        descriptor, part = tempfile.mkstemp(
+            dir=target_dir, prefix=".slide-", suffix=".part"
+        )
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
         os.replace(part, path)
+        part = ""
     except OSError as error:
-        try:
-            os.unlink(part)
-        except OSError:
-            pass
+        if part:
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
         return index, None, f"截图写入失败: {error}"
 
     return index, {
@@ -465,9 +471,14 @@ def _page_size(width: int, height: int) -> Tuple[float, float]:
 
 
 def _write_pdf(images: List[Dict[str, Any]], path: str) -> None:
-    part = path + ".part"
+    part = ""
     try:
-        with open(part, "wb") as handle:
+        descriptor, part = tempfile.mkstemp(
+            dir=os.path.dirname(os.path.abspath(path)) or ".",
+            prefix=".pdf-",
+            suffix=".part",
+        )
+        with os.fdopen(descriptor, "wb") as handle:
             count = len(images)
             total_objects = 2 + count * 3
             offsets = [0] * (total_objects + 1)
@@ -549,11 +560,13 @@ def _write_pdf(images: List[Dict[str, Any]], path: str) -> None:
                 ).encode("ascii")
             )
         os.replace(part, path)
+        part = ""
     except Exception:
-        try:
-            os.unlink(part)
-        except OSError:
-            pass
+        if part:
+            try:
+                os.unlink(part)
+            except OSError:
+                pass
         raise
 
 

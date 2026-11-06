@@ -37,6 +37,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -318,22 +319,32 @@ def save_session(cookie: str, browser: str = "") -> str:
     blob = _encode_session(payload)
     directory = login_dir()
     target = session_file()
-    tmp = target + ".tmp"
+    tmp = ""
     try:
         _ensure_private_dir(directory)
+        # mkstemp 用 O_EXCL 建文件，固定 ".tmp" 路径可被预置的链接劫持。
+        descriptor, tmp = tempfile.mkstemp(
+            dir=directory, prefix=".zju-session-", suffix=".tmp"
+        )
         # Create with 0600 from the first byte on POSIX; Windows ignores the
         # mode and relies on DPAPI plus the per-user profile directory.
-        descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        if hasattr(os, "fchmod"):
+            try:
+                os.fchmod(descriptor, 0o600)
+            except OSError:
+                pass
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(blob)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, target)
+        tmp = ""
     except OSError as exc:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         raise LoginError(
             f"登录成功，但保存登录态失败：{exc}",
             "本次会话仍可使用；请检查用户目录写权限，或改用 ZJU_COOKIE_FILE。",
