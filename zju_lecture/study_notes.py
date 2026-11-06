@@ -1219,7 +1219,7 @@ def typst_string(value: str) -> str:
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str:
+def escape_typst_text(text: str, known_labels: Optional[Sequence[str]] = None) -> str:
     """把一段 Markdown 文本转成可以直接放进 Typst markup 的形式。
 
     Typst 的 markup 有几个会咬人的地方，这里逐个处理：
@@ -1279,6 +1279,35 @@ def escape_typst(text: str, known_labels: Optional[Sequence[str]] = None) -> str
     restored = _restore(restored, kept_fill)
     restored = _restore(restored, kept_ref)
     return restored
+
+
+#: 正文转义的旧名字；保留给调用方与既有测试。
+escape_typst = escape_typst_text
+
+
+def escape_typst_string(value: str) -> str:
+    """Typst 字符串字面量内部转义（不含外层引号）。
+
+    ``escape_typst_text`` 是给 markup 用的，不转义双引号——把它塞进
+    ``"…"`` 里，一个 ``"`` 就能闭合字符串并注入 ``#read(...)``。
+    这里按 Typst 的字符串语法转义 ``\\``、``"``、换行与制表符，并剥掉
+    裸 ``\\r``（Typst 只认 ``\\n``）。
+    """
+    text = str(value if value is not None else "").replace("\r\n", "\n")
+    text = text.replace("\r", "")
+    out: List[str] = []
+    for char in text:
+        if char == "\\":
+            out.append("\\\\")
+        elif char == '"':
+            out.append('\\"')
+        elif char == "\n":
+            out.append("\\n")
+        elif char == "\t":
+            out.append("\\t")
+        else:
+            out.append(char)
+    return "".join(out)
 
 
 # --------------------------------------------------------------------- 结果类型
@@ -2237,12 +2266,15 @@ def _render_cover(draft_text: str) -> str:
     if not fields:
         return ""
 
-    arguments = [f'"{escape_typst(fields["title"])}"'] if fields.get("title") else ['""']
+    # 全部走命名参数，值按字符串字面量转义；位置参数一旦被注入的引号打断，
+    # 后面的 `#read(...)` 就会变成可执行代码。
+    title = fields.get("title") or ""
+    arguments = [f'title: "{escape_typst_string(title)}"']
     for key in ("subtitle", "author", "date", "kicker"):
         value = fields.get(key)
         if value:
-            arguments.append(f'{key}: "{escape_typst(value)}"')
-    return "#cover(" + ", ".join(arguments) + ")"
+            arguments.append(f'{key}: "{escape_typst_string(value)}"')
+    return "#scholia-cover(" + ", ".join(arguments) + ")"
 
 
 # ----------------------------------------------------------------- 讲义 → 底稿

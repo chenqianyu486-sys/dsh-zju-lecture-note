@@ -146,7 +146,15 @@
   )
 }
 
-// ── 6. 类型速查（写正文时照着选色相） ──
+// ── 6. 封面包装 ──
+// 调用处只传命名参数（`#scholia-cover(title: "...")`），值由渲染器按
+// Typst 字符串字面量转义；位置参数一旦被注入的引号截断，后面就能接
+// `#read(...)` 之类的可执行代码。
+#let scholia-cover(title: "", subtitle: none, author: none, date: none, kicker: none) = {
+  cover(title, subtitle: subtitle, author: author, date: date, kicker: kicker)
+}
+
+// ── 7. 类型速查（写正文时照着选色相） ──
 //   结论/定理/证明/回指  → thm  蓝
 //   定义/公理/术语/标签  → def  青绿
 //   例子/练习/填空缺口   → eg   琥珀
