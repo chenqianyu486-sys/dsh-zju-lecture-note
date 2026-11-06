@@ -49,6 +49,17 @@ MIN_VERSION = (0, 13, 0)
 RELEASE_URL = "https://github.com/typst/typst/releases/download/v{version}/{file}"
 CACHE_APP = "dsh-zju-lecture"
 
+#: Typst 归档实测约 20–30 MB；256 MiB 是硬上限，异常大响应直接中断。
+MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
+
+
+def _size_text(byte_count: int) -> str:
+    if byte_count >= 1024 * 1024:
+        return f"{byte_count // (1024 * 1024)} MiB"
+    if byte_count >= 1024:
+        return f"{byte_count // 1024} KiB"
+    return f"{byte_count} 字节"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MANIFEST_PATH = os.path.join(HERE, "typst_assets.json")
 PACKAGE_PATH = os.path.join(HERE, "typst-packages")
@@ -338,14 +349,24 @@ def _download(url: str, target: str, retries: int = 3) -> None:
             )
             with urllib.request.urlopen(request, timeout=180, context=context) as response:
                 total = int(response.headers.get("Content-Length") or 0)
+                if total > MAX_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"下载内容 {total} 字节，超过 "
+                        f"{_size_text(MAX_DOWNLOAD_BYTES)} 上限"
+                    )
                 done = 0
                 with open(target, "wb") as handle:
                     while True:
                         chunk = response.read(1 << 20)
                         if not chunk:
                             break
-                        handle.write(chunk)
                         done += len(chunk)
+                        if done > MAX_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"下载超过 {_size_text(MAX_DOWNLOAD_BYTES)} "
+                                "上限，已中断"
+                            )
+                        handle.write(chunk)
                         if total and done % (5 << 20) < (1 << 20):
                             _progress(
                                 f"  下载 Typst {done * 100 // max(total, 1)}% "
@@ -354,26 +375,46 @@ def _download(url: str, target: str, retries: int = 3) -> None:
                 return
         except Exception as exc:  # noqa: BLE001 - 网络抖动要重试
             last = exc
+            try:
+                os.remove(target)
+            except OSError:
+                pass
             _progress(f"  下载失败（第 {attempt}/{retries} 次）：{exc}")
             if attempt < retries:
                 time.sleep(2 * attempt)
     raise RuntimeError(_redact_text(last) if last else "下载失败")
 
 
-def _safe_members(archive: zipfile.ZipFile | tarfile.TarFile) -> List[str]:
-    """拒绝绝对路径与 ``..``：解压不能让归档写到缓存目录之外。"""
+def _safe_members(
+    archive: zipfile.ZipFile | tarfile.TarFile,
+    destination: str = "",
+) -> List[str]:
+    """拒绝绝对路径、``..``、符号链接/硬链接与越界解压目标。"""
+    root = os.path.abspath(destination) if destination else ""
+
+    def check(name: str) -> None:
+        normalized = os.path.normpath(name)
+        if normalized.startswith("..") or os.path.isabs(normalized):
+            raise ValueError(f"归档包含可疑路径：{name}")
+        if not root:
+            return
+        try:
+            target = os.path.abspath(os.path.join(root, normalized))
+            if os.path.commonpath([root, target]) != root:
+                raise ValueError(f"归档成员会解压到目录之外：{name}")
+        except ValueError as exc:
+            raise ValueError(f"归档成员路径不合法：{name}") from exc
+
     names: List[str] = []
     if isinstance(archive, zipfile.ZipFile):
         for name in archive.namelist():
-            normalized = os.path.normpath(name)
-            if normalized.startswith("..") or os.path.isabs(normalized):
-                raise ValueError(f"归档包含可疑路径：{name}")
+            check(name)
             names.append(name)
     else:
         for member in archive.getmembers():
-            normalized = os.path.normpath(member.name)
-            if normalized.startswith("..") or os.path.isabs(normalized):
-                raise ValueError(f"归档包含可疑路径：{member.name}")
+            if member.issym() or member.islnk():
+                raise ValueError(f"归档包含链接成员，已拒绝：{member.name}")
+            check(member.name)
             names.append(member.name)
     return names
 
@@ -385,11 +426,11 @@ def _extract(archive_path: str, kind: str, destination: str) -> str:
 
     if kind == "zip":
         with zipfile.ZipFile(archive_path) as archive:
-            _safe_members(archive)
+            _safe_members(archive, destination)
             archive.extractall(destination)
     else:
         with tarfile.open(archive_path, "r:xz") as archive:
-            _safe_members(archive)
+            _safe_members(archive, destination)
             archive.extractall(destination)
 
     for current, _dirs, files in os.walk(destination):

@@ -197,23 +197,42 @@ def download_slides(
 
     results: List[Tuple[int, Optional[Dict[str, Any]], Optional[str]]] = []
     pool_size = max(1, min(int(workers or DOWNLOAD_WORKERS), 8))
+    downloaded_bytes = 0
+    stopped = False
     with ThreadPoolExecutor(max_workers=pool_size) as pool:
-        futures = [
-            pool.submit(
-                _download_one,
-                index,
-                slide,
-                cookie,
-                sub_id,
-                target_dir,
-                timeout,
-                token,
-                diagnostics,
-            )
-            for index, slide in indexed
-        ]
-        for future in as_completed(futures):
-            results.append(future.result())
+        # Batch instead of submitting everything at once: the total-size cap
+        # has to stop **future** downloads, not just print a warning after the
+        # disk is already full.
+        for start in range(0, len(indexed), pool_size):
+            batch = indexed[start:start + pool_size]
+            futures = [
+                pool.submit(
+                    _download_one,
+                    index,
+                    slide,
+                    cookie,
+                    sub_id,
+                    target_dir,
+                    timeout,
+                    token,
+                    diagnostics,
+                )
+                for index, slide in batch
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                results.append(result)
+                if result[1] is not None:
+                    downloaded_bytes += int(result[1]["bytes"])
+            if downloaded_bytes >= MAX_TOTAL_BYTES:
+                remaining = len(indexed) - len(results)
+                _record(
+                    diagnostics,
+                    f"截图总大小达到 {MAX_TOTAL_BYTES // (1024 * 1024)} MiB 上限，"
+                    f"已下载 {len(results)} 张，停止后续 {remaining} 张",
+                )
+                stopped = True
+                break
     results.sort(key=lambda item: item[0])
 
     failures: List[str] = []
@@ -245,12 +264,8 @@ def download_slides(
         _record(diagnostics, f"另有 {len(failures) - 5} 张截图下载失败")
     if skipped:
         _record(diagnostics, f"{skipped} 页没有截图地址（只有文字或空记录）")
-    if total_bytes > MAX_TOTAL_BYTES:
-        _record(
-            diagnostics,
-            f"截图总大小 {total_bytes // (1024 * 1024)} MiB 超过 "
-            f"{MAX_TOTAL_BYTES // (1024 * 1024)} MiB，PDF 可能很大",
-        )
+    if stopped and downloaded == 0:
+        _record(diagnostics, "截图总大小达到上限且没有成功落盘任何截图")
 
     kept: List[Dict[str, Any]] = []
     duplicates = 0
@@ -402,12 +417,18 @@ def _png_decode(data: bytes) -> Tuple[int, int, bytes, int]:
     if width * height * channels > 256 * 1024 * 1024:
         raise SlideError("PNG 解码后超过 256 MiB 上限")
 
+    stride = width * channels
+    expected = height * (stride + 1)
+    # zlib.decompress() 会先把整个输出物化到内存；用 decompressobj 限制输出，
+    # 超出像素数据应有长度就立刻停，而不是等 OOM。
+    decompressor = zlib.decompressobj()
     try:
-        raw = zlib.decompress(bytes(idat))
+        raw = decompressor.decompress(bytes(idat), expected + 1)
     except zlib.error as error:
         raise SlideError(f"PNG 解压失败: {error}") from error
+    if len(raw) > expected or decompressor.unconsumed_tail:
+        raise SlideError("PNG 解压后超过声明的像素数据长度")
 
-    stride = width * channels
     previous = bytearray(stride)
     samples = bytearray()
     cursor = 0

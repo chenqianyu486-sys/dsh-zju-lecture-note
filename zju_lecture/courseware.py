@@ -19,6 +19,37 @@ class CoursewareError(Exception):
     pass
 
 
+#: 课件是 zip 容器：解压前先按声明的 file_size 累计，避免 zip bomb。
+MAX_ARCHIVE_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_MEMBER_BYTES = 16 * 1024 * 1024
+
+
+def _validate_zip_members(archive: zipfile.ZipFile) -> None:
+    """Reject an archive whose declared uncompressed size exceeds the budget."""
+    total = 0
+    for info in archive.infolist():
+        if info.file_size > MAX_ARCHIVE_MEMBER_BYTES:
+            raise CoursewareError(
+                f"课件包含超过 {MAX_ARCHIVE_MEMBER_BYTES // (1024 * 1024)} MiB "
+                f"的成员（{info.filename}），已拒绝解压"
+            )
+        total += info.file_size
+        if total > MAX_ARCHIVE_TOTAL_BYTES:
+            raise CoursewareError(
+                f"课件解压后超过 {MAX_ARCHIVE_TOTAL_BYTES // (1024 * 1024)} MiB "
+                "上限，已拒绝解压"
+            )
+
+
+def _read_zip_member(archive: zipfile.ZipFile, name: str) -> bytes:
+    info = archive.getinfo(name)
+    if info.file_size > MAX_ARCHIVE_MEMBER_BYTES:
+        raise CoursewareError(
+            f"课件成员 {name} 超过 {MAX_ARCHIVE_MEMBER_BYTES // (1024 * 1024)} MiB 上限"
+        )
+    return archive.read(info)
+
+
 def extract_courseware_text(path: str, max_chars: Optional[int] = None) -> str:
     """Extract plain text from local courseware files.
 
@@ -73,6 +104,7 @@ def _extract_pptx(path: str) -> str:
     """Extract text from slides inside PPTX zip package."""
     try:
         with zipfile.ZipFile(path, "r") as z:
+            _validate_zip_members(z)
             slide_names = [
                 n for n in z.namelist()
                 if re.match(r"^ppt/slides/slide\d+\.xml$", n)
@@ -84,7 +116,7 @@ def _extract_pptx(path: str) -> str:
 
             parts = []
             for idx, name in enumerate(slide_names, start=1):
-                xml_content = z.read(name).decode("utf-8", "ignore")
+                xml_content = _read_zip_member(z, name).decode("utf-8", "ignore")
                 texts = re.findall(r"<a:t>([^<]*)</a:t>", xml_content)
                 cleaned = " ".join(t.strip() for t in texts if t.strip())
                 if cleaned:
@@ -115,7 +147,10 @@ def _extract_docx(path: str) -> str:
     """
     try:
         with zipfile.ZipFile(path, "r") as z:
-            xml_content = z.read("word/document.xml").decode("utf-8", "ignore")
+            _validate_zip_members(z)
+            xml_content = _read_zip_member(z, "word/document.xml").decode(
+                "utf-8", "ignore"
+            )
     except Exception as e:
         raise CoursewareError(f"读取 DOCX 课件失败: {e}")
 
