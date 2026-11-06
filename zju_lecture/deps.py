@@ -26,15 +26,19 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+import urllib.parse
 import zipfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+from .security import REDACTOR
 
 TYPST_ENV = "ZJU_TYPST_BIN"
 AUTO_INSTALL_ENV = "ZJU_TYPST_AUTO_INSTALL"
@@ -261,10 +265,46 @@ def probe(auto_install: bool = False) -> TypstInfo:
 # ---------------------------------------------------------------- 安装
 
 
-def _progress(message: str) -> None:
-    """进度只写 stderr：工具的返回值要保持可读，不混入下载日志。"""
+_URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+
+
+def _redact_url(url: str) -> str:
+    """只保留 ``scheme://host[:port]/path``，去掉 userinfo / query / fragment。"""
+    text = str(url or "").strip()
+    if not text:
+        return ""
     try:
-        sys.stderr.write(message + "\n")
+        parsed = urllib.parse.urlparse(text)
+    except ValueError:
+        return "[REDACTED]"
+    if not parsed.scheme or not parsed.netloc:
+        return REDACTOR.redact(text)
+    host = parsed.hostname or ""
+    netloc = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port:
+        netloc = f"{netloc}:{port}"
+    return REDACTOR.redact(f"{parsed.scheme}://{netloc}{parsed.path}")
+
+
+def _redact_text(message: object) -> str:
+    """脱敏任意诊断文本：先洗掉 URL 里的凭据，再交给进程级 redactor。"""
+    text = str(message)
+    text = _URL_RE.sub(lambda match: _redact_url(match.group(0)), text)
+    return REDACTOR.redact(text)
+
+
+def _progress(message: str) -> None:
+    """进度只写 stderr：工具的返回值要保持可读，不混入下载日志。
+
+    镜像 URL 可能带 userinfo 或签名 query；进入 stderr 前必须先脱敏，
+    否则宿主的日志/会话记录会替用户保存一份凭据。
+    """
+    try:
+        sys.stderr.write(_redact_text(message) + "\n")
         sys.stderr.flush()
     except Exception:  # noqa: BLE001 - 日志永远不能影响主流程
         pass
@@ -317,7 +357,7 @@ def _download(url: str, target: str, retries: int = 3) -> None:
             _progress(f"  下载失败（第 {attempt}/{retries} 次）：{exc}")
             if attempt < retries:
                 time.sleep(2 * attempt)
-    raise RuntimeError(str(last) if last else "下载失败")
+    raise RuntimeError(_redact_text(last) if last else "下载失败")
 
 
 def _safe_members(archive: zipfile.ZipFile | tarfile.TarFile) -> List[str]:
@@ -441,7 +481,7 @@ def install(force: bool = False) -> TypstInfo:
             _download(url, archive_path)
         except Exception as exc:  # noqa: BLE001 - 网络失败要能解释
             return _fail([
-                f"下载 Typst 失败：{exc}",
+                f"下载 Typst 失败：{_redact_text(exc)}",
                 "可设置 ZJU_TYPST_MIRROR 走镜像，或手动安装后设置 ZJU_TYPST_BIN。",
             ])
 
@@ -509,7 +549,7 @@ def describe(workspace_root: str = "", auto_install: bool = False) -> Dict[str, 
         "cache": os.path.join(cache_root(), f"v{manifest.get('version') or '?'}"),
         "compile_cache": compile_cache_path(workspace_root) if workspace_root else "",
         "auto_install": auto_install,
-        "mirror": os.environ.get(MIRROR_ENV, "").strip(),
+        "mirror": _redact_url(os.environ.get(MIRROR_ENV, "").strip()),
     }
 
 
