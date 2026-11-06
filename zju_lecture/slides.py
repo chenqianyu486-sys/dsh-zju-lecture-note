@@ -79,6 +79,7 @@ def _download_one(
     target_dir: str,
     timeout: int,
     token: Optional[str],
+    diagnostics: Optional[List[str]] = None,
 ) -> Tuple[int, Optional[Dict[str, Any]], Optional[str]]:
     url = str(slide.get("image_url") or "").strip()
     if not url:
@@ -104,6 +105,7 @@ def _download_one(
                 attempts=3,
                 max_bytes=MAX_IMAGE_BYTES,
                 allow_cross_host_redirect=True,
+                diagnostics=diagnostics,
             )
         except urllib.error.HTTPError as error:
             if error.code in (401, 403) and token:
@@ -116,6 +118,7 @@ def _download_one(
                     attempts=2,
                     max_bytes=MAX_IMAGE_BYTES,
                     allow_cross_host_redirect=True,
+                    diagnostics=diagnostics,
                 )
             else:
                 raise
@@ -199,6 +202,7 @@ def download_slides(
                 target_dir,
                 timeout,
                 token,
+                diagnostics,
             )
             for index, slide in indexed
         ]

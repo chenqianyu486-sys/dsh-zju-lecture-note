@@ -5,6 +5,7 @@ Pure Python standard library implementation with zero external dependencies.
 """
 
 import http.client
+import ipaddress
 import json
 import os
 import random
@@ -15,7 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .security import REDACTOR, sanitize_cookie_header
 
@@ -210,6 +211,7 @@ def _fetch_bytes(
     attempts: int = _RETRY_ATTEMPTS,
     max_bytes: Optional[int] = None,
     allow_cross_host_redirect: bool = False,
+    diagnostics: Optional[List[str]] = None,
 ) -> bytes:
     """GET ``url`` and read the **whole** body, retrying transient failures.
 
@@ -229,7 +231,11 @@ def _fetch_bytes(
         try:
             if allow_cross_host_redirect:
                 context = _open_request(
-                    url, headers, timeout, allow_cross_host_redirect=True
+                    url,
+                    headers,
+                    timeout,
+                    allow_cross_host_redirect=True,
+                    diagnostics=diagnostics,
                 )
             else:
                 context = _open_request(url, headers, timeout)
@@ -252,22 +258,77 @@ def _fetch_bytes(
     raise last
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> Tuple[str, str, int]:
+    """``(scheme, host, port)`` with default ports filled in.
+
+    hostname+scheme is not enough: ``https://a:443`` and ``https://a:8443`` are
+    different origins, and credentials must not cross that boundary.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower().rstrip(".")
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is None:
+        port = _DEFAULT_PORTS.get(scheme, 0)
+    return scheme, host, port
+
+
+def _is_forbidden_redirect_host(host: str) -> bool:
+    """IP literals, loopback and private names are never valid redirect targets."""
+    value = (host or "").strip().lower().rstrip(".")
+    if not value:
+        return True
+    if value == "localhost" or value.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    # Any IP literal (loopback, link-local, RFC1918, ::1, ...) is refused:
+    # a media CDN never needs one, and a redirect to one is the classic SSRF.
+    return True
+
+
+def _redirect_block_reason(old_url: str, new_url: str) -> str:
+    """Why a redirect must not be followed, or an empty string to allow it."""
+    old_scheme, _, _ = _origin(old_url)
+    new_scheme, new_host, new_port = _origin(new_url)
+    parsed = urllib.parse.urlparse(new_url or "")
+    if parsed.username or parsed.password:
+        return "已阻止跳转到含凭据的 URL（保护登录态）"
+    if old_scheme == "https" and new_scheme != "https":
+        return "已阻止 HTTPS 降级重定向（保护登录凭据）"
+    if new_scheme not in ("http", "https"):
+        return f"已阻止跳转到非 HTTP(S) 地址: {new_scheme or '(无协议)'}"
+    if _is_forbidden_redirect_host(new_host):
+        return f"已阻止跳转到受限主机: {new_host or '(未知主机)'}"
+    return ""
+
+
 class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only on the classroom host.
+    """Follow redirects only on the classroom **origin**.
 
     ``urllib`` re-sends request headers on a redirect, so a compromised or
     misconfigured endpoint that answers ``302`` to another origin would leak
-    the ``Cookie`` header. Cross-origin redirects are refused instead.
+    the ``Cookie`` header. Scheme, host and port must all match — a downgrade
+    to HTTP or a different port is refused as well.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
-        parsed = urllib.parse.urlparse(newurl)
-        target = (parsed.hostname or "").lower()
-        if target != BASE_HOST or parsed.scheme != "https":
+        reason = _redirect_block_reason(req.full_url, newurl)
+        if not reason and _origin(newurl) != _origin(BASE_URL):
+            reason = f"拒绝跨域重定向到 {_origin(newurl)[1] or '(未知主机)'}（保护登录凭据）"
+        if reason:
             raise urllib.error.HTTPError(
                 req.full_url,
                 code,
-                f"拒绝跨域或非 HTTPS 重定向到 {target or '(未知主机)'}（保护登录凭据）",
+                reason,
                 headers,
                 fp,
             )
@@ -277,21 +338,36 @@ class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
 class _StripAuthOnCrossHostRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Allow slide-CDN redirects, but never carry credentials across origins.
 
-    Slide screenshots are static files and may redirect to a media host. The
-    classroom API keeps the stricter same-host rule; this handler is only used
-    for image downloads, and it drops ``Cookie`` / ``Authorization`` whenever
-    the redirect changes the host.
+    Slide screenshots are static files and may redirect to a media host. Only
+    ``*.zju.edu.cn`` targets are followed (one hop at a time, re-validated by
+    urllib for every hop); everything else is blocked and recorded. Whenever
+    the redirect changes scheme/host/port, ``Cookie`` / ``Authorization`` /
+    ``Proxy-Authorization`` are dropped.
     """
 
+    def __init__(self, diagnostics: Optional[List[str]] = None) -> None:
+        super().__init__()
+        self.diagnostics = diagnostics
+
+    def _blocked(self, reason: str) -> None:
+        if self.diagnostics is not None:
+            self.diagnostics.append(reason)
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        reason = _redirect_block_reason(req.full_url, newurl)
+        if not reason:
+            _, new_host, _ = _origin(newurl)
+            if not is_zju_host(new_host):
+                reason = f"已阻止跳转到非浙大域: {new_host or '(未知主机)'}"
+        if reason:
+            self._blocked(reason)
+            return None
         new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new_request is None:
             return None
-        old_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
-        new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
-        if old_host != new_host:
-            new_request.remove_header("Cookie")
-            new_request.remove_header("Authorization")
+        if _origin(req.full_url) != _origin(newurl):
+            for header in ("Cookie", "Authorization", "Proxy-Authorization"):
+                new_request.remove_header(header)
         return new_request
 
 
@@ -300,10 +376,11 @@ def _open_request(
     headers: Dict[str, str],
     timeout: int,
     allow_cross_host_redirect: bool = False,
+    diagnostics: Optional[List[str]] = None,
 ):
     """Open ``url`` with certificate verification and a redirect policy."""
     redirect_handler = (
-        _StripAuthOnCrossHostRedirectHandler()
+        _StripAuthOnCrossHostRedirectHandler(diagnostics)
         if allow_cross_host_redirect
         else _SameHostRedirectHandler()
     )
