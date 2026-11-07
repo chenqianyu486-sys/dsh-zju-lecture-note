@@ -7,7 +7,7 @@
    它投影进设置表单；设置页也必须为每个字段提供控件。
 2. **可用性**：只改 volatile 字段时 dsh 不会重跑 ``apply()``，插件必须监听
    ``loader/volatile-update``，重新同步工具、Skill、提示词与 Python 子进程。
-3. **版本**：九处版本号与 npm 包一致，避免发版时漏一处。
+3. **版本**：十处版本号与 npm 包一致，避免发版时漏一处。
 """
 
 import json
@@ -58,6 +58,7 @@ class TestVersionAlignment(unittest.TestCase):
             f'SERVER_VERSION = "{EXPECTED_VERSION}"',
             read_text("mcp_server.py"),
         )
+        self.assertEqual(load_json("plugin.json")["version"], EXPECTED_VERSION)
         self.assertEqual(load_json(".minimax-plugin", "plugin.json")["version"], EXPECTED_VERSION)
         self.assertEqual(
             load_json("adapters", "claude_code", "plugin.json")["version"],
