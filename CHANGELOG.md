@@ -1,9 +1,28 @@
 # 更新日志
 
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
-`.minimax-plugin/plugin.json` 与四个 Skill manifest 八处对齐。
+`.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json` 与四个 Skill manifest
+共九处对齐。
 
-## 未发布（安全修复，基于 2.2.6）
+## 2.2.7 — 2026-11-07
+
+### 设置（dsh 图形化界面）
+
+- **设置保存后立即对 Agent 生效，不再要求重启**：此前 `.volatile()` 字段保存时 dsh 只更新引用，
+  不重新执行 `apply()`；插件读到的仍是启动时的工具集、Skill、系统提示词与 Python 子进程环境。
+  现在监听 `loader/volatile-update`，重新同步工具注册、随包 Skill、提示词（`text` 改为每次组装
+  重新读取配置的 thunk），并让已启动的 Python 子进程作废，下一次调用用新环境变量拉起。
+- **补齐设置项**：`python`（Python 解释器）、`timeoutMs`（工具超时）、`registerSkill`（注册随包
+  Skill）原先只在 Config schema 里、没有 `.volatile()`，因此不会出现在设置页；现在与
+  `renderPdf` / `enableStudyNotes` / `enableSlides` / `embedSlideImages` / `enableLoginTools`
+  一样可写。新增 `typstPath`（固定 Typst 可执行文件）与 `typstMirror`（GitHub 下载镜像前缀），
+  对应既有的 `ZJU_TYPST_BIN` / `ZJU_TYPST_MIRROR`。
+- 设置页新增「环境与依赖」的两个输入框与「高级」分组（解释器 / 超时 / Skill 开关）；
+  「全功能」预设同时打开 `embedSlideImages`；页脚说明改为「保存后立即同步，下一轮可用」。
+- `zju_doctor` 的模块状态仍取自子进程环境；设置变更后子进程重建，因此报告与实际开关一致。
+- 回归：`tests/plugin_apply_smoke.mjs` 覆盖「引用变更 → 工具 / Skill / 提示词 / 超时同步」；
+  `tests/client_settings_smoke.mjs` 覆盖字符串与数字字段写入；新增
+  `tests/test_settings_v227.py` 静态约束（所有字段 `.volatile()`、热更新监听、环境变量映射）。
 
 ### Security
 

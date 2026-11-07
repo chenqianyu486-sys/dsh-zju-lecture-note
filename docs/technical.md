@@ -201,10 +201,17 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 
 - dsh 默认注册 **7** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
   全开 **11** 个。
+- **所有设置项都标 `.volatile()`**：dsh 只把 volatile 字段投影进配置表单，也只有这些字段能由
+  设置页写入。2.2.7 起 `python` / `timeoutMs` / `registerSkill` 以及新增的 `typstPath` /
+  `typstMirror` 也一并纳入，设置页才覆盖「工具、依赖、解释器」三层，而不是只有模块开关。
 - **`.volatile()` 字段是引用，不是布尔值**：dsh 把它们投影成 `{ get() }`，供插件在设置改动后
   读取新值。`lib/index.js` 的 `readSetting()` 统一解包；直接写 `config.enableSlides === true`
   会永远得到 `false`——2.1.1 修的「设置全开仍只有字幕」就是这个原因。新增设置项时务必走
   `readSetting()`，并补一条 ref 形状的测试。
+- **设置热更新**：只改 volatile 字段时，dsh 不重新执行 `apply()`，而是更新引用并发出
+  `loader/volatile-update`。插件监听该事件后重新同步工具、Skill、系统提示词（`text` 是 thunk，
+  每次组装都重新读取配置）并把已启动的 Python 子进程作废，下一次调用用新环境变量拉起。
+  因此保存后 Agent 下一轮就能读到；只有安装 / 更新插件本身仍需完全重启。
 - MCP 未设置新变量时保持旧行为（11 个）；仓库自带的 `zju-lecture.mcp.json` 默认关掉三个可选模块（7 个）。
 - 关闭时：不注册对应工具、不加载对应模块、Skill 不追加对应附录；系统提示会说明
   「这个模块已关闭」，Agent 不会调用或假装调用。
@@ -231,7 +238,7 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 
 | 变量 | 作用 |
 | :--- | :--- |
-| `ZJU_PYTHON` | 指定 Python 解释器 |
+| `ZJU_PYTHON` | 指定 Python 解释器（dsh 对应 `python`，留空走自带解释器） |
 | `ZJU_WORKSPACE` | 相对路径的解析根；dsh 插件自动传入 session workspace |
 | `ZJU_BACKUP_DIR` | `zju_check_note` / `zju_write_note` 的备份目录（默认系统临时目录） |
 | `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 显式本机登录态（优先级最高）；存在且损坏时会挡住 `zju_login`，字幕仅在 HTTP 401/403 后自动使用 |
@@ -239,8 +246,8 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 | `ZJU_BROWSER_BIN` | 指定登录窗口使用的浏览器可执行文件（默认 Edge → Chrome → Chromium） |
 | `ZJU_RENDER_PDF` | 默认 `0`（MCP）；对应 dsh `renderPdf`（默认开） |
 | `ZJU_TYPST_AUTO_INSTALL` | 缺 Typst 时自动下载安装（默认 `1`；dsh 对应 `typstAutoInstall`） |
-| `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高） |
-| `ZJU_TYPST_MIRROR` | Typst 下载 URL 的镜像前缀，例如 `https://ghfast.top/` |
+| `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高；dsh 对应 `typstPath`） |
+| `ZJU_TYPST_MIRROR` | Typst 下载 URL 的镜像前缀，例如 `https://ghfast.top/`（dsh 对应 `typstMirror`） |
 | `ZJU_TYPST_CACHE` | 覆盖 Typst 缓存目录（默认用户缓存；测试与换盘时用） |
 | `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关；最后一项只控制登录辅助工具，字幕鉴权不受影响 |
 | `ZJU_ALLOW_SENSITIVE_PATHS` | 显式关闭本地敏感路径保护（不推荐） |
@@ -604,7 +611,7 @@ npm view dsh-zju-lecture-note version       # 验证
 
 - `package.json` 的 `prepublishOnly` 已挂「全量测试 + 隐私扫描」，测试红了发不出去。
 - registry 必须是 `https://registry.npmjs.org/`：国内镜像只读，`npm publish` 会 403。
-- 版本号不能覆盖：每次发布前必须 bump（八处对齐，见下节）。
+- 版本号不能覆盖：每次发布前必须 bump（九处对齐，见下节）。
 - 发布后用户安装：`dsh plugin --profile desktop add dsh-zju-lecture-note`。
 
 `files` 字段是逐文件枚举的运行时清单（`lib/`、`mcp_server.py`、`zju_lecture/*.py`、`skills/`、
@@ -621,9 +628,9 @@ dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳
 
 ### 版本号
 
-版本在**八处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
-`.minimax-plugin/plugin.json`、四个 Skill manifest（由 `tools/build_skill_manifest.py` 生成）。
-`tests/test_dsh_plugin.py` 会断言。
+版本在**九处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
+`.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json`、四个 Skill manifest
+（由 `tools/build_skill_manifest.py` 生成）。`tests/test_settings_v227.py` 会断言。
 
 ### 插件市场条目
 
