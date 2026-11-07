@@ -1,4 +1,7 @@
 # 浙大智云课堂讲义插件（ZJU Lecture Agent Plugin）
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
+
 由 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-) 改编的 DeepSeek Harness 原生插件，提供开箱即用的体验。
 面向 **DeepSeek Harness（dsh）**，以及任何兼容 **Agent Plugins 1.0** 的通用 agent 客户端。
 <img width="2288" height="916" alt="image" src="https://github.com/user-attachments/assets/a7c62c79-bb7a-4770-9893-859f75692059" />
