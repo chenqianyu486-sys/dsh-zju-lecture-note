@@ -1,6 +1,6 @@
 # 浙大智云课堂讲义插件（ZJU Lecture Agent Plugin）
 由 [`nzw806/zju-lecture-summerizer-`](https://github.com/nzw806/zju-lecture-summerizer-) 改编的 DeepSeek Harness 原生插件，提供开箱即用的体验。
-面向 **DeepSeek Harness（dsh）** 与任意 **MCP 宿主**（Claude Code / Cursor / Cline / MiniMax Code…）。
+面向 **DeepSeek Harness（dsh）**，以及任何兼容 **Agent Plugins 1.0** 的通用 agent 客户端。
 <img width="2288" height="916" alt="image" src="https://github.com/user-attachments/assets/a7c62c79-bb7a-4770-9893-859f75692059" />
 
 ## 开始使用
@@ -61,9 +61,19 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 
 > 帮我把这节课整理成讲义：https://classroom.zju.edu.cn/livingroom?course_id=58133&sub_id=123456
 
-### 2. 任意 MCP 宿主
+### 2. Agent Plugins 1.0（通用 agent 客户端）
 
-本仓库自带 stdio MCP Server，配置里只要一个 PATH 上的 `node`：
+仓库根本身就是一个合法的 Agent Plugins 1.0 包：根 `plugin.json` + 根 `mcp.json` + `skills/`。
+把客户端的插件目录指向仓库根（或解包后的 npm 包目录），Skill 与 MCP Server 会被自动发现，
+不用手工拼配置。依赖只有 PATH 上的 `node` 与 Python 3.9+。
+
+- **输出路径**：通用客户端按标准以插件根为工作目录，相对文件名会写进安装目录。请给绝对输出路径，
+  或在根 `mcp.json` 的 `env` 里加 `ZJU_WORKSPACE` 指向你的工作目录。dsh 原生入口不受影响，
+  它按会话工作区传 `ZJU_WORKSPACE`。
+- **可选模块**：投影截图、填空笔记、登录辅助工具与自动 PDF 默认关闭，改根 `mcp.json` 的 `env` 开启
+  （`ZJU_ENABLE_SLIDES` / `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_LOGIN_TOOLS` / `ZJU_RENDER_PDF`）。
+  字幕鉴权与 `zju_login` 不受这些开关影响。
+- **只认裸 MCP 的宿主**：直接抄根 `mcp.json` 的 `mcpServers` 段，把 `./server.mjs` 换成绝对路径即可：
 
 ```json
 {
@@ -78,16 +88,10 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 }
 ```
 
-Claude Code 一行接入：
+### 3. 维护者命令
 
 ```bash
-claude mcp add zju-lecture node /绝对路径/dsh-zju-lecture-note/server.mjs
-```
-
-### 3. 其它入口
-
-```bash
-# MiniMax Code 插件包
+# 历史打包脚本的 staged 产物（通用客户端请走上面第 2 节）
 python tools/build_plugin.py --install --zip
 
 # 命令行

@@ -5,8 +5,9 @@
 
 ## 1. 仓库结构与数据流
 
-本仓库既是插件的**能力核心**，也是 **dsh 原生插件包的发布源**：Python 核心、MCP 服务器、
-讲义 Skill，以及 dsh 用的 `package.json` / `cordis.patch.yml` / `lib/` 都在这里。
+本仓库既是插件的**能力核心**，也同时是两种入口的发布源：**dsh 原生插件包**与 **Agent Plugins 1.0
+通用包**。Python 核心、MCP 服务器、讲义 Skill，以及 dsh 用的 `package.json` / `cordis.patch.yml` / `lib/`
+和通用入口用的根 `plugin.json` / `mcp.json` 都在这里。
 
 ```text
 dsh-zju-lecture-note/
@@ -18,8 +19,10 @@ dsh-zju-lecture-note/
 │   ├── client.js                  # 浏览器半边：设置页 + 左栏「智云讲义」入口
 │   ├── tools.js                   # 生成物：dsh 工具定义
 │   └── tools.schema.json          # 生成物：工具定义快照（供测试比对）
-├── .minimax-plugin/plugin.json    # MiniMax Code（MCode）插件清单
-├── zju-lecture.mcp.json           # MCP 服务器定义（stdio → node ./server.mjs）
+├── plugin.json                    # Agent Plugins 1.0 通用入口清单（组件位置固定在 skills/ 与 mcp.json）
+├── mcp.json                       # Agent Plugins 1.0 的 MCP 配置（stdio → node ./server.mjs）
+├── .minimax-plugin/plugin.json    # 历史打包脚本使用的清单（tools/build_plugin.py）
+├── zju-lecture.mcp.json           # 历史打包脚本使用的 MCP 定义（带 description / timeout）
 ├── server.mjs                     # 启动器：解析 Python 解释器并拉起 MCP 服务
 ├── mcp_server.py                  # MCP stdio 服务器（JSON-RPC 2.0，隐私边界在这里）
 ├── zju_lecture/                   # 核心库（纯标准库）
@@ -109,9 +112,26 @@ dsh-zju-lecture-note/
 | 形态 | 载体 | 依赖 |
 | :--- | :--- | :--- |
 | dsh 原生插件 | 仓库根目录的 npm 包（`package.json` + `cordis.patch.yml` + `lib/`） | pnpm 装 peer；Python 3.9+；Typst 由插件自举 |
-| 标准 MCP + Skill | `server.mjs` 拉起 stdio MCP Server | PATH 上的 `node`；Python 3.9+ |
-| MiniMax Code 插件包 | `tools/build_plugin.py` 产出的 `dist/*.zip` | 同上 |
-| 命令行 | `python -m zju_lecture.cli` | Python 3.9+；`pypdf` 仅 PDF 课件需要 |
+| Agent Plugins 1.0 通用包 | 仓库根的 `plugin.json` + `mcp.json` + `skills/` + `server.mjs` | PATH 上的 `node`；Python 3.9+ |
+
+对外只有这两个入口。两种补充手段不算独立入口：只认裸 MCP 的宿主直接抄根 `mcp.json` 的
+`mcpServers` 段（把 `./server.mjs` 换成绝对路径）；命令行用 `python -m zju_lecture.cli`
+（Python 3.9+，`pypdf` 仅 PDF 课件需要）。`tools/build_plugin.py` 产出的 `dist/*.zip` 是历史
+打包脚本的 staged 产物，只含它自己的清单，根 `plugin.json` / `mcp.json` 不会混进去。
+
+**通用入口的工作目录**：Agent Plugins 1.0 规定 `cwd` 省略时客户端**必须**以插件根为子进程工作目录，
+而 `zju_lecture/paths.py` 的解析顺序是 绝对路径 → `ZJU_WORKSPACE` → `PWD` → cwd，所以相对输出路径
+会落进安装目录。根 `mcp.json` 不写死 `ZJU_WORKSPACE`（用户工作区无法静态预知），由用户给绝对路径
+或自行补 env；dsh 链路不受影响，bridge 按会话工作区传 `ZJU_WORKSPACE` 与 cwd。根 `mcp.json` 也不用
+`${PLUGIN_ROOT}` / `${PLUGIN_DATA}` 占位符——部分客户端不展开它们，`./server.mjs` 配合默认 cwd
+才是跨客户端写法。
+
+**清单 schema 是封闭的**：`plugin.schema.json` 与 `mcp.schema.json` 都是 `additionalProperties: false`。
+根 `plugin.json` 只有 `$schema` / `name` 必填，`author` 必须是对象、`repository` 必须是字符串，
+没有 `icon` / `category` / `skills` / `mcpServers` 字段（组件位置固定：Skill 从 `skills/` 的直接子目录
+发现，MCP 从根 `mcp.json` 读）。根 `mcp.json` 的 stdio 项只允许 `type` / `command` / `args` / `env` / `cwd`，
+旧 `zju-lecture.mcp.json` 里的 `schemaVersion` / `description` / `timeout` 在这份 schema 下非法，
+所以两份文件并存、各自服务自己的入口。`tests/test_agent_plugins.py` 离线守这些约束。
 
 **Typst 自举**（v2.1.0）：`zju_lecture/deps.py` 把「本机没装 Typst」从静默失败变成一次可解释的准备：
 
@@ -554,7 +574,7 @@ python tools/privacy_scan.py --tarball dist/*.tgz   # npm 发布产物
 
 ```bash
 python -m unittest discover -s tests -v     # 全部回归测试（含插件形态与隐私测试）
-python tools/build_plugin.py --validate     # 按插件规范校验 MCode 包结构
+python tools/build_plugin.py --validate     # 校验历史打包脚本的产物结构
 python tools/check_note.py 讲义.md           # 讲义渲染规范检查
 python tools/privacy_scan.py                # 工作区隐私扫描
 python tools/privacy_scan.py --history      # 连同 git 历史一起扫
@@ -611,7 +631,7 @@ npm view dsh-zju-lecture-note version       # 验证
 
 - `package.json` 的 `prepublishOnly` 已挂「全量测试 + 隐私扫描」，测试红了发不出去。
 - registry 必须是 `https://registry.npmjs.org/`：国内镜像只读，`npm publish` 会 403。
-- 版本号不能覆盖：每次发布前必须 bump（九处对齐，见下节）。
+- 版本号不能覆盖：每次发布前必须 bump（十处对齐，见下节）。
 - 发布后用户安装：`dsh plugin --profile desktop add dsh-zju-lecture-note`。
 
 `files` 字段是逐文件枚举的运行时清单（`lib/`、`mcp_server.py`、`zju_lecture/*.py`、`skills/`、
@@ -621,14 +641,16 @@ npm view dsh-zju-lecture-note version       # 验证
 dsh 按 `peerDependencies` 校验运行时版本。若升级 dsh 后插件被跳过，请检查
 `@deepseek-ai/dsh-*` 的 peer 范围，或按 dsh 提示使用 `dsh plugin allow-version` 做精确版本豁免。
 
-### MCode 插件包
+### 历史打包脚本产物
 
 `python tools/build_plugin.py --install --zip`；运行时文件清单在 `PACKAGE_FILES` / `PACKAGE_DIRS`，
-新增文档文件时记得同步，否则装好的包里会出现断链。
+新增文档文件时记得同步，否则装好的包里会出现断链。产物只经由这两个清单收集，
+根 `plugin.json` / `mcp.json` **不会**混进去（`validate_package()` 会断言），因此它与通用入口互不遮蔽。
+通用 agent 客户端一律走仓库根的 Agent Plugins 1.0 清单，不需要这个脚本。
 
 ### 版本号
 
-版本在**九处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
+版本在**十处**对齐：`package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、根 `plugin.json`、
 `.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json`、四个 Skill manifest
 （由 `tools/build_skill_manifest.py` 生成）。`tests/test_settings_v227.py` 会断言。
 
@@ -679,8 +701,10 @@ PY
   并给出删除路径。
 - **git 历史**：历史中已有的个人路径/密钥不会因为当前文件干净而消失；
   用 `python tools/privacy_scan.py --history` 检查，必要时重写历史并轮换凭证。
-- **形态别选错**：`tools/build_plugin.py` 产出的是 **MCode 插件包**；装进 dsh 用的是本仓库根目录的
-  npm 包（`dsh plugin ... add`）。两者是两套安装方式，不要混。
+- **入口别选错**：装进 dsh 用的是本仓库根目录的 npm 包（`dsh plugin ... add`，包名或 `github:` 均可）；
+  通用 agent 客户端用的是同一份仓库根的 Agent Plugins 1.0 清单（`plugin.json` + `mcp.json` + `skills/`）。
+  dsh 的安装器与 loader 只读 `package.json`，根清单对它是惰性行李，两条安装路径互不影响。
+  `tools/build_plugin.py` 的 zip 是历史产物，不是这两个入口之一。
 - **字幕可能需登录，请遵守平台条款**：只抓本人有权访问的回放，一次一节课，不要批量抓取。
 
 ## 12. 上游与归属

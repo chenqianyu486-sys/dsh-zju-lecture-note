@@ -1,10 +1,33 @@
 # 更新日志
 
-版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、
+版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、根 `plugin.json`、
 `.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json` 与四个 Skill manifest
-共九处对齐。
+共十处对齐。
 
 ## 2.2.7 — 2026-11-07
+
+### 通用入口（Agent Plugins 1.0）
+
+- **仓库根现在同时是 Agent Plugins 1.0 通用包**：新增根 `plugin.json` 与根 `mcp.json`
+  （stdio → `node ./server.mjs`），复用既有 `skills/` 与启动器。兼容该标准的通用 agent 客户端
+  指向仓库根或解包后的 npm 包目录即可自动发现 Skill 与 MCP Server，不用手工拼配置。
+  对外入口收敛为两个：dsh 原生插件与该通用包；`adapters/*`、`.minimax-plugin/` 与
+  `tools/build_plugin.py` 的 zip 降为历史遗留，文档不再单列、也不点名任何通用客户端。
+- **dsh 的 npm 包名与 `github:` 安装不受影响**：安装器与 loader 只读 `package.json`
+  （`app.asar` 全量扫描取证：`mcp.json` / `agent-plugins` 零命中，`plugin.json` 仅出现在无关的
+  Codex hosted-plugin 注释里），根清单是惰性行李。`lib/`、`mcp_server.py`、`zju_lecture/`、
+  `skills/` 逐字节未改。
+- `package.json` 的 `files` 补 `plugin.json` / `mcp.json` / **`server.mjs`**：后者此前不在 npm 包里
+  （dsh 走 bridge 直拉 Python 所以不需要），而通用入口的 `args` 指向它，不补就是断链。
+- `tools/build_plugin.py` 的「根目录不得有 plugin.json」守卫改为断言**收集后的文件清单**不含
+  `plugin.json` / `mcp.json`：产物只经由 `PACKAGE_FILES` / `PACKAGE_DIRS` 复制，根清单本来就进不去，
+  原实现查仓库根会误伤通用入口。
+- 版本对齐从九处变**十处**（加根 `plugin.json`）；新增 `tests/test_agent_plugins.py` 离线守
+  两份清单的封闭 schema（`additionalProperties: false`）、Skill 发现与 frontmatter 限额、
+  npm `files` 三项、以及与历史打包产物的隔离。
+- 已知取舍：通用客户端按规范以插件根为 cwd，相对输出路径会落进安装目录——文档提示给绝对路径
+  或自补 `ZJU_WORKSPACE`，不改 `paths.py`；`-help` / `-login` 两个 Skill 在通用宿主里是普通可被
+  模型调用的 Skill（`modelInvocable:false` 是 dsh 的注册属性，不在 frontmatter）。
 
 ### 设置（dsh 图形化界面）
 
