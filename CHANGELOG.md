@@ -4,6 +4,65 @@
 `.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json` 与四个 Skill manifest
 共十处对齐。
 
+## 2.2.8 — 2026-11-07
+
+### 设置：第四枚「投影讲义」预设
+
+- 新增 **`slidesAsSource`（依据投影截图写讲义）**：把课堂投影当作与字幕并列的内容来源。
+  写讲义前抓取并下载一次投影截图，把幻灯片上的定义、公式、图例、例题同字幕对照写入正文；
+  模型看不到本地图片时不得臆造幻灯片文字，只在文末列截图索引。
+- 新增第四枚预设 **投影讲义**：`renderPdf=true`、`enableStudyNotes=false`、`enableSlides=true`、
+  `slidesAsSource=true`、`embedSlideImages=true`、`enableLoginTools=false`——依据字幕与投影
+  写阅读版 PDF + Markdown，不生成填空 PDF。其余三枚预设同步写入 `slidesAsSource=false`。
+- **预设没有隐藏状态**：`PRESET_SPECS` 只定义 6 个子开关的目标值，点击时批量写入；高亮由
+  `matchingPreset()` 实时比较配置得出。手动把同样的开关拨到同样位置，行为与高亮都和点预设
+  一致；少一个开关就不高亮。选中态用渐变底色 + 过渡高亮，并同步 `aria-pressed`。
+- 设置页「课堂投影」分组新增「依据投影截图写讲义」一行（依赖投影抓取）；原「把截图引用进
+  讲义」明确为只控制插图，不决定投影是否作为内容来源。
+
+### 行为：打开投影开关后模型真的会调用
+
+- **修正提示词的自相矛盾**：此前只打开「抓取投影截图」时，系统提示写的是
+  「讲义插图模式关闭……不要主动下载或插入截图」，于是模型从不调用 `zju_fetch_slides`。
+  现在只要 `enableSlides=true`，系统提示就会把投影写进材料顺序：
+  - `slidesAsSource=true`：写前**必须**调用一次
+    `zju_fetch_slides(download=true, confirm=true)`，投影是必做材料而非可选项；
+  - `embedSlideImages=true`：写前抓一次并挑 3–8 张关键页插入；
+  - 两个子开关都关：写前调用一次 `download=false` 核对清单，不下载、不插图。
+- **三处口径一致**：系统提示的 `materialRule` / `slidesFeatureRule`、随包 Skill 末尾按当前模式
+  追加的「本次会话：投影……」段、以及 `zju_fetch_slides` 的工具描述，都写明同一条顺序；
+  投影模式的 Skill 附录会在设置改动后重新注册，不需要重启。
+- **Python 侧默认下载**：新增 `ZJU_SLIDES_SOURCE`；`download` 省略时在
+  `embedSlideImages` 或 `slidesAsSource` 开启时下载，并在返回里单独报告「投影作为讲义来源」
+  与「讲义插图模式」两个状态，避免把「下载了截图」误当成「读了截图」。
+- 登录失败按工具诊断调用一次 `zju_login` 后重试；仍失败降级纯字幕，并在讲义开头注明投影未使用。
+
+### 安全与隐私（2026-11-08 复核）
+
+- **登录态全平台加密存储，不再有任何明文落盘路径**：Windows 用 DPAPI（不变）；macOS 改为
+  登录钥匙串的 generic password 项；Linux 改为 Secret Service（`secret-tool`）。两者都通过
+  stdin 写入，密钥不出现在命令行（`ps` 不可见），写后回读校验；有可用后端时才持久化，
+  否则只在进程内存保留（`ZJU_LOGIN_STORAGE=memory` 可显式关闭持久化）。凭据库调用带 10 秒超时，
+  避免无桌面/半初始化 D-Bus 时挂起登录与自检。
+- **清掉旧明文与第二份副本**：2.2.7 及更早版本在 POSIX 写下的明文 `session.bin` 在首次读取时
+  迁移到新后端并覆写删除（迁移失败也删除，本次会话用内存里的 Cookie）；`zju_login` 提取凭据后
+  删除 `login-profile/`，磁盘上只留平台凭据库这一份加密副本；`clear=true` 三处一起清。
+- **隐私扫描器补 ZJU 凭据形态**：新增 `zju-session-token`（`_token=…`）与
+  `php-serialized-session`（`s:6:"_token";s:40:"…";` 及其整型索引变体）两条规则，
+  避免最核心的凭据形态绕过发布前扫描。
+- **PDF 与子进程收紧**：讲义 PDF 落盘改用 `mkstemp` + `os.replace`（原先的固定
+  `<name>.pdf.tmp` 可被预置符号链接劫持）；`typst` 子进程环境删除所有 `ZJU_COOKIE*`
+  （大小写无关）；`cookies.py` 的一处裸 `stderr` 输出改走 `SecretRedactor`。
+
+### 测试与文档
+
+- `tests/client_settings_smoke.mjs`：覆盖四枚预设、每个预设写满 6 个字段、点击后高亮、
+  手动配置等价高亮、`aria-pressed` 同步；`tests/plugin_apply_smoke.mjs` 覆盖投影讲义模式的
+  提示词、Skill 模式段与 `slidesAsSource` 热更新；Python 侧补 `ZJU_SLIDES_SOURCE` 的默认下载
+  与模式文案。
+- README / `docs/technical.md` 更新四枚预设、`slidesAsSource`、`ZJU_SLIDES_SOURCE` 与
+  「打开开关后写前抓一次投影」的行为说明。
+
 ## 2.2.7 — 2026-11-07
 
 ### 通用入口（Agent Plugins 1.0）
@@ -142,6 +201,7 @@
   插件通过 `127.0.0.1` 随机端口从浏览器进程内读取 Cookie，成功后自动关闭窗口。
 - **登录态安全保存**：只保存 Cookie（不保存账号密码），Windows 用 DPAPI 绑定当前用户，
   macOS / Linux 用 0600 文件；`zju_login(clear=true)` 一并删除登录态与独立浏览器配置。
+  （2.2.8 起 macOS / Linux 改为平台凭据库加密存储，明文文件路径已移除。）
   登录态失效时自动清除，下次从真正的登录页开始，不重放死 Cookie。
 - **新的解析顺序**：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 登录态 → 本机 Edge。
   `ZJU_COOKIE_FILE` 降为无图形界面服务器的高级兜底，普通用户不再需要手工配置。

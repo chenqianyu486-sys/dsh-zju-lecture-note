@@ -97,11 +97,13 @@ dsh-zju-lecture-note/
 2. 浏览器打开用户给的课堂链接（仅 `https://*.zju.edu.cn`）；用户在页面里完成 SSO / 2FA。
 3. 插件每 1.5s 通过 CDP `Storage.getCookies` 读取 Cookie，只保留课堂主机与
    `.zju.edu.cn` 父域（`_token` 所在），排除其他 ZJU 子域与相似域名。
-4. 检测到可解析的 `_token` 后，`save_session()` 只保存 Cookie 头：
-   Windows 用 DPAPI（`CryptProtectData`，绑定当前用户），macOS / Linux 用 0600 文件；
-   不保存账号密码。
-5. 关闭浏览器，`zju_login` 把 Cookie 放进本进程缓存；Agent 重试字幕一次。
-6. 服务端仍返回 401/403 时，`_forget_cookie("session")` 删除登录态与专用 profile，
+4. 检测到可解析的 `_token` 后，`save_session()` 只保存 Cookie 头，并且**只交给平台凭据库**：
+   Windows DPAPI（`CryptProtectData`）、macOS 登录钥匙串、Linux Secret Service（`secret-tool`）；
+   三者都不可用或 `ZJU_LOGIN_STORAGE=memory` 时只留在进程内存，不写文件。不保存账号密码。
+   2.2.7 及更早版本在 POSIX 写下的明文 `session.bin` 会在首次读取时迁移并覆写删除。
+5. 关闭浏览器并删除 `login-profile`（浏览器那份 Cookie 副本），`zju_login` 把 Cookie 放进本进程缓存；
+   Agent 重试字幕一次。
+6. 服务端仍返回 401/403 时，`_forget_cookie("session")` 删除凭据项、旧文件与专用 profile，
    下次 `zju_login` 从真正的登录页开始，而不是重放死 Cookie。
 
 `clear=true` 删除登录态与独立浏览器 profile；无图形界面、未安装浏览器或策略禁用远程调试时，
@@ -204,6 +206,10 @@ PATH 上的 `python3` / `python` / `py -3`。
 - `main` 占的是整列页面，页首要用 `calc(20px + var(--dsh-frame-top-clearance, 0px))` 留出
   窗口标题栏的高度，否则 Windows 上第一行会被标题栏压住。
 - 面板页把标题渲染成 `h1`（`asPage`），设置弹窗里仍是 `h2`（弹窗自己提供标题）。
+- 四枚预设（省 Token / 复习模式 / 投影讲义 / 全功能）只是 `PRESET_SPECS` 里的批量写入；
+  不保存「当前预设」状态。高亮由 `matchingPreset(moduleState(value))` 按 6 个子开关实时比较
+  得出，所以点预设与手动拨到同样位置完全等价；任一开关不同就不高亮。选中态用
+  `.zju-preset.is-active` 的渐变底色 + 过渡，`aria-pressed` 同步。
 
 ## 3. 工具与开关分层
 
@@ -216,14 +222,16 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 | **字幕主链路** | `zju_parse_url` / `zju_fetch_transcript` / `zju_extract_courseware` / `zju_check_note` / `zju_write_note`（含自动 PDF） / `zju_login` / `zju_doctor` | 字幕接口（先匿名，401/403 自动用本机登录态）+ 一键登录窗口 + 本地文件 + 可选 Typst | 始终开启 |
 | **填空笔记** | `zju_build_study_notes` + `scholia-notes` Skill | 本机 Typst | 关闭（`enableStudyNotes`） |
 | **投影抓取** | `zju_fetch_slides` | 登录态 + 截图下载 + PDF 合成 | 关闭（`enableSlides`） |
-| **投影插图** | （`zju_fetch_slides` 的子开关） | 依赖投影抓取 | 关闭（`embedSlideImages`） |
+| **投影来源** | （`slidesAsSource` 子开关） | 依赖投影抓取；写讲义前抓取并下载，把幻灯片内容与字幕对照写入 | 关闭 |
+| **投影插图** | （`embedSlideImages` 子开关） | 依赖投影抓取；只决定是否插入 3–8 张关键页 | 关闭 |
 | **登录辅助** | `zju_get_video_url` / `zju_read_browser_cookie`；不影响字幕鉴权与 `zju_login` | 内存缓存 / `ZJU_COOKIE` / `ZJU_COOKIE_FILE` / 本机 Edge | 关闭（`enableLoginTools`） |
 
 - dsh 默认注册 **7** 个工具；`enableStudyNotes` +1、`enableSlides` +1、`enableLoginTools` +2，
-  全开 **11** 个。
+  全开 **11** 个。`slidesAsSource` / `embedSlideImages` 都是投影的子开关，不新增工具。
 - **所有设置项都标 `.volatile()`**：dsh 只把 volatile 字段投影进配置表单，也只有这些字段能由
   设置页写入。2.2.7 起 `python` / `timeoutMs` / `registerSkill` 以及新增的 `typstPath` /
   `typstMirror` 也一并纳入，设置页才覆盖「工具、依赖、解释器」三层，而不是只有模块开关。
+  2.2.8 增加 `slidesAsSource`（投影作为讲义来源），设置页共 12 个可写字段。
 - **`.volatile()` 字段是引用，不是布尔值**：dsh 把它们投影成 `{ get() }`，供插件在设置改动后
   读取新值。`lib/index.js` 的 `readSetting()` 统一解包；直接写 `config.enableSlides === true`
   会永远得到 `false`——2.1.1 修的「设置全开仍只有字幕」就是这个原因。新增设置项时务必走
@@ -243,8 +251,13 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 - dsh 单独把 `zju_fetch_slides` / `zju_login` 的超时提高到 600s（下载截图 / 等待用户登录），
   其他工具仍用配置值。
 - 投影抓取与填空笔记互不依赖；登录辅助也与投影抓取解耦——投影工具会自己解析登录态。
-- 投影截图默认下载到 `<工作区>/ppt-assets/<sub_id>/`（已 gitignore），Agent 挑 **3–8 张**
-  关键页引用进讲义；接口没有文字层 / OCR，需要幻灯片原文时走 `zju_extract_courseware`。
+- 投影有三个层次：`enableSlides` 只负责注册工具；`slidesAsSource` 决定是否把幻灯片作为
+  讲义内容来源（写前必须抓取并下载一次）；`embedSlideImages` 只决定是否插入 3–8 张关键页。
+  两个子开关都关闭时，提示词仍要求写讲义前调用一次 `download=false` 核对清单，避免
+  「打开了抓取开关但模型从不调用」。系统提示、Skill 附录和工具描述三处都写明顺序。
+- 投影截图默认下载到 `<工作区>/ppt-assets/<sub_id>/`（已 gitignore）；接口没有文字层 / OCR，
+  需要幻灯片原文时走 `zju_extract_courseware`。模型不能读图时禁止臆造幻灯片文字，
+  只在文末列截图索引。
 - 登录辅助默认关闭（dsh `enableLoginTools=false`），只影响视频直链与读 Cookie 工具，不影响字幕。
   `zju_login` 是核心工具，始终注册；字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，
   也不新增工具或凭据参数。
@@ -263,13 +276,14 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 | `ZJU_BACKUP_DIR` | `zju_check_note` / `zju_write_note` 的备份目录（默认系统临时目录） |
 | `ZJU_COOKIE` / `ZJU_COOKIE_FILE` | 显式本机登录态（优先级最高）；存在且损坏时会挡住 `zju_login`，字幕仅在 HTTP 401/403 后自动使用 |
 | `ZJU_LOGIN_DIR` | `zju_login` 保存登录态与独立浏览器 profile 的目录（默认用户状态目录） |
+| `ZJU_LOGIN_STORAGE` | `os`（默认，使用平台凭据库）/ `memory`（不落盘，仅进程内）；没有可用凭据库时自动等价 `memory` |
 | `ZJU_BROWSER_BIN` | 指定登录窗口使用的浏览器可执行文件（默认 Edge → Chrome → Chromium） |
 | `ZJU_RENDER_PDF` | 默认 `0`（MCP）；对应 dsh `renderPdf`（默认开） |
 | `ZJU_TYPST_AUTO_INSTALL` | 缺 Typst 时自动下载安装（默认 `1`；dsh 对应 `typstAutoInstall`） |
 | `ZJU_TYPST_BIN` | 指定已有 Typst 可执行文件（优先级最高；dsh 对应 `typstPath`） |
 | `ZJU_TYPST_MIRROR` | Typst 下载 URL 的镜像前缀，例如 `https://ghfast.top/`（dsh 对应 `typstMirror`） |
 | `ZJU_TYPST_CACHE` | 覆盖 Typst 缓存目录（默认用户缓存；测试与换盘时用） |
-| `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关；最后一项只控制登录辅助工具，字幕鉴权不受影响 |
+| `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_SLIDES_SOURCE` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关；`ZJU_SLIDES_SOURCE` 把投影作为讲义来源，`ZJU_EMBED_SLIDES` 只控制插图；最后一项只控制登录辅助工具，字幕鉴权不受影响 |
 | `ZJU_ALLOW_SENSITIVE_PATHS` | 显式关闭本地敏感路径保护（不推荐） |
 
 相对路径解析顺序：绝对路径 → `ZJU_WORKSPACE` → `PWD` → 服务进程 cwd；都找不到时，
@@ -503,10 +517,10 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
    依赖模块的镜像 URL 先由 `deps._redact_url()` 去掉 userinfo / query / fragment，
    bridge.js 转发 stderr 前再做一层 JS 脱敏（见 [SECURITY.md](../SECURITY.md) §7.4）；
 7. 临时文件：只读打开优先；必须复制时连同 `-wal` / `-shm` 一起复制（刚登录的行可能还在 WAL 里），
-   权限 0600，读完覆写并删除；
-8. 落盘：只有 `zju_login` 保存的登录态与独立浏览器 profile。登录态仅含 Cookie（不保存账号密码），
-   Windows 为 DPAPI 密文；macOS / Linux 为 **0600 权限的明文文件**。
-   `zju_login(clear=true)` 二者一起删除。CDP 只连接 `127.0.0.1` 随机端口，
+   权限 0600，读完覆写并删除；读取前还会清理一小时前的残留副本（进程被强杀的可能遗留）。
+8. 落盘：登录态只写入平台凭据库（Windows DPAPI 密文文件 / macOS 钥匙串项 / Linux Secret Service 项，
+   均为静态加密；无可用后端时只在内存）。独立浏览器 profile 在提取凭据后被删除。
+   `zju_login(clear=true)` 清除凭据项、旧明文文件与 profile。CDP 只连接 `127.0.0.1` 随机端口，
    端口与浏览器生命周期由工具管理；端口本身没有应用层认证，见 SECURITY.md 的已知边界。
 
 Cookie 不是正常工具参数：`zju_fetch_transcript` / `zju_fetch_slides` / `zju_get_video_url` 不接受 cookie 参数，
