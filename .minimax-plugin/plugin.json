@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "zju-lecture",
   "displayName": "浙大智云课堂讲义",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "description": "以「语音字幕 + 本地课件 + 自动 PDF」为主链路整理浙大智云课堂回放：写完讲义自动排版同名 PDF；投影截图、填空笔记与登录辅助工具都是可选模块（dsh 设置 / MCP 环境变量开关）。产出带时间戳、LaTeX 公式与考点预测的结构化讲义。字幕先匿名，401/403 时自动使用本机登录态重试一次；需要登录时调用 zju_login 打开独立登录窗口，用户正常登录后自动安全保存登录态（Windows DPAPI；macOS / Linux 0600），不保存密码、不回显凭据。遇到登录、401/403 或依赖问题，可调用 /zju-lecture-summarizer-help；单独登录或清除登录态可用 /zju-lecture-summarizer-login。",
   "author": "chenqianyu486",
   "icon": "icon.png",

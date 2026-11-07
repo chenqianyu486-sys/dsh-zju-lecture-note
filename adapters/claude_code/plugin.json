@@ -1,7 +1,7 @@
 {
   "name": "zju-lecture-summarizer",
   "description": "浙江大学智云课堂 (classroom.zju.edu.cn) 课程回放总结与知识蒸馏插件。字幕先匿名，401/403 时自动使用本机登录态重试一次，生成带时间戳、LaTeX 公式与考点预测的结构化讲义。",
-  "version": "2.2.6",
+  "version": "2.2.7",
   "author": {
     "name": "chenqianyu486"
   },
