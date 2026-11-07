@@ -208,8 +208,18 @@ console.log(JSON.stringify({
         client = read_text("lib", "client.js")
         self.assertNotIn("loaded when DeepSeek Harness restarts", client)
         self.assertNotIn("完全重启 DeepSeek Harness 才按新配置加载", client)
-        self.assertIn("No restart needed", client)
-        self.assertIn("不需要重启", client)
+        self.assertIn("no restart required", client)
+        self.assertIn("无需重启", client)
+
+    def test_settings_page_uses_rules_instead_of_cards(self):
+        """一键配置以下改为灰色横线分组，块内设置项缩进。"""
+        client = read_text("lib", "client.js")
+        self.assertIn("function Group", client)
+        self.assertIn("className: 'zju-groups'", client)
+        self.assertIn(".zju-group + .zju-group{border-top:", client)
+        self.assertIn(".zju-group-rows{padding-left:", client)
+        self.assertNotIn("zju-card", client)
+        self.assertNotIn("h(Card", client)
 
     def test_docs_describe_live_settings(self):
         readme = read_text("README.md")
