@@ -53,6 +53,32 @@ class TestScanner(unittest.TestCase):
         rules = {finding.rule for finding in privacy_scan.scan_text(text, "test", "x.py")}
         self.assertIn("cookie-assignment", rules)
 
+    def test_detects_zju_session_token(self):
+        # Built by concatenation so this test file does not flag itself.
+        text = '_tok' + 'en="' + "A1b2C3d4" * 5 + '"'
+        rules = {finding.rule for finding in privacy_scan.scan_text(text, "test", "x.md")}
+        self.assertIn("zju-session-token", rules)
+
+    def test_detects_php_serialized_session(self):
+        text = '{i:0;s:6:"_tok' + 'en";i:0;s:40:"' + "A" * 40 + '";}'
+        rules = {finding.rule for finding in privacy_scan.scan_text(text, "test", "x.md")}
+        self.assertIn("php-serialized-session", rules)
+
+    def test_detects_php_serialized_assoc_session(self):
+        # Standard PHP assoc-array serialisation has no integer index.
+        text = 'a:1:{s:6:"_tok' + 'en";s:32:"' + "B" * 32 + '";}'
+        rules = {finding.rule for finding in privacy_scan.scan_text(text, "test", "x.md")}
+        self.assertIn("php-serialized-session", rules)
+
+    def test_token_name_without_a_value_is_not_a_finding(self):
+        for line in (
+            "文档里的 `_token` 由服务端解析，不接受也不回显",
+            '_token=short-value',
+            "sid=only-token-name",
+        ):
+            findings = privacy_scan.scan_text(line, "test", "README.md")
+            self.assertEqual(findings, [], line)
+
     def test_detects_private_key(self):
         text = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
         rules = {finding.rule for finding in privacy_scan.scan_text(text, "test", "x")}

@@ -15,10 +15,11 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
-from zju_lecture import browser_login, note_lint
+from zju_lecture import browser_login, cookies, handout, note_lint
 
 COOKIE = "sid=abc123; _token=" + "T" * 40
 
@@ -38,23 +39,70 @@ class TestRandomBackupNames(unittest.TestCase):
             shutil.rmtree(directory, ignore_errors=True)
 
 
-class TestLoginTempFile(unittest.TestCase):
+class TestLoginSessionStorage(unittest.TestCase):
 
     def setUp(self):
         self.directory = tempfile.mkdtemp(prefix="zju-login-")
-        self.env = mock.patch.dict(os.environ, {"ZJU_LOGIN_DIR": self.directory})
+        self.env = mock.patch.dict(
+            os.environ,
+            {
+                "ZJU_LOGIN_DIR": self.directory,
+                # A test must never write to the developer's real keyring.
+                "ZJU_LOGIN_STORAGE": "memory" if sys.platform != "win32" else "os",
+            },
+        )
         self.env.start()
 
     def tearDown(self):
         self.env.stop()
         shutil.rmtree(self.directory, ignore_errors=True)
 
-    def test_save_session_leaves_no_fixed_tmp_file(self):
+    @unittest.skipUnless(sys.platform == "win32", "只有 Windows 后端写文件")
+    def test_windows_session_file_is_atomic_and_private(self):
         browser_login.save_session(COOKIE)
         names = os.listdir(self.directory)
         self.assertTrue(any(name.startswith("session") for name in names), names)
         self.assertEqual([name for name in names if name.endswith(".tmp")], [], names)
         self.assertTrue(os.path.isfile(browser_login.session_file()))
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 后端不写任何凭据文件")
+    def test_posix_writes_no_credential_file(self):
+        browser_login.save_session(COOKIE)
+        self.assertFalse(os.path.exists(browser_login.session_file()))
+        self.assertEqual(
+            [name for name in os.listdir(self.directory) if name.endswith(".tmp")], []
+        )
+
+
+class TestNotePdfCopy(unittest.TestCase):
+    """``handout._atomic_copy`` must not follow a planted ``.tmp`` symlink."""
+
+    def test_planted_symlink_at_the_old_fixed_tmp_name_is_ignored(self):
+        directory = tempfile.mkdtemp(prefix="zju-pdf-copy-")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        source = os.path.join(directory, "out.pdf")
+        with open(source, "wb") as handle:
+            handle.write(b"%PDF-1.4 new")
+        target = os.path.join(directory, "讲义.pdf")
+        with open(target, "wb") as handle:
+            handle.write(b"%PDF-1.4 old")
+        outside = os.path.join(directory, "outside.txt")
+        with open(outside, "wb") as handle:
+            handle.write(b"untouched")
+        try:
+            os.symlink(outside, target + ".tmp")
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest("当前环境无法创建符号链接")
+
+        handout._atomic_copy(source, target)
+
+        with open(outside, "rb") as handle:
+            self.assertEqual(handle.read(), b"untouched")
+        with open(target, "rb") as handle:
+            self.assertEqual(handle.read(), b"%PDF-1.4 new")
+        self.assertEqual(
+            [name for name in os.listdir(directory) if name.endswith(".tmp")], []
+        )
 
 
 @unittest.skipIf(sys.platform == "win32", "POSIX 权限位")
@@ -66,7 +114,11 @@ class TestPosixPermissions(unittest.TestCase):
         self.login = os.path.join(self.workspace, "login")
         self.env = mock.patch.dict(
             os.environ,
-            {"ZJU_BACKUP_DIR": self.backup, "ZJU_LOGIN_DIR": self.login},
+            {
+                "ZJU_BACKUP_DIR": self.backup,
+                "ZJU_LOGIN_DIR": self.login,
+                "ZJU_LOGIN_STORAGE": "memory",
+            },
         )
         self.env.start()
         self.note = os.path.join(self.workspace, "讲义.md")
@@ -77,10 +129,9 @@ class TestPosixPermissions(unittest.TestCase):
         self.env.stop()
         shutil.rmtree(self.workspace, ignore_errors=True)
 
-    def test_session_file_is_0600(self):
-        path = browser_login.save_session(COOKIE)
-        mode = stat.S_IMODE(os.stat(path).st_mode)
-        self.assertEqual(mode, 0o600, oct(mode))
+    def test_no_credential_file_is_left_behind(self):
+        browser_login.save_session(COOKIE)
+        self.assertFalse(os.path.exists(browser_login.session_file()))
 
     def test_backup_directory_and_file_permissions(self):
         path = note_lint.write_with_backup(self.note, "# 新讲义\n")
@@ -115,6 +166,36 @@ class TestPosixPermissions(unittest.TestCase):
         self.assertNotEqual(path, planted)
         with open(outside, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "原始内容")
+
+
+class TestStaleCookieCopySweep(unittest.TestCase):
+    """A killed process must not leave a plaintext cookie DB in %TEMP%."""
+
+    def _make_copy(self, age_seconds: int) -> str:
+        directory = tempfile.mkdtemp(prefix="zju-lecture-cookie-")
+        victim = os.path.join(directory, "Cookies")
+        with open(victim, "wb") as handle:
+            handle.write(b"cookie-row")
+        stamp = time.time() - age_seconds
+        os.utime(victim, (stamp, stamp))
+        os.utime(directory, (stamp, stamp))
+        return directory
+
+    def test_an_old_private_copy_is_shredded(self):
+        directory = self._make_copy(age_seconds=7200)
+        try:
+            cookies._sweep_stale_cookie_copies()
+            self.assertFalse(os.path.exists(directory))
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
+    def test_a_fresh_copy_is_left_alone(self):
+        directory = self._make_copy(age_seconds=0)
+        try:
+            cookies._sweep_stale_cookie_copies()
+            self.assertTrue(os.path.isdir(directory))
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,11 @@ class TestLoginClearNeedsConfirm(unittest.TestCase):
 
     def setUp(self):
         self.directory = tempfile.mkdtemp(prefix="zju-confirm-login-")
-        self.env = mock.patch.dict(os.environ, {"ZJU_LOGIN_DIR": self.directory})
+        env = {"ZJU_LOGIN_DIR": self.directory}
+        if sys.platform != "win32":
+            # Tests must not write items into the developer's real keyring.
+            env["ZJU_LOGIN_STORAGE"] = "memory"
+        self.env = mock.patch.dict(os.environ, env)
         self.env.start()
         browser_login.save_session(COOKIE)
 
@@ -62,12 +66,12 @@ class TestLoginClearNeedsConfirm(unittest.TestCase):
             output = handle_tool_call("zju_login", {"clear": True})
         self.assertIn("confirm=true", output)
         clear.assert_not_called()
-        self.assertTrue(os.path.exists(browser_login.session_file()))
+        self.assertEqual(browser_login.load_session_cookie(), COOKIE)
 
     def test_clear_with_confirm_removes_the_session(self):
         output = handle_tool_call("zju_login", {"clear": True, "confirm": True})
         self.assertIn("已清除", output)
-        self.assertFalse(os.path.exists(browser_login.session_file()))
+        self.assertIsNone(browser_login.load_session_cookie())
 
 
 class TestDoctorInstallNeedsConfirm(unittest.TestCase):

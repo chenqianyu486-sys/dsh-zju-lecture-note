@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -1554,6 +1555,33 @@ def _pdf_page_count(path: str) -> int:
     return count
 
 
+def _atomic_copy(source: str, target: str) -> None:
+    """Copy ``source`` onto ``target`` through an unpredictable temp file.
+
+    ``target + ".tmp"`` was a fixed name and ``shutil.copyfile`` follows a
+    symlink planted at that path, so a pre-created link could redirect the PDF
+    write. ``mkstemp`` creates the temp file with ``O_EXCL`` and ``os.replace``
+    swaps it in atomically — the same rule SECURITY.md §7.6 states for the
+    session file, backups and screenshots.
+    """
+    directory = os.path.dirname(os.path.abspath(target)) or "."
+    temporary = ""
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            dir=directory, prefix=".pdf-", suffix=".tmp"
+        )
+        with os.fdopen(descriptor, "wb") as out, open(source, "rb") as src:
+            shutil.copyfileobj(src, out, length=1 << 20)
+        os.replace(temporary, target)
+        temporary = ""
+    finally:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
 def compile_handout(
     typst_source: str,
     output_pdf: str,
@@ -1626,9 +1654,7 @@ def compile_handout(
 
     try:
         os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
-        temporary = output_pdf + ".tmp"
-        shutil.copyfile(built_pdf, temporary)
-        os.replace(temporary, output_pdf)
+        _atomic_copy(built_pdf, output_pdf)
     except OSError as exc:
         return HandoutCompileResult(
             ok=False,

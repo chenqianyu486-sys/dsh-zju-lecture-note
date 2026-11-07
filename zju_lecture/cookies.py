@@ -15,9 +15,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from typing import List, Optional, Tuple
 
-from .security import sanitize_cookie_header
+from .security import REDACTOR, sanitize_cookie_header
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
@@ -378,6 +379,37 @@ def _secure_remove_tree(tmp_dir: str) -> None:
         pass
 
 
+def _sweep_stale_cookie_copies(max_age_seconds: int = 3600) -> int:
+    """Shred private cookie-DB copies left behind by a killed process.
+
+    The normal path overwrites and deletes the copy immediately. A power loss
+    or a ``kill -9`` between the copy and the cleanup can leave a plaintext
+    cookie database in the temp directory, which is exactly the "明文落盘" this
+    plugin promises not to create. Anything older than an hour cannot belong to
+    a live call (a read takes milliseconds), so it is removed on the next run.
+    """
+    root = tempfile.gettempdir()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return 0
+    removed = 0
+    now = time.time()
+    for name in names:
+        if not name.startswith("zju-lecture-cookie-"):
+            continue
+        path = os.path.join(root, name)
+        try:
+            age = now - os.path.getmtime(path)
+        except OSError:
+            continue
+        if age < max_age_seconds:
+            continue
+        _secure_remove_tree(path)
+        removed += 1
+    return removed
+
+
 def _copy_cookie_db(db_path: str) -> str:
     """Copy the live Edge cookie DB and its WAL sidecars into a private dir.
 
@@ -388,6 +420,7 @@ def _copy_cookie_db(db_path: str) -> str:
     which lets SQLite replay and checkpoint the WAL in *our* private copy; the
     browser's own files are never touched.
     """
+    _sweep_stale_cookie_copies()
     tmp_dir = tempfile.mkdtemp(prefix="zju-lecture-cookie-")
     try:
         os.chmod(tmp_dir, 0o700)
@@ -595,10 +628,16 @@ def read_edge_cookies(
         )
 
     if decrypt_failures:
-        print(
-            f"[zju-lecture] {decrypt_failures} 条 Edge Cookie 解密失败，已跳过。",
-            file=sys.stderr,
+        # Route every diagnostic through the redactor, even a bare count: one
+        # code path writing to stderr directly is how a future message that
+        # *does* contain a value slips past the guarantee in SECURITY.md.
+        sys.stderr.write(
+            REDACTOR.redact(
+                f"[zju-lecture] {decrypt_failures} 条 Edge Cookie 解密失败，已跳过。"
+            )
+            + "\n"
         )
+        sys.stderr.flush()
 
     try:
         return sanitize_cookie_header("; ".join(pairs)), None

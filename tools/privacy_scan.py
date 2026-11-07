@@ -116,6 +116,22 @@ RULES: Sequence[Rule] = (
         "literal Cookie header value",
     ),
     Rule(
+        "zju-session-token",
+        # The classroom bearer token is a *field inside* the session cookie, so
+        # it never looks like a normal ``Cookie:`` header. A 32-character floor
+        # keeps short documentation/test placeholders (``tok-123456``) clean.
+        re.compile(r"(?i)\b_token\s*[=:]\s*[\"']?[A-Za-z0-9%._~+/=-]{32,}"),
+        "ZJU classroom bearer token (`_token=…`)",
+    ),
+    Rule(
+        "php-serialized-session",
+        # `_token` lives in a PHP-serialized session array. Both the plain
+        # assoc form (`s:6:"_token";s:40:"…";`) and the integer-indexed variant
+        # (`…;i:0;s:40:"…";`) must be caught.
+        re.compile(r's:\d+:"_token";(?:i:\d+;)?s:\d+:"[^"]{16,}"'),
+        "PHP-serialized session payload containing `_token`",
+    ),
+    Rule(
         "personal-email",
         re.compile(
             r"\b[A-Za-z0-9._%+-]+@(?:gmail|qq|163|126|outlook|hotmail|yahoo|"

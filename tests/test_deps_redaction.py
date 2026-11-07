@@ -118,5 +118,27 @@ class TestBridgeStderrRedaction(unittest.TestCase):
         self.assertIn("https://mirror.example.com/base", output)
 
 
+class TestTypstChildEnvironment(unittest.TestCase):
+    """The compiler subprocess must not inherit the classroom credential."""
+
+    def test_cookie_variables_are_removed_case_insensitively(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "ZJU_COOKIE": "sid=x",
+                "ZJU_COOKIE_FILE": "/tmp/cookie.txt",
+                "zju_cookie_lower": "sid=y",
+                "ZJU_TYPST_MIRROR": "https://mirror.example.com/base",
+            },
+        ):
+            env = deps.typst_env()
+        keys = {key.upper() for key in env}
+        self.assertNotIn("ZJU_COOKIE", keys)
+        self.assertNotIn("ZJU_COOKIE_FILE", keys)
+        self.assertNotIn("ZJU_COOKIE_LOWER", keys)
+        self.assertIn("ZJU_TYPST_MIRROR", env)
+        self.assertIn("PATH", {key.upper() for key in env})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

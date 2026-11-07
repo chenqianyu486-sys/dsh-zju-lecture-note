@@ -2533,6 +2533,8 @@ def _prelude_text() -> str:
 
 
 def _run_typst(typst: str, args: Sequence[str], cwd: str, timeout: int) -> Tuple[int, str]:
+    from .deps import typst_env
+
     try:
         completed = subprocess.run(
             [typst, *args],
@@ -2541,6 +2543,8 @@ def _run_typst(typst: str, args: Sequence[str], cwd: str, timeout: int) -> Tuple
             stderr=subprocess.STDOUT,
             timeout=timeout,
             check=False,
+            # Never hand the classroom cookie to the compiler subprocess.
+            env=typst_env(),
         )
     except subprocess.TimeoutExpired:
         return 124, f"typst 编译超时（{timeout} 秒）。"

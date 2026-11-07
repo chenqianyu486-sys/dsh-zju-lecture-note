@@ -15,11 +15,18 @@ and asks the browser process itself for its cookies through the Chrome DevTools
 Protocol (CDP). ABE never enters the picture, the user's daily Edge profile is
 never touched, and the login page handles SSO / 2FA normally.
 
-The cookie header is then stored securely:
+The cookie header is then stored securely, always through a platform
+credential facility (:mod:`zju_lecture.credential_store`):
 
 * Windows: DPAPI (``CryptProtectData``), decryptable only by the same Windows
   user on this machine;
-* macOS / Linux: a ``0600`` file under the user's state directory.
+* macOS: a generic-password item in the login Keychain;
+* Linux: a Secret Service item written through ``secret-tool``;
+* none of the above available (or ``ZJU_LOGIN_STORAGE=memory``): the session
+  stays in this process only — **no plaintext file is ever written**.
+
+The dedicated browser profile is deleted after the cookie is extracted, so the
+browser's own copy of the session does not survive either.
 
 No password is ever accepted or stored. The only inputs are a classroom URL,
 a timeout and a ``clear`` flag.
@@ -37,29 +44,35 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import credential_store
 from .client import extract_classroom_token, is_zju_host
 from .cookies import DEFAULT_DOMAIN, _host_matches, _parent_domain, _secure_remove
+from .credential_store import (
+    LOGIN_DIR_ENV,
+    StoreUnavailable,
+    login_dir,
+    session_file,
+)
 from .security import cookie_names, sanitize_cookie_header
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 
 DEFAULT_LOGIN_URL = "https://classroom.zju.edu.cn/"
-LOGIN_DIR_ENV = "ZJU_LOGIN_DIR"
 BROWSER_ENV = "ZJU_BROWSER_BIN"
 
-SESSION_MAGIC = b"ZJU-LOGIN\x01"
+#: Kept for callers/tests: the legacy blob magic, the payload version and the
+#: same ceiling the 2.2.7 file format used.
+SESSION_MAGIC = credential_store.LEGACY_BLOB_MAGIC
 SESSION_VERSION = 1
-SESSION_MAX_BYTES = 64 * 1024
-SESSION_ENTROPY = b"zju-lecture-summarizer-login-v1"
+SESSION_MAX_BYTES = credential_store.SESSION_MAX_BYTES
+SESSION_ENTROPY = credential_store.SESSION_ENTROPY
 PROFILE_DIR_NAME = "login-profile"
-SESSION_FILE_NAME = "session.bin"
 
 MAX_LOGIN_TIMEOUT = 540
 MIN_LOGIN_TIMEOUT = 30
@@ -86,30 +99,12 @@ class LoginError(Exception):
 
 # ------------------------------------------------------------------ locations
 
-def login_dir() -> str:
-    """The per-user directory for the login profile and the saved session."""
-    override = os.environ.get(LOGIN_DIR_ENV, "").strip()
-    if override:
-        return os.path.abspath(os.path.expanduser(override))
-    if IS_WIN:
-        base = os.environ.get("LOCALAPPDATA", "").strip() or os.path.join(
-            os.path.expanduser("~"), "AppData", "Local"
-        )
-        return os.path.join(base, "zju-lecture")
-    if IS_MAC:
-        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "zju-lecture")
-    base = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.join(
-        os.path.expanduser("~"), ".local", "state"
-    )
-    return os.path.join(base, "zju-lecture")
-
+# ``login_dir`` / ``session_file`` live in :mod:`zju_lecture.credential_store`
+# and are imported above: the directory is shared by the browser profile and the
+# (Windows) encrypted session blob, so there is exactly one definition.
 
 def profile_dir() -> str:
     return os.path.join(login_dir(), PROFILE_DIR_NAME)
-
-
-def session_file() -> str:
-    return os.path.join(login_dir(), SESSION_FILE_NAME)
 
 
 def _ensure_private_dir(path: str) -> None:
@@ -203,99 +198,10 @@ def login_available() -> Tuple[bool, str]:
     return True, f"{browser_label(path)}（{path}）"
 
 
-# ------------------------------------------------------------------ DPAPI (Windows)
+# ------------------------------------------------------------------ session store
 
-def _win_dpapi(data: bytes, protect: bool, entropy: bytes) -> bytes:
-    """Protect/unprotect bytes with Windows DPAPI, bound to the current user."""
-    import ctypes
-    from ctypes import wintypes
-
-    class DATA_BLOB(ctypes.Structure):
-        _fields_ = [
-            ("cbData", wintypes.DWORD),
-            ("pbData", ctypes.POINTER(ctypes.c_char)),
-        ]
-
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    buf = ctypes.create_string_buffer(data, len(data))
-    blob_in = DATA_BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
-    blob_out = DATA_BLOB()
-    entropy_buf = None
-    entropy_blob = None
-    if entropy:
-        entropy_buf = ctypes.create_string_buffer(entropy, len(entropy))
-        entropy_blob = DATA_BLOB(
-            len(entropy), ctypes.cast(entropy_buf, ctypes.POINTER(ctypes.c_char))
-        )
-    p_entropy = ctypes.byref(entropy_blob) if entropy_blob is not None else None
-    # CRYPTPROTECT_UI_FORBIDDEN: never show an OS prompt from a tool call.
-    flags = 0x1
-    try:
-        if protect:
-            ok = crypt32.CryptProtectData(
-                ctypes.byref(blob_in), "zju-lecture login", p_entropy,
-                None, None, flags, ctypes.byref(blob_out),
-            )
-        else:
-            ok = crypt32.CryptUnprotectData(
-                ctypes.byref(blob_in), None, p_entropy,
-                None, None, flags, ctypes.byref(blob_out),
-            )
-    except OSError as exc:
-        raise LoginError(
-            f"Windows DPAPI 调用失败：{exc}",
-            "请在当前 Windows 用户下重试；若仍失败，可改用 ZJU_COOKIE_FILE。",
-            reason="save_failed",
-        ) from exc
-    if not ok:
-        error = ctypes.get_last_error()
-        raise LoginError(
-            f"Windows DPAPI 调用失败（错误码 {error}）。",
-            "请确认当前 Windows 用户有可用的用户配置；也可改用 ZJU_COOKIE_FILE。",
-            reason="save_failed",
-        )
-    try:
-        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
-    finally:
-        kernel32.LocalFree(blob_out.pbData)
-
-
-def _encode_session(payload: Dict[str, Any]) -> bytes:
-    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    if len(raw) > SESSION_MAX_BYTES:
-        raise LoginError("登录态过大，已拒绝保存。", reason="save_failed")
-    if IS_WIN:
-        return SESSION_MAGIC + b"D" + _win_dpapi(raw, True, SESSION_ENTROPY)
-    return SESSION_MAGIC + b"P" + raw
-
-
-def _decode_session(blob: bytes) -> Optional[Dict[str, Any]]:
-    if not blob.startswith(SESSION_MAGIC):
-        return None
-    mode = blob[len(SESSION_MAGIC): len(SESSION_MAGIC) + 1]
-    body = blob[len(SESSION_MAGIC) + 1:]
-    if mode == b"D":
-        if not IS_WIN:
-            return None
-        try:
-            body = _win_dpapi(body, False, SESSION_ENTROPY)
-        except LoginError:
-            return None
-    elif mode != b"P":
-        return None
-    if len(body) > SESSION_MAX_BYTES:
-        return None
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
-def save_session(cookie: str, browser: str = "") -> str:
-    """Validate + persist the cookie header; return the file path."""
+def _validated_payload(cookie: str, browser: str = "") -> Dict[str, Any]:
+    """Validate the cookie header and build the payload every backend stores."""
     try:
         header = sanitize_cookie_header(cookie)
     except ValueError as exc:
@@ -310,67 +216,17 @@ def save_session(cookie: str, browser: str = "") -> str:
             "请确认登录的是 classroom.zju.edu.cn（不是其他浙大站点），然后重试。",
             reason="save_failed",
         )
-    payload = {
+    return {
         "version": SESSION_VERSION,
         "saved_at": int(time.time()),
         "browser": browser,
         "cookie": header,
     }
-    blob = _encode_session(payload)
-    directory = login_dir()
-    target = session_file()
-    tmp = ""
-    try:
-        _ensure_private_dir(directory)
-        # mkstemp 用 O_EXCL 建文件，固定 ".tmp" 路径可被预置的链接劫持。
-        descriptor, tmp = tempfile.mkstemp(
-            dir=directory, prefix=".zju-session-", suffix=".tmp"
-        )
-        # Create with 0600 from the first byte on POSIX; Windows ignores the
-        # mode and relies on DPAPI plus the per-user profile directory.
-        if hasattr(os, "fchmod"):
-            try:
-                os.fchmod(descriptor, 0o600)
-            except OSError:
-                pass
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(blob)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, target)
-        tmp = ""
-    except OSError as exc:
-        if tmp:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        raise LoginError(
-            f"登录成功，但保存登录态失败：{exc}",
-            "本次会话仍可使用；请检查用户目录写权限，或改用 ZJU_COOKIE_FILE。",
-            reason="save_failed",
-        ) from exc
-    return target
 
 
-def _read_session_payload() -> Optional[Dict[str, Any]]:
-    path = session_file()
-    try:
-        if not os.path.isfile(path) or os.path.getsize(path) > SESSION_MAX_BYTES + 1024:
-            return None
-        with open(path, "rb") as handle:
-            payload = _decode_session(handle.read())
-    except OSError:
-        return None
+def _cookie_from_payload(payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The usable cookie header inside a stored payload, or ``None``."""
     if not payload or payload.get("version") != SESSION_VERSION:
-        return None
-    return payload
-
-
-def load_session_cookie() -> Optional[str]:
-    """Return the saved cookie header, or ``None`` when absent/invalid."""
-    payload = _read_session_payload()
-    if not payload:
         return None
     raw = payload.get("cookie")
     if not isinstance(raw, str):
@@ -382,70 +238,148 @@ def load_session_cookie() -> Optional[str]:
     return header if extract_classroom_token(header) else None
 
 
+def _migrate_legacy_plaintext(backend: Any) -> Optional[str]:
+    """Read a 2.2.7 plaintext session file once, migrate it, then delete it.
+
+    The plaintext file must not survive on disk even when migration fails: the
+    whole point of this module is that no plaintext credential path remains.
+    The cookie is still returned so the current process can keep working.
+    """
+    path = session_file()
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > SESSION_MAX_BYTES + 1024:
+            return None
+        with open(path, "rb") as handle:
+            blob = handle.read()
+    except OSError:
+        return None
+    decoded = credential_store.decode_legacy_blob(blob)
+    if not decoded or decoded[0] != "P":
+        return None
+    payload = decoded[1]
+    try:
+        backend.save(payload)
+    except StoreUnavailable:
+        pass
+    _secure_remove(path)
+    return _cookie_from_payload(payload)
+
+
+def save_session(cookie: str, browser: str = "") -> str:
+    """Validate + persist the cookie header through the platform store.
+
+    Returns a human-readable descriptor (``"macOS 钥匙串（Keychain…）"``,
+    ``"Windows DPAPI 加密文件…"`` …). A missing/unusable store is **not** a
+    reason to write a plaintext file: the session stays in memory
+    (``backend().persistent`` is ``False``) and the caller tells the user.
+    """
+    payload = _validated_payload(cookie, browser)
+    _ensure_private_dir(login_dir())
+    try:
+        return credential_store.backend().save(payload)
+    except StoreUnavailable as exc:
+        raise LoginError(
+            f"登录成功，但未能写入加密凭据库：{exc.reason}",
+            exc.hint or "本次会话仍可使用；解锁系统凭据库后重试，或改用 ZJU_COOKIE_FILE。",
+            reason="save_failed",
+        ) from exc
+
+
+def load_session_cookie() -> Optional[str]:
+    """Return the saved cookie header, or ``None`` when absent/invalid."""
+    backend = credential_store.backend()
+    try:
+        payload = backend.load()
+    except StoreUnavailable:
+        payload = None
+    cookie = _cookie_from_payload(payload)
+    if cookie:
+        return cookie
+    # Upgrade path: 2.2.7 wrote plaintext on POSIX; read it once, migrate, delete.
+    return _migrate_legacy_plaintext(backend)
+
+
 def session_summary() -> Dict[str, Any]:
     """Credential-free description of the saved session (safe for diagnostics)."""
-    payload = _read_session_payload()
-    if not payload:
-        return {"available": False, "path": session_file()}
-    raw = payload.get("cookie")
-    if not isinstance(raw, str):
-        return {"available": False, "path": session_file()}
+    backend = credential_store.backend()
+    summary: Dict[str, Any] = {
+        "available": False,
+        "backend": backend.name,
+        "storage": backend.describe(),
+        "persistent": backend.persistent,
+        "advice": backend.advice(),
+    }
     try:
-        header = sanitize_cookie_header(raw)
-    except ValueError:
-        return {"available": False, "path": session_file()}
+        payload = backend.load()
+    except StoreUnavailable as exc:
+        summary["reason"] = exc.reason
+        return summary
+    header = _cookie_from_payload(payload)
+    if not header:
+        return summary
     names = cookie_names(header)
-    return {
-        "available": bool(extract_classroom_token(header)),
-        "path": session_file(),
-        "saved_at": payload.get("saved_at"),
-        "browser": payload.get("browser") or "",
+    summary.update({
+        "available": True,
+        "saved_at": (payload or {}).get("saved_at"),
+        "browser": (payload or {}).get("browser") or "",
         "cookie_count": len(names),
         "names": names,
-        "has_token": bool(extract_classroom_token(header)),
-    }
+        "has_token": True,
+    })
+    return summary
 
 
-def clear_session(delete_profile: bool = True) -> Dict[str, Any]:
-    """Delete the saved session and (optionally) the dedicated browser profile."""
-    removed_session = os.path.exists(session_file())
-    if removed_session:
-        _secure_remove(session_file())
-    removed_profile = False
-    profile_error = ""
-    if delete_profile:
-        profile = profile_dir()
-        # Only ever delete our own directory; never follow a symlink out of it.
-        expected = os.path.join(login_dir(), PROFILE_DIR_NAME)
-        if os.path.normcase(os.path.abspath(profile)) == os.path.normcase(os.path.abspath(expected)):
-            real = os.path.realpath(profile)
-            is_link = os.path.normcase(real) != os.path.normcase(os.path.abspath(profile))
+def _wipe_profile() -> Tuple[bool, str]:
+    """Delete the dedicated browser profile (a second copy of the cookies)."""
+    profile = profile_dir()
+    expected = os.path.join(login_dir(), PROFILE_DIR_NAME)
+    if os.path.normcase(os.path.abspath(profile)) != os.path.normcase(os.path.abspath(expected)):
+        return False, "登录窗口目录校验失败"
+    last_error = ""
+    for attempt in range(3):
+        real = os.path.realpath(profile)
+        is_link = os.path.normcase(real) != os.path.normcase(os.path.abspath(profile))
+        try:
             if is_link:
                 # Never follow a symlink/junction outside our state directory.
                 try:
                     os.rmdir(profile)
                 except OSError:
-                    try:
-                        os.unlink(profile)
-                    except OSError as exc:
-                        profile_error = str(exc)
-                        removed_profile = False
-                    else:
-                        removed_profile = True
-                else:
-                    removed_profile = True
-            elif os.path.isdir(profile):
-                try:
-                    shutil.rmtree(profile)
-                    removed_profile = True
-                except OSError as exc:
-                    profile_error = str(exc)
+                    os.unlink(profile)
+                return True, ""
+            if not os.path.isdir(profile):
+                return False, ""
+            shutil.rmtree(profile)
+            return True, ""
+        except OSError as exc:
+            last_error = str(exc)
+            time.sleep(0.4 * (attempt + 1))
+    return False, last_error
+
+
+def clear_session(delete_profile: bool = True) -> Dict[str, Any]:
+    """Delete the saved session (all backends) and the browser profile."""
+    backend = credential_store.backend()
+    removed_file = os.path.exists(session_file())
+    if removed_file:
+        _secure_remove(session_file())
+    backend_error = ""
+    cleared = False
+    try:
+        cleared = bool(backend.clear())
+    except StoreUnavailable as exc:
+        backend_error = exc.reason
+    if removed_file:
+        cleared = True
+    removed_profile, profile_error = _wipe_profile() if delete_profile else (False, "")
     try:
         os.rmdir(login_dir())
     except OSError:
         pass
     return {
-        "session_removed": removed_session,
+        "session_removed": bool(cleared or removed_file),
+        "backend": backend.name,
+        "backend_error": backend_error,
         "profile_removed": removed_profile,
         "profile_error": profile_error,
         "profile_path": profile_dir(),
@@ -860,6 +794,7 @@ def open_login_window(url: str = "", timeout_s: int = 300) -> Dict[str, Any]:
 
     profile = profile_dir()
     try:
+        _ensure_private_dir(login_dir())
         _ensure_private_dir(profile)
     except OSError as exc:
         raise LoginError(
@@ -871,6 +806,7 @@ def open_login_window(url: str = "", timeout_s: int = 300) -> Dict[str, Any]:
     started = time.monotonic()
     process: Optional[subprocess.Popen] = None
     cdp: Optional[_Cdp] = None
+    result: Optional[Dict[str, Any]] = None
     try:
         # Always start a fresh instance. Reusing a stale DevToolsActivePort
         # could connect to an unrelated browser that reused the same port;
@@ -902,21 +838,27 @@ def open_login_window(url: str = "", timeout_s: int = 300) -> Dict[str, Any]:
                 )
             header = _cookie_header_from_cdp(cookies)
             if header and extract_classroom_token(header):
-                saved_path = ""
+                backend = credential_store.backend()
+                storage = backend.describe()
                 save_error = ""
+                saved = False
                 try:
-                    saved_path = save_session(header, browser=browser_label(binary))
+                    storage = save_session(header, browser=browser_label(binary))
+                    saved = backend.persistent
                 except LoginError as exc:
                     save_error = exc.message
-                return {
+                    storage = f"{backend.describe()}（写入失败）"
+                result = {
                     "cookie": header,
                     "names": cookie_names(header),
                     "browser": browser_label(binary),
                     "elapsed": round(time.monotonic() - started, 1),
-                    "saved": bool(saved_path),
-                    "saved_path": saved_path,
+                    "saved": saved,
+                    "storage": storage,
+                    "storage_advice": backend.advice(),
                     "save_error": save_error,
                 }
+                break
             if process is not None and process.poll() is not None:
                 raise LoginError(
                     "登录窗口已退出，没有检测到完整登录态。",
@@ -932,3 +874,14 @@ def open_login_window(url: str = "", timeout_s: int = 300) -> Dict[str, Any]:
             time.sleep(1.0)
     finally:
         _close_browser(cdp, process)
+
+    if result is None:  # pragma: no cover - the loop only breaks on success
+        raise LoginError("登录窗口结束但没有取得登录态。", reason="closed")
+
+    # The dedicated profile holds the browser's own copy of the cookies. It is
+    # always wiped after a successful extraction: exactly one credential copy
+    # remains (the DPAPI blob / Keychain item / Secret Service item).
+    profile_removed, profile_error = _wipe_profile()
+    result["profile_removed"] = profile_removed
+    result["profile_error"] = profile_error
+    return result

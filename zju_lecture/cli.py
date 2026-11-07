@@ -363,6 +363,12 @@ def main():
                         f"{result['profile_error']}。请先关闭该窗口后重试。",
                         file=sys.stderr,
                     )
+                if result.get("backend_error"):
+                    print(
+                        "凭据库中的登录态未能清除："
+                        f"{result['backend_error']}。可在系统钥匙串/密钥环里手动删除。",
+                        file=sys.stderr,
+                    )
                 return
             try:
                 result = open_login_window(args.url, args.timeout)
@@ -375,9 +381,25 @@ def main():
             print(f"- 浏览器: {result['browser']}")
             print(f"- Cookie: {len(result['names'])} 条（含 _token，值不回显）")
             if result.get("saved"):
-                print(f"- 保存: {result['saved_path']}（仅当前系统用户可解密）")
+                print(
+                    "- 保存: 已加密保存到 "
+                    f"{result.get('storage') or '系统凭据库'}（不含账号密码）"
+                )
             else:
-                print(f"- 保存失败: {result.get('save_error') or '未知原因'}（本次会话可用）")
+                print(
+                    "- 保存: 未落盘（"
+                    f"{result.get('storage') or '本机没有可用的加密凭据库'}）"
+                )
+            advice = str(result.get("storage_advice") or "").strip()
+            if advice:
+                print(f"- 说明: {advice}")
+            if result.get("save_error"):
+                print(f"- 保存失败原因: {result['save_error']}")
+            if result.get("profile_error"):
+                print(
+                    "- 独立登录窗口配置未能清理："
+                    f"{result['profile_error']}（可运行 `zju-lecture login --clear` 重试）"
+                )
             print("现在可以运行 `zju-lecture fetch <url>`。")
 
         elif args.command == "cookie":

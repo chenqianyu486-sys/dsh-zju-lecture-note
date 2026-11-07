@@ -17,7 +17,6 @@ Covers the non-interactive part of the feature:
 """
 
 import os
-import stat
 import sys
 import tempfile
 import unittest
@@ -28,7 +27,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import mcp_server  # noqa: E402
-from zju_lecture import browser_login  # noqa: E402
+from zju_lecture import browser_login, credential_store  # noqa: E402
 
 COOKIE = "sid=classroom-session; _token=tok-123456"
 TOKEN = "tok-123456"
@@ -38,15 +37,16 @@ class LoginDirTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="zju-login-test-")
         self.addCleanup(self.tmp.cleanup)
-        self.env = mock.patch.dict(
-            os.environ,
-            {
-                "ZJU_LOGIN_DIR": self.tmp.name,
-                "ZJU_COOKIE": "",
-                "ZJU_COOKIE_FILE": "",
-            },
-            clear=False,
-        )
+        env = {
+            "ZJU_LOGIN_DIR": self.tmp.name,
+            "ZJU_COOKIE": "",
+            "ZJU_COOKIE_FILE": "",
+        }
+        # Never touch a real keyring from a test: on POSIX the OS store would be
+        # written (and left behind) under the developer's account.
+        if sys.platform != "win32":
+            env["ZJU_LOGIN_STORAGE"] = "memory"
+        self.env = mock.patch.dict(os.environ, env, clear=False)
         self.env.start()
         self.addCleanup(self.env.stop)
         mcp_server._COOKIE_CACHE.clear()
@@ -55,34 +55,38 @@ class LoginDirTestCase(unittest.TestCase):
 
 class TestSessionStore(LoginDirTestCase):
     def test_roundtrip_and_summary_never_contains_the_value(self):
-        path = browser_login.save_session(COOKIE, browser="test-browser")
-        self.assertTrue(os.path.isfile(path))
+        descriptor = browser_login.save_session(COOKIE, browser="test-browser")
+        self.assertTrue(descriptor)
         self.assertEqual(browser_login.load_session_cookie(), COOKIE)
         summary = browser_login.session_summary()
         self.assertTrue(summary["available"])
         self.assertEqual(summary["cookie_count"], 2)
         self.assertIn("_token", summary["names"])
+        self.assertIn(
+            summary["backend"], {"dpapi", "keychain", "secret-service", "memory"}
+        )
         self.assertNotIn(TOKEN, repr(summary))
 
-    def test_windows_uses_dpapi_and_posix_uses_a_private_file(self):
+    @unittest.skipUnless(sys.platform == "win32", "Windows 使用 DPAPI 文件")
+    def test_windows_uses_a_dpapi_blob(self):
         browser_login.save_session(COOKIE)
         with open(browser_login.session_file(), "rb") as handle:
             raw = handle.read()
         self.assertTrue(raw.startswith(browser_login.SESSION_MAGIC))
         mode = raw[len(browser_login.SESSION_MAGIC): len(browser_login.SESSION_MAGIC) + 1]
-        if sys.platform == "win32":
-            self.assertEqual(mode, b"D")
-        else:
-            self.assertEqual(mode, b"P")
-            file_mode = stat.S_IMODE(os.stat(browser_login.session_file()).st_mode)
-            self.assertEqual(file_mode, 0o600)
+        self.assertEqual(mode, b"D")
 
-    def test_tampered_file_is_rejected(self):
+    @unittest.skipIf(sys.platform == "win32", "POSIX 后端不写任何文件")
+    def test_posix_writes_no_session_file(self):
         browser_login.save_session(COOKIE)
-        with open(browser_login.session_file(), "wb") as handle:
-            handle.write(b"not-a-session")
-        self.assertIsNone(browser_login.load_session_cookie())
-        self.assertFalse(browser_login.session_summary()["available"])
+        self.assertFalse(os.path.exists(browser_login.session_file()))
+
+    def test_corrupted_store_is_rejected(self):
+        fake = credential_store.MemoryBackend()
+        fake.save({"version": browser_login.SESSION_VERSION, "cookie": "not-a-cookie"})
+        with mock.patch.object(credential_store, "backend", return_value=fake):
+            self.assertIsNone(browser_login.load_session_cookie())
+            self.assertFalse(browser_login.session_summary()["available"])
 
     def test_cookie_without_token_is_rejected(self):
         with self.assertRaises(browser_login.LoginError) as caught:
@@ -98,7 +102,7 @@ class TestSessionStore(LoginDirTestCase):
         result = browser_login.clear_session(delete_profile=True)
         self.assertTrue(result["session_removed"])
         self.assertTrue(result["profile_removed"])
-        self.assertFalse(os.path.exists(browser_login.session_file()))
+        self.assertIsNone(browser_login.load_session_cookie())
         self.assertFalse(os.path.exists(profile))
 
     def test_login_dir_honours_the_override(self):
@@ -209,7 +213,8 @@ class TestLoginTool(LoginDirTestCase):
             "browser": "Microsoft Edge",
             "elapsed": 3.2,
             "saved": True,
-            "saved_path": os.path.join(self.tmp.name, "session.bin"),
+            "storage": "Windows DPAPI 加密文件（测试）",
+            "storage_advice": "",
             "save_error": "",
         }
         with mock.patch.object(mcp_server, "open_login_window", return_value=fake):
@@ -218,6 +223,8 @@ class TestLoginTool(LoginDirTestCase):
             )
         self.assertIn("登录成功", output)
         self.assertIn("Microsoft Edge", output)
+        self.assertIn("已加密保存到", output)
+        self.assertNotIn("仅当前系统用户可解密", output)
         self.assertNotIn(TOKEN, output)
         self.assertNotIn("_token=", output)
         self.assertEqual(mcp_server._COOKIE_CACHE[mcp_server.DEFAULT_DOMAIN], COOKIE)
@@ -233,12 +240,47 @@ class TestLoginTool(LoginDirTestCase):
         self.assertIn("no_browser", message)
         self.assertIn("ZJU_COOKIE_FILE", message)
 
+    def test_memory_backend_reports_not_persisted(self):
+        fake = {
+            "cookie": COOKIE,
+            "names": ["sid", "_token"],
+            "browser": "Microsoft Edge",
+            "elapsed": 1.4,
+            "saved": False,
+            "storage": "仅内存，不落盘（未找到 secret-tool）",
+            "storage_advice": "仅当前进程有效（CLI 单次命令退出即失效）。",
+            "save_error": "",
+            "profile_error": "",
+        }
+        with mock.patch.object(mcp_server, "open_login_window", return_value=fake):
+            output = mcp_server.handle_tool_call("zju_login", {})
+        self.assertIn("未落盘", output)
+        self.assertIn("仅当前进程有效", output)
+        self.assertNotIn(TOKEN, output)
+
+    def test_profile_cleanup_failure_is_reported(self):
+        fake = {
+            "cookie": COOKIE,
+            "names": ["sid", "_token"],
+            "browser": "Microsoft Edge",
+            "elapsed": 1.4,
+            "saved": True,
+            "storage": "macOS 钥匙串（测试）",
+            "storage_advice": "",
+            "save_error": "",
+            "profile_error": "Permission denied",
+        }
+        with mock.patch.object(mcp_server, "open_login_window", return_value=fake):
+            output = mcp_server.handle_tool_call("zju_login", {})
+        self.assertIn("未能清理", output)
+        self.assertIn("clear=true", output)
+
     def test_clear_action_removes_the_saved_session(self):
         browser_login.save_session(COOKIE)
         mcp_server._COOKIE_CACHE[mcp_server.DEFAULT_DOMAIN] = COOKIE
         output = mcp_server.handle_tool_call("zju_login", {"clear": True, "confirm": True})
         self.assertIn("已清除", output)
-        self.assertFalse(os.path.exists(browser_login.session_file()))
+        self.assertIsNone(browser_login.load_session_cookie())
         self.assertNotIn(mcp_server.DEFAULT_DOMAIN, mcp_server._COOKIE_CACHE)
 
     def test_no_browser_environment_has_a_clear_reason(self):
@@ -262,7 +304,7 @@ class TestLoginTool(LoginDirTestCase):
             )
         self.assertIn("session_expired", output)
         self.assertIn("zju_login", output)
-        self.assertFalse(os.path.exists(browser_login.session_file()))
+        self.assertIsNone(browser_login.load_session_cookie())
 
 
 class TestDoctorAndFailureActions(LoginDirTestCase):
@@ -272,6 +314,12 @@ class TestDoctorAndFailureActions(LoginDirTestCase):
         self.assertIn("本机登录态: 已保存", report)
         self.assertIn("来源 session", report)
         self.assertIn("登录窗口", report)
+        self.assertNotIn(TOKEN, report)
+
+    def test_doctor_names_the_storage_backend(self):
+        browser_login.save_session(COOKIE)
+        report = mcp_server._doctor_report(False)
+        self.assertIn("存储:", report)
         self.assertNotIn(TOKEN, report)
 
     def test_every_failure_action_prefers_the_login_window(self):

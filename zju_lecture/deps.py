@@ -608,6 +608,22 @@ def compile_args(workspace_root: str) -> List[str]:
     return args
 
 
+def typst_env() -> Dict[str, str]:
+    """Child environment for ``typst``: the parent's, minus every credential.
+
+    Typst needs ``PATH`` / proxy / locale variables, but it has no business
+    inheriting the classroom session that this process happens to hold in
+    ``ZJU_COOKIE`` / ``ZJU_COOKIE_FILE``. The filter is case-insensitive so a
+    differently cased variable on a case-insensitive platform cannot slip
+    through.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not str(key).upper().startswith("ZJU_COOKIE")
+    }
+
+
 def ensure_dir(path: str) -> str:
     os.makedirs(path, exist_ok=True)
     return path

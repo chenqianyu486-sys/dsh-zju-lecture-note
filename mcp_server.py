@@ -98,7 +98,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.2.7"
+SERVER_VERSION = "2.2.8"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -111,6 +111,10 @@ COOKIE_ENV = "ZJU_COOKIE"
 COOKIE_FILE_ENV = "ZJU_COOKIE_FILE"
 _MAX_COOKIE_FILE_BYTES = 64 * 1024
 
+#: Sub-switch of the projection pipeline: use the screenshots as a *content
+#: source* (read the slides, then write the note from transcript + slides).
+#: Distinct from EMBED_SLIDES_ENV, which only controls Markdown illustrations.
+SLIDES_SOURCE_ENV = "ZJU_SLIDES_SOURCE"
 #: Sub-switch of the projection pipeline: download projected-slide screenshots
 #: and reference them in the note. Off by default because it adds download
 #: time and vision tokens.
@@ -202,6 +206,16 @@ def available_tools() -> List[Dict[str, Any]]:
     return [tool for tool in TOOLS if tool["name"] not in hidden]
 
 
+def slides_as_source_enabled() -> bool:
+    """Whether the host asked to use projected slides as a note source.
+
+    This is independent of the illustration sub-switch: a note can be written
+    from the slides without embedding any screenshot, and it can embed key
+    pages without treating the slide text as a source.
+    """
+    return str(os.environ.get(SLIDES_SOURCE_ENV, "")).strip().lower() in _TRUE_VALUES
+
+
 def embed_slides_enabled() -> bool:
     """Whether the host asked for projected-slide images in the note.
 
@@ -215,15 +229,21 @@ def slide_image_mode_text() -> str:
     """One sentence describing the note-illustration mode for this process."""
     if not slides_enabled():
         return "投影抓取已关闭，讲义只使用字幕与本地课件。"
+    if slides_as_source_enabled():
+        return (
+            "投影作为讲义来源：开启。写讲义前必须先抓一次投影（整节课只抓一次）并下载截图，"
+            "把幻灯片上的定义、公式、图例、例题与字幕对照写进正文；"
+            "模型不能查看本地图片时，只在文末列截图索引，不要臆造幻灯片文字。"
+        )
     if embed_slides_enabled():
         return (
-            "讲义插图模式：开启。写讲义前默认抓一次投影（整节课只抓一次），"
+            "讲义插图模式：开启。写讲义前抓一次投影（整节课只抓一次），"
             "从返回的截图里挑 3–8 张关键页，按讲义所在目录的相对路径插入 Markdown；"
             "模型不能查看本地图片时，只在文末列截图索引，不要臆造截图内容。"
         )
     return (
-        "讲义插图模式：关闭（默认，节省下载时间与 token）。"
-        "用户明确要求插图时再调用 zju_fetch_slides(download=true)。"
+        "投影只启用抓取：写讲义前可调用一次 zju_fetch_slides(download=false) 核对清单，"
+        "不下载、不插图、不把截图当作内容来源。"
     )
 
 
@@ -260,6 +280,12 @@ def server_instructions() -> str:
         parts.append(
             "投影截图（可下载并合成 PDF）需要登录态（Cookie 需含 _token）；"
             "投影抓取可用 ZJU_ENABLE_SLIDES=0 关闭。"
+            + (
+                "投影作为讲义来源已开启（ZJU_SLIDES_SOURCE=1）：写讲义前先抓取一次并下载截图，"
+                "结合字幕与幻灯片内容写；不能看图时不要臆造幻灯片文字。"
+                if slides_as_source_enabled()
+                else ""
+            )
         )
     else:
         parts.append(
@@ -518,11 +544,14 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_slides",
         "description": (
-            "（可选投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是"
-            "投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF（省略时跟随 "
-            "enableSlides / embedSlideImages，即 ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）。"
+            "（投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是"
+            "投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF。"
+            "当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，"
+            "写讲义前应调用一次并传 download=true, confirm=true；download 省略时"
+            "跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。"
             "需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。"
-            "抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides 关闭时本工具不注册。"
+            "抓不到时返回诊断，可降级为纯字幕总结。"
+            "dsh 的 enableSlides（ZJU_ENABLE_SLIDES）关闭时本工具不注册。"
         ),
         "inputSchema": {
             "type": "object",
@@ -548,7 +577,8 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "boolean",
                     "description": (
                         "是否下载截图到工作区并合成 PDF。省略时跟随插件设置"
-                        "（dsh 的 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES，默认关闭）；"
+                        "（slidesAsSource 或 embedSlideImages 开启即下载；"
+                        "环境变量 ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）；"
                         "显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图"
                     ),
                 },
@@ -1097,7 +1127,7 @@ _LOGIN_SOURCE_LABELS = {
     "cache": "进程内缓存",
     "env": "ZJU_COOKIE",
     "file": "ZJU_COOKIE_FILE",
-    "session": "zju_login 安全保存",
+    "session": "zju_login 保存（加密）",
     "edge": "本机 Edge",
 }
 
@@ -1120,7 +1150,8 @@ def _login_status_text() -> List[str]:
             lines.append(
                 "  本机保存的登录态: 存在"
                 f"（{summary.get('cookie_count', 0)} 条 Cookie，"
-                f"浏览器 {summary.get('browser') or '未知'}）"
+                f"浏览器 {summary.get('browser') or '未知'}，"
+                f"存储 {summary.get('storage') or '未知'}）"
             )
         return lines
     action = COOKIE_FAILURE_ACTIONS.get(reason or "unknown", COOKIE_FAILURE_ACTIONS["unknown"])
@@ -1186,8 +1217,13 @@ def _doctor_report(install: bool, check_login: bool = False) -> str:
             + (f"，保存于 {stamp}" if stamp else "")
             + "；不含账号密码）"
         )
+        lines.append(f"  存储: {summary.get('storage') or '未知'}")
     else:
         lines.append("本机登录态: 未保存（需要时调用 zju_login 打开独立登录窗口）")
+        if summary.get("backend"):
+            lines.append(
+                f"  存储: {summary.get('storage') or summary.get('backend')}"
+            )
     login_ok, login_detail = login_available()
     lines.append(
         "登录窗口: " + ("可用（" + login_detail + "）" if login_ok else "不可用（" + login_detail + "）")
@@ -1539,6 +1575,12 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     f"{REDACTOR.redact(result['profile_error'])}。"
                     "请先关闭该登录窗口，再重试清除。"
                 )
+            if result.get("backend_error"):
+                lines.append(
+                    "凭据库中的登录态未能清除："
+                    f"{REDACTOR.redact(str(result['backend_error']))}。"
+                    "可在系统钥匙串/密钥环里手动删除后重试。"
+                )
             return "\n".join(lines)
 
         timeout = arguments.get("timeout_seconds") or 300
@@ -1559,14 +1601,24 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         ]
         if result.get("saved"):
             lines.append(
-                f"- 保存: 已安全保存到 {result['saved_path']}"
-                "（仅当前系统用户可解密；不包含账号密码）"
+                "- 保存: 已加密保存到 "
+                f"{result.get('storage') or '系统凭据库'}（不含账号密码）"
             )
         else:
             lines.append(
                 "- 保存: 未落盘（"
-                f"{REDACTOR.redact(result.get('save_error') or '未知原因')}）；"
-                "本次会话仍可用，但重启后需要重新登录"
+                f"{result.get('storage') or '本机没有可用的加密凭据库'}）"
+            )
+        advice = str(result.get("storage_advice") or "").strip()
+        if advice:
+            lines.append(f"- 说明: {REDACTOR.redact(advice)}")
+        if result.get("save_error"):
+            lines.append(f"- 保存失败原因: {REDACTOR.redact(result['save_error'])}")
+        if result.get("profile_error"):
+            lines.append(
+                "- 独立登录窗口配置未能清理："
+                f"{REDACTOR.redact(str(result['profile_error']))}；"
+                "可运行 zju_login(clear=true) 重试。"
             )
         lines.append("现在可以重试字幕或投影抓取，不需要再操作浏览器。")
         return "\n".join(lines)
@@ -1671,7 +1723,10 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         course_id = str(arguments.get("course_id") or parsed.get("course_id") or "")
         download_arg = arguments.get("download")
         slide_images_enabled = embed_slides_enabled()
-        download = slide_images_enabled if download_arg is None else bool(download_arg)
+        slides_as_source = slides_as_source_enabled()
+        download = (
+            slide_images_enabled or slides_as_source
+        ) if download_arg is None else bool(download_arg)
         dedup_arg = arguments.get("dedup")
         dedup = True if dedup_arg is None else bool(dedup_arg)
         output_dir = str(arguments.get("output_dir") or "").strip()
@@ -1757,18 +1812,27 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     download_note += f"\nPDF: {pdf_path}（{len(pages)} 页）"
 
         md = format_slides_as_markdown(slides_data, pdf_path=pdf_path)
-        mode_text = "开启" if slide_images_enabled else "关闭（默认）"
+        mode_text = "开启" if slide_images_enabled else (
+            "关闭" if slides_as_source else "关闭（默认）"
+        )
+        source_text = "开启" if slides_as_source else "关闭（默认）"
         lines = [
             f"=== 课堂投影 PPT 截图 (sub_id={sub_id}, 共 {len(slides_data)} 页) ===",
+            f"投影作为讲义来源: {source_text}"
+            "（dsh 设置 slidesAsSource / 环境变量 ZJU_SLIDES_SOURCE）",
             f"讲义插图模式: {mode_text}"
             "（dsh 设置 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES）",
             "说明: 智云接口返回的是投影画面截图，不是文字层；"
-            "未下载或模型不能看图时，请只用字幕与本地课件生成讲义。",
+            "未下载或模型不能看图时，不要臆造幻灯片文字，只用字幕与本地课件生成讲义。",
         ]
-        if download and not slide_images_enabled:
+        if slides_as_source and download:
+            lines.append(
+                "投影讲义模式：请结合截图内容与字幕写讲义；不能读图时只在文末列截图索引并说明。"
+            )
+        if download and not slide_images_enabled and not slides_as_source:
             lines.append("本次按显式 download=true 执行。")
-        elif slide_images_enabled and not download:
-            lines.append("本次 download=false，未下载截图。")
+        elif (slide_images_enabled or slides_as_source) and not download:
+            lines.append("本次 download=false，未下载截图；投影模式通常应下载后阅读。")
         if download_note:
             lines.append(download_note)
         if note_example:
