@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zju-lecture",
+  "version": "2.2.7",
+  "description": "浙大智云课堂回放讲义：语音字幕 + 本地课件 → 结构化讲义与 PDF（MCP + Agent Skills）",
+  "author": {
+    "name": "chenqianyu486"
+  },
+  "homepage": "https://github.com/chenqianyu486-sys/dsh-zju-lecture-note#readme",
+  "repository": "https://github.com/chenqianyu486-sys/dsh-zju-lecture-note",
+  "license": "MIT",
+  "keywords": [
+    "zju",
+    "lecture",
+    "mcp",
+    "agent-skill",
+    "typst"
+  ]
+}

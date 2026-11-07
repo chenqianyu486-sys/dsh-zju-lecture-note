@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "zju-lecture": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./server.mjs"
+      ],
+      "env": {
+        "ZJU_ENABLE_SLIDES": "0",
+        "ZJU_EMBED_SLIDES": "0",
+        "ZJU_ENABLE_STUDY_NOTES": "0",
+        "ZJU_ENABLE_LOGIN_TOOLS": "0",
+        "ZJU_RENDER_PDF": "0",
+        "ZJU_TYPST_AUTO_INSTALL": "1"
+      }
+    }
+  }
+}

@@ -37,6 +37,9 @@
   "files": [
     "cordis.patch.yml",
     "lib",
+    "plugin.json",
+    "mcp.json",
+    "server.mjs",
     "mcp_server.py",
     "zju_lecture/*.py",
     "zju_lecture/cacert.pem",
