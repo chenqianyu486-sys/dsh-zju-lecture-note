@@ -40,7 +40,19 @@ const registered = []
 const formCalls = []
 const formState = {
   status: 'ready',
-  value: { enableSlides: false, embedSlideImages: false },
+  value: {
+    enableSlides: false,
+    embedSlideImages: false,
+    renderPdf: true,
+    enableStudyNotes: false,
+    enableLoginTools: false,
+    typstAutoInstall: true,
+    typstPath: '',
+    typstMirror: '',
+    python: '',
+    timeoutMs: 120000,
+    registerSkill: true,
+  },
   writable: true,
   revision: 7,
 }
@@ -59,8 +71,34 @@ const mirror = {
     view: {
       namespaces: [{
         ns: 'include:dsh-zju-lecture-note',
-        schema: { properties: { enableSlides: { type: 'boolean' }, embedSlideImages: { type: 'boolean' } } },
-        value: { enableSlides: false, embedSlideImages: false },
+        schema: {
+          properties: {
+            enableSlides: { type: 'boolean' },
+            embedSlideImages: { type: 'boolean' },
+            renderPdf: { type: 'boolean' },
+            enableStudyNotes: { type: 'boolean' },
+            enableLoginTools: { type: 'boolean' },
+            typstAutoInstall: { type: 'boolean' },
+            typstPath: { type: 'string' },
+            typstMirror: { type: 'string' },
+            python: { type: 'string' },
+            timeoutMs: { type: 'number' },
+            registerSkill: { type: 'boolean' },
+          },
+        },
+        value: {
+          enableSlides: false,
+          embedSlideImages: false,
+          renderPdf: true,
+          enableStudyNotes: false,
+          enableLoginTools: false,
+          typstAutoInstall: true,
+          typstPath: '',
+          typstMirror: '',
+          python: '',
+          timeoutMs: 120000,
+          registerSkill: true,
+        },
         revision: 7,
       }],
     },
@@ -156,6 +194,26 @@ face.settings.sync()
 if (face.settings.getSnapshot().value?.enableSlides !== true) {
   throw new Error('settings controller did not pick up the written value')
 }
+
+// The advanced fields use the same controller, but carry strings / numbers
+// instead of booleans. A form that only accepted booleans would silently drop
+// the value on the floor.
+for (const [field, value] of [
+  ['timeoutMs', 90000],
+  ['python', 'C:\\Python\\python.exe'],
+  ['typstPath', 'C:\\typst\\typst.exe'],
+  ['typstMirror', 'https://ghfast.top/'],
+  ['registerSkill', false],
+]) {
+  const ok = await face.settings.setField(field, value)
+  if (!ok) throw new Error(`setField rejected ${field}`)
+  face.settings.sync()
+  if (face.settings.getSnapshot().value?.[field] !== value) {
+    throw new Error(`settings controller did not keep ${field}=${value}`)
+  }
+}
+const inputCalls = formCalls.slice(1)
+if (inputCalls.length !== 5) throw new Error(`advanced writes were not forwarded: ${JSON.stringify(formCalls)}`)
 
 process.stdout.write(`${JSON.stringify({
   ok: true,

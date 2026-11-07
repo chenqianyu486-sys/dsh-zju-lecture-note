@@ -256,11 +256,17 @@ class TestGuiSettingsPage(unittest.TestCase):
         """dsh-settings only projects `.volatile()` Config fields into forms."""
         source = read_text("lib", "index.js")
         for field in (
+            "python",
+            "timeoutMs",
+            "registerSkill",
             "renderPdf",
             "enableStudyNotes",
             "enableSlides",
             "embedSlideImages",
             "enableLoginTools",
+            "typstAutoInstall",
+            "typstPath",
+            "typstMirror",
         ):
             self.assertRegex(
                 source,
@@ -300,7 +306,11 @@ class TestGuiSettingsPage(unittest.TestCase):
         self.assertEqual(payload["rowId"], "zju-lecture")
         self.assertEqual(payload["order"], 25)
         self.assertIn("configForms", payload["services"])
-        self.assertEqual(payload["calls"], [["enableSlides", True]])
+        self.assertEqual(payload["calls"][0], ["enableSlides", True])
+        self.assertEqual(
+            [field for field, _ in payload["calls"][1:]],
+            ["timeoutMs", "python", "typstPath", "typstMirror", "registerSkill"],
+        )
 
 
 if __name__ == "__main__":

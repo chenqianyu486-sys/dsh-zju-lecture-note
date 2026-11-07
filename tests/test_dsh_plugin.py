@@ -314,7 +314,7 @@ class TestNoHomeDirectoryWrites(unittest.TestCase):
 
     def test_entrypoint_uses_the_skill_registry(self):
         content = read_text("lib", "index.js")
-        self.assertIn("ctx.skills.register", content)
+        self.assertIn(".skills.register(", content)
         self.assertIn("registerSkill", content)
 
     def test_entrypoint_does_not_copy_files_into_the_home_directory(self):

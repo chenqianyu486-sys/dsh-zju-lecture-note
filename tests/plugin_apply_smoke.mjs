@@ -27,10 +27,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 let apply;
+let bridgeOptions;
 let featureFlags;
 let readSetting;
 try {
-  ({ apply, featureFlags, readSetting } = await import("../lib/index.js"));
+  ({ apply, bridgeOptions, featureFlags, readSetting } = await import("../lib/index.js"));
 } catch (error) {
   const message = String(error?.message ?? error);
   if (/Cannot find package '@deepseek-ai\//.test(message)) {
@@ -47,19 +48,28 @@ function makeScopedContext(state) {
     tools: {
       register(definition) {
         state.tools.push(definition);
-        return () => {};
+        return () => {
+          const index = state.tools.indexOf(definition);
+          if (index >= 0) state.tools.splice(index, 1);
+        };
       },
     },
     skills: {
       register(skill) {
         state.skills.push(skill);
-        return () => {};
+        return () => {
+          const index = state.skills.indexOf(skill);
+          if (index >= 0) state.skills.splice(index, 1);
+        };
       },
     },
     systemPrompt: {
       section(section) {
         state.sections.push(section);
-        return () => {};
+        return () => {
+          const index = state.sections.indexOf(section);
+          if (index >= 0) state.sections.splice(index, 1);
+        };
       },
     },
     effect(callback) {
@@ -80,6 +90,15 @@ function makeContext(state) {
     inject(services, callback) {
       callback(makeScopedContext(state));
     },
+    on(name, listener) {
+      const bucket = state.listeners[name] ?? [];
+      bucket.push(listener);
+      state.listeners[name] = bucket;
+      return () => {
+        const index = bucket.indexOf(listener);
+        if (index >= 0) bucket.splice(index, 1);
+      };
+    },
   };
 }
 
@@ -89,10 +108,21 @@ const allStates = [];
 const sessionWorkspace = mkdtempSync(join(tmpdir(), "zju-plugin-apply-"));
 
 function runApply(config) {
-  const state = { tools: [], skills: [], sections: [], disposers: [] };
+  const state = { tools: [], skills: [], sections: [], disposers: [], listeners: {} };
+  state.context = makeContext(state);
+  state.emit = (name, payload) => {
+    for (const listener of [...(state.listeners[name] ?? [])]) listener(payload);
+  };
   allStates.push(state);
-  apply(makeContext(state), config);
+  apply(state.context, config);
   return state;
+}
+
+/** The system prompt is a thunk so every assembly re-reads the live config. */
+function sectionText(state) {
+  const section = state.sections[0];
+  if (!section) throw new Error("no system prompt section registered");
+  return typeof section.text === "function" ? section.text({}) : section.text;
 }
 
 try {
@@ -116,16 +146,47 @@ try {
   // not primitives. A plugin that compares the reference to `true` always
   // sees "off", so this shape must be covered explicitly.
   const ref = (value) => ({ get: () => value });
-  const live = runApply({
-    python: "",
-    timeoutMs: ref(60000),
-    registerSkill: ref(true),
-    renderPdf: ref(true),
+  const liveRef = (initial) => {
+    const box = { value: initial };
+    return {
+      get: () => box.value,
+      set: (next) => {
+        box.value = next;
+      },
+    };
+  };
+  const liveRefs = {
+    python: liveRef(""),
+    timeoutMs: liveRef(60000),
+    registerSkill: liveRef(true),
+    renderPdf: liveRef(true),
+    enableSlides: liveRef(true),
+    embedSlideImages: liveRef(true),
+    enableStudyNotes: liveRef(true),
+    enableLoginTools: liveRef(true),
+    typstAutoInstall: liveRef(true),
+    typstPath: liveRef(""),
+    typstMirror: liveRef(""),
+  };
+  const live = runApply(liveRefs);
+
+  const projected = bridgeOptions({
+    python: ref("C:\\Python\\python.exe"),
+    timeoutMs: ref(90000),
+    typstPath: ref("C:\\typst\\typst.exe"),
+    typstMirror: ref("https://ghfast.top/"),
     enableSlides: ref(true),
-    embedSlideImages: ref(true),
-    enableStudyNotes: ref(true),
-    enableLoginTools: ref(true),
+    renderPdf: ref(false),
   });
+  if (projected.python !== "C:\\Python\\python.exe" || projected.timeoutMs !== 90000) {
+    throw new Error(`bridgeOptions did not unwrap live refs: ${JSON.stringify(projected)}`);
+  }
+  if (projected.typstPath !== "C:\\typst\\typst.exe" || projected.typstMirror !== "https://ghfast.top/") {
+    throw new Error(`bridgeOptions dropped the Typst path/mirror: ${JSON.stringify(projected)}`);
+  }
+  if (projected.enableSlides !== true || projected.renderPdf !== false) {
+    throw new Error(`bridgeOptions mixed up the feature flags: ${JSON.stringify(projected)}`);
+  }
 
   const flags = featureFlags({
     renderPdf: ref(true),
@@ -205,21 +266,79 @@ try {
   if (core.sections.length !== 1 || study.sections.length !== 1 || full.sections.length !== 1) {
     throw new Error("expected one prompt section each");
   }
-  if (!core.sections[0].text.includes("隐私边界")) throw new Error("system prompt has no privacy boundary");
-  if (!core.sections[0].text.includes("PPT 投影抓取已关闭")) throw new Error("core prompt does not mark slides as off");
-  if (core.sections[0].text.includes("讲义插图模式")) throw new Error("core prompt still contains slide-image rules");
-  if (!core.sections[0].text.includes("PDF 自动排版已开启")) throw new Error("core prompt misses the PDF rule");
-  if (!core.sections[0].text.includes("填空笔记已关闭")) throw new Error("core prompt misses the study-notes gate");
-  if (!study.sections[0].text.includes("填空笔记已开启")) throw new Error("study prompt does not mark study notes on");
-  if (!full.sections[0].text.includes("PPT 投影抓取已开启")) throw new Error("full prompt does not mark slides as on");
-  if (!full.sections[0].text.includes("讲义插图模式已开启")) throw new Error("full prompt misses the image rule");
-  if (!full.sections[0].text.includes("登录辅助工具已开启")) throw new Error("full prompt misses the login rule");
-  if (!live.sections[0].text.includes("PPT 投影抓取已开启")) throw new Error("volatile refs did not reach the prompt (slides)");
-  if (!live.sections[0].text.includes("填空笔记已开启")) throw new Error("volatile refs did not reach the prompt (study notes)");
-  if (!live.sections[0].text.includes("登录辅助工具已开启")) throw new Error("volatile refs did not reach the prompt (login tools)");
-  if (!core.sections[0].text.includes("复习版")) throw new Error("core prompt misses the review-note contract");
-  if (!core.sections[0].text.includes("例题")) throw new Error("core prompt misses the worked-example rule");
-  if (!core.sections[0].text.includes("自测题")) throw new Error("core prompt misses the self-test rule");
+  const coreText = sectionText(core);
+  const studyText = sectionText(study);
+  const fullText = sectionText(full);
+  const liveText = sectionText(live);
+  if (!coreText.includes("隐私边界")) throw new Error("system prompt has no privacy boundary");
+  if (!coreText.includes("PPT 投影抓取已关闭")) throw new Error("core prompt does not mark slides as off");
+  if (coreText.includes("讲义插图模式")) throw new Error("core prompt still contains slide-image rules");
+  if (!coreText.includes("PDF 自动排版已开启")) throw new Error("core prompt misses the PDF rule");
+  if (!coreText.includes("填空笔记已关闭")) throw new Error("core prompt misses the study-notes gate");
+  if (!studyText.includes("填空笔记已开启")) throw new Error("study prompt does not mark study notes on");
+  if (!fullText.includes("PPT 投影抓取已开启")) throw new Error("full prompt does not mark slides as on");
+  if (!fullText.includes("讲义插图模式已开启")) throw new Error("full prompt misses the image rule");
+  if (!fullText.includes("登录辅助工具已开启")) throw new Error("full prompt misses the login rule");
+  if (!liveText.includes("PPT 投影抓取已开启")) throw new Error("volatile refs did not reach the prompt (slides)");
+  if (!liveText.includes("填空笔记已开启")) throw new Error("volatile refs did not reach the prompt (study notes)");
+  if (!liveText.includes("登录辅助工具已开启")) throw new Error("volatile refs did not reach the prompt (login tools)");
+  if (!coreText.includes("复习版")) throw new Error("core prompt misses the review-note contract");
+  if (!coreText.includes("例题")) throw new Error("core prompt misses the worked-example rule");
+  if (!coreText.includes("自测题")) throw new Error("core prompt misses the self-test rule");
+  if (flags.registerSkill !== true) throw new Error("registerSkill default should be on");
+
+  // A volatile-only save does not re-run apply(); the plugin must reconcile
+  // tools, Skills and the prompt from `loader/volatile-update` itself.
+  liveRefs.enableSlides.set(false);
+  liveRefs.enableStudyNotes.set(false);
+  liveRefs.enableLoginTools.set(false);
+  liveRefs.embedSlideImages.set(false);
+  live.emit("loader/volatile-update", [["enableSlides"], ["enableStudyNotes"], ["enableLoginTools"]]);
+  if (live.tools.length !== 7) {
+    throw new Error(`live disable left ${live.tools.length} tools, expected 7`);
+  }
+  if (live.skills.length !== 3) {
+    throw new Error(`live disable left ${live.skills.length} skills, expected 3`);
+  }
+  if (!sectionText(live).includes("PPT 投影抓取已关闭")) {
+    throw new Error("live prompt did not follow the disabled slides switch");
+  }
+
+  liveRefs.enableSlides.set(true);
+  liveRefs.enableStudyNotes.set(true);
+  live.emit("loader/volatile-update", [["enableSlides"], ["enableStudyNotes"]]);
+  if (live.tools.length !== 9) {
+    throw new Error(`live enable registered ${live.tools.length} tools, expected 9`);
+  }
+  if (live.skills.length !== 4) {
+    throw new Error(`live study switch did not add scholia-notes: ${live.skills.length}`);
+  }
+  if (!sectionText(live).includes("PPT 投影抓取已开启")) {
+    throw new Error("live prompt did not follow the enabled slides switch");
+  }
+
+  liveRefs.registerSkill.set(false);
+  live.emit("loader/volatile-update", [["registerSkill"]]);
+  if (live.skills.length !== 0) {
+    throw new Error(`registerSkill=false left ${live.skills.length} skills registered`);
+  }
+  if (!sectionText(live).includes("随包 Skill 未注册")) {
+    throw new Error("live prompt did not explain the disabled Skills");
+  }
+  if (!sectionText(live).includes("通用数学规范")) {
+    throw new Error("live prompt still points at a Skill that is not registered");
+  }
+
+  liveRefs.registerSkill.set(true);
+  liveRefs.timeoutMs.set(1500);
+  live.emit("loader/volatile-update", [["registerSkill"], ["timeoutMs"]]);
+  if (live.skills.length !== 4) {
+    throw new Error(`re-enabled Skills registered ${live.skills.length}, expected 4`);
+  }
+  const liveParse = live.tools.find((tool) => tool.name === "zju_parse_url");
+  if (liveParse?.timeoutMs !== 1500) {
+    throw new Error(`live timeout edit did not re-register the tool: ${liveParse?.timeoutMs}`);
+  }
 
   const parseTool = core.tools.find((tool) => tool.name === "zju_parse_url");
   const rendered = parseTool.output.render({}, { text: "hello" });
