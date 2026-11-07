@@ -52,7 +52,7 @@
   },
   {
     "name": "zju_fetch_slides",
-    "description": "（可选投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF（省略时跟随 enableSlides / embedSlideImages，即 ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides 关闭时本工具不注册。",
+    "description": "（投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF。当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，写讲义前应调用一次并传 download=true, confirm=true；download 省略时跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides（ZJU_ENABLE_SLIDES）关闭时本工具不注册。",
     "parameters": {
       "url_or_sub_id": {
         "description": "回放 URL（通常含 course_id）或 sub_id",
@@ -69,7 +69,7 @@
         "type": "string"
       },
       "download": {
-        "description": "是否下载截图到工作区并合成 PDF。省略时跟随插件设置（dsh 的 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES，默认关闭）；显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图",
+        "description": "是否下载截图到工作区并合成 PDF。省略时跟随插件设置（slidesAsSource 或 embedSlideImages 开启即下载；环境变量 ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）；显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图",
         "type": "boolean"
       },
       "output_dir": {

@@ -138,9 +138,30 @@ try {
     timeoutMs: 60000,
     registerSkill: true,
     enableSlides: true,
+    slidesAsSource: true,
     embedSlideImages: true,
     enableStudyNotes: true,
     enableLoginTools: true,
+  });
+  // The fourth preset: transcript + projected slides, no fill-in notes.
+  const slidesSource = runApply({
+    python: "",
+    timeoutMs: 60000,
+    registerSkill: true,
+    renderPdf: true,
+    enableSlides: true,
+    slidesAsSource: true,
+    embedSlideImages: false,
+    enableStudyNotes: false,
+    enableLoginTools: false,
+  });
+  // The master switch alone used to tell the model "don't download or insert"
+  // and the agent never called zju_fetch_slides at all.
+  const slidesOnly = runApply({
+    python: "",
+    timeoutMs: 60000,
+    registerSkill: true,
+    enableSlides: true,
   });
   // dsh projects `.volatile()` Config fields as live `{ get() }` references,
   // not primitives. A plugin that compares the reference to `true` always
@@ -161,6 +182,7 @@ try {
     registerSkill: liveRef(true),
     renderPdf: liveRef(true),
     enableSlides: liveRef(true),
+    slidesAsSource: liveRef(true),
     embedSlideImages: liveRef(true),
     enableStudyNotes: liveRef(true),
     enableLoginTools: liveRef(true),
@@ -176,6 +198,7 @@ try {
     typstPath: ref("C:\\typst\\typst.exe"),
     typstMirror: ref("https://ghfast.top/"),
     enableSlides: ref(true),
+    slidesAsSource: ref(true),
     renderPdf: ref(false),
   });
   if (projected.python !== "C:\\Python\\python.exe" || projected.timeoutMs !== 90000) {
@@ -184,23 +207,30 @@ try {
   if (projected.typstPath !== "C:\\typst\\typst.exe" || projected.typstMirror !== "https://ghfast.top/") {
     throw new Error(`bridgeOptions dropped the Typst path/mirror: ${JSON.stringify(projected)}`);
   }
-  if (projected.enableSlides !== true || projected.renderPdf !== false) {
+  if (projected.enableSlides !== true || projected.slidesAsSource !== true || projected.renderPdf !== false) {
     throw new Error(`bridgeOptions mixed up the feature flags: ${JSON.stringify(projected)}`);
   }
 
   const flags = featureFlags({
     renderPdf: ref(true),
     enableSlides: ref(true),
+    slidesAsSource: ref(true),
     embedSlideImages: ref(true),
     enableStudyNotes: ref(true),
     enableLoginTools: ref(true),
     typstAutoInstall: ref(false),
   });
-  if (flags.enableSlides !== true || flags.enableStudyNotes !== true || flags.enableLoginTools !== true) {
+  if (flags.enableSlides !== true || flags.slidesAsSource !== true || flags.enableStudyNotes !== true || flags.enableLoginTools !== true) {
     throw new Error(`volatile config refs were not unwrapped: ${JSON.stringify(flags)}`);
   }
   if (flags.typstAutoInstall !== false || flags.renderPdf !== true) {
     throw new Error(`volatile config defaults are wrong: ${JSON.stringify(flags)}`);
+  }
+  // The sub-switch is inert without the master switch, exactly like the Host
+  // and Python normalise it.
+  const gated = featureFlags({ enableSlides: ref(false), slidesAsSource: ref(true), embedSlideImages: ref(true) });
+  if (gated.slidesAsSource !== false || gated.embedSlideImages !== false) {
+    throw new Error(`projection sub-switches must be gated by enableSlides: ${JSON.stringify(gated)}`);
   }
   if (readSetting({ enableSlides: ref(true) }, "enableSlides") !== true) {
     throw new Error("readSetting did not unwrap a config reference");
@@ -209,6 +239,8 @@ try {
   const names = core.tools.map((tool) => tool.name);
   const namesWithStudy = study.tools.map((tool) => tool.name);
   const namesFull = full.tools.map((tool) => tool.name);
+  const namesSource = slidesSource.tools.map((tool) => tool.name);
+  const namesOnly = slidesOnly.tools.map((tool) => tool.name);
   const namesLive = live.tools.map((tool) => tool.name);
   if (names.length !== 7) throw new Error(`expected 7 core tools, got ${names.length}: ${names}`);
   if (!names.includes("zju_login")) throw new Error("core mode is missing zju_login");
@@ -219,13 +251,22 @@ try {
     throw new Error(`study mode tools are wrong: ${namesWithStudy}`);
   }
   if (namesFull.length !== 11) throw new Error(`expected 11 tools with every module, got ${namesFull.length}`);
+  if (namesSource.length !== 8 || !namesSource.includes("zju_fetch_slides")) {
+    throw new Error(`slide-source mode tools are wrong: ${namesSource}`);
+  }
+  if (namesSource.includes("zju_build_study_notes") || namesSource.includes("zju_get_video_url")) {
+    throw new Error(`slide-source mode must not enable study/login tools: ${namesSource}`);
+  }
+  if (namesOnly.length !== 8 || !namesOnly.includes("zju_fetch_slides")) {
+    throw new Error(`slides-only mode tools are wrong: ${namesOnly}`);
+  }
   if (namesLive.length !== 11) throw new Error(`volatile refs registered ${namesLive.length} tools, expected 11`);
   for (const optional of ["zju_fetch_slides", "zju_build_study_notes", "zju_get_video_url", "zju_read_browser_cookie"]) {
     if (!namesFull.includes(optional)) throw new Error(`full mode missing ${optional}`);
     if (!namesLive.includes(optional)) throw new Error(`volatile refs missing ${optional}`);
   }
 
-  for (const tool of [...core.tools, ...study.tools, ...full.tools]) {
+  for (const tool of [...core.tools, ...study.tools, ...full.tools, ...slidesSource.tools]) {
     if (tool.parameters?.type !== "object") throw new Error(`${tool.name}: parameters not an object schema`);
     if (typeof tool.output?.render !== "function") throw new Error(`${tool.name}: no output renderer`);
     if (typeof tool.execute !== "function") throw new Error(`${tool.name}: no execute`);
@@ -234,11 +275,13 @@ try {
   if (core.skills.length !== 3) throw new Error(`expected 3 core skills, got ${core.skills.length}`);
   if (study.skills.length !== 4) throw new Error(`expected 4 skills with study mode, got ${study.skills.length}`);
   if (full.skills.length !== 4) throw new Error(`expected 4 full skills, got ${full.skills.length}`);
+  if (slidesSource.skills.length !== 3) throw new Error(`expected 3 slide-source skills, got ${slidesSource.skills.length}`);
   const coreSkill = core.skills[0];
   const helpSkill = core.skills[1];
   const loginSkill = core.skills[2];
   const studySkill = study.skills[3];
   const fullSkill = full.skills[0];
+  const sourceSkill = slidesSource.skills[0];
   if (coreSkill.name !== "zju-lecture-summarizer") throw new Error(`unexpected skill name ${coreSkill.name}`);
   if (helpSkill.name !== "zju-lecture-summarizer-help") throw new Error(`unexpected help skill name ${helpSkill.name}`);
   if (!helpSkill.content.includes("隐私红线")) throw new Error("help skill missing the privacy guardrails");
@@ -256,19 +299,26 @@ try {
   if (!studySkill.content.includes("zju_build_study_notes")) throw new Error("scholia-notes skill does not mention the study-notes tool");
   if (!studySkill.description) throw new Error("scholia-notes description is empty");
   if (!coreSkill.content.includes("公式书写规范")) throw new Error("core skill missing the formula spec");
-  if (coreSkill.content.includes("## 4. 截图入讲义")) throw new Error("core skill still contains the slides appendix");
+  if (coreSkill.content.includes("投影抓取模块（可选附录）")) throw new Error("core skill still contains the slides appendix");
   if (coreSkill.content.includes("PPT-<sub_id>.pdf")) throw new Error("core skill still contains slide download rules");
   if (coreSkill.content.includes("先调用 `zju_parse_url`")) throw new Error("core skill still tells the agent to parse the URL first");
   if (!fullSkill.content.includes("投影抓取模块（可选附录）")) throw new Error("full skill missing the slides appendix");
   if (!fullSkill.content.includes("PPT-<sub_id>.pdf")) throw new Error("full skill missing slide download rules");
+  if (!fullSkill.content.includes("本次会话：投影作为讲义来源")) throw new Error("full skill missing the slide-source mode note");
+  if (!sourceSkill.content.includes("本次会话：投影作为讲义来源")) throw new Error("slide-source skill missing its mode note");
+  if (!sourceSkill.content.includes("download=true, confirm=true")) throw new Error("slide-source skill does not require downloading the deck");
+  if (sourceSkill.content.includes("本次会话：投影插图")) throw new Error("slide-source skill confused source mode with illustration mode");
   if (!coreSkill.description) throw new Error("skill description is empty");
 
-  if (core.sections.length !== 1 || study.sections.length !== 1 || full.sections.length !== 1) {
+  if (core.sections.length !== 1 || study.sections.length !== 1 || full.sections.length !== 1
+    || slidesSource.sections.length !== 1 || slidesOnly.sections.length !== 1) {
     throw new Error("expected one prompt section each");
   }
   const coreText = sectionText(core);
   const studyText = sectionText(study);
   const fullText = sectionText(full);
+  const sourceText = sectionText(slidesSource);
+  const onlyText = sectionText(slidesOnly);
   const liveText = sectionText(live);
   if (!coreText.includes("隐私边界")) throw new Error("system prompt has no privacy boundary");
   if (!coreText.includes("PPT 投影抓取已关闭")) throw new Error("core prompt does not mark slides as off");
@@ -278,8 +328,21 @@ try {
   if (!studyText.includes("填空笔记已开启")) throw new Error("study prompt does not mark study notes on");
   if (!fullText.includes("PPT 投影抓取已开启")) throw new Error("full prompt does not mark slides as on");
   if (!fullText.includes("讲义插图模式已开启")) throw new Error("full prompt misses the image rule");
+  if (!fullText.includes("投影作为讲义来源已开启")) throw new Error("full prompt misses the slide-source rule");
   if (!fullText.includes("登录辅助工具已开启")) throw new Error("full prompt misses the login rule");
+  if (!sourceText.includes("投影作为讲义来源已开启")) throw new Error("slide-source prompt does not mark the mode");
+  if (!sourceText.includes("不是可选项")) throw new Error("slide-source prompt still treats projection as optional");
+  if (!sourceText.includes("zju_fetch_slides(url_or_sub_id=<回放链接>, download=true, confirm=true)")) {
+    throw new Error("slide-source prompt does not name the exact fetch call");
+  }
+  if (sourceText.includes("讲义插图模式已开启")) throw new Error("slide-source prompt inserted images without embed enabled");
+  if (!onlyText.includes("download=false")) throw new Error("slides-only prompt no longer asks for the projection list");
+  if (!onlyText.includes("核对投影清单")) throw new Error("slides-only prompt does not explain why to call the tool");
+  if (onlyText.includes("不要主动下载或插入截图")) throw new Error("slides-only prompt still forbids calling zju_fetch_slides");
+  if (!sourceSkill.content.includes("本次会话：投影作为讲义来源")) throw new Error("slide-source skill missing its mode note");
+  if (!slidesOnly.skills[0].content.includes("本次会话：投影清单")) throw new Error("slides-only skill missing the list mode note");
   if (!liveText.includes("PPT 投影抓取已开启")) throw new Error("volatile refs did not reach the prompt (slides)");
+  if (!liveText.includes("投影作为讲义来源已开启")) throw new Error("volatile refs did not reach the prompt (slide source)");
   if (!liveText.includes("填空笔记已开启")) throw new Error("volatile refs did not reach the prompt (study notes)");
   if (!liveText.includes("登录辅助工具已开启")) throw new Error("volatile refs did not reach the prompt (login tools)");
   if (!coreText.includes("复习版")) throw new Error("core prompt misses the review-note contract");
@@ -292,6 +355,7 @@ try {
   liveRefs.enableSlides.set(false);
   liveRefs.enableStudyNotes.set(false);
   liveRefs.enableLoginTools.set(false);
+  liveRefs.slidesAsSource.set(false);
   liveRefs.embedSlideImages.set(false);
   live.emit("loader/volatile-update", [["enableSlides"], ["enableStudyNotes"], ["enableLoginTools"]]);
   if (live.tools.length !== 7) {
@@ -316,6 +380,27 @@ try {
   if (!sectionText(live).includes("PPT 投影抓取已开启")) {
     throw new Error("live prompt did not follow the enabled slides switch");
   }
+  if (!live.skills[0].content.includes("本次会话：投影清单")) {
+    throw new Error("live skill did not describe the list-only projection mode");
+  }
+
+  // The source sub-switch has no tool of its own but must re-sync the Skill
+  // appendix (and the prompt thunk) without a restart.
+  liveRefs.slidesAsSource.set(true);
+  live.emit("loader/volatile-update", [["slidesAsSource"]]);
+  if (!sectionText(live).includes("投影作为讲义来源已开启")) {
+    throw new Error("live prompt did not follow the slide-source switch");
+  }
+  if (!live.skills[0].content.includes("本次会话：投影作为讲义来源")) {
+    throw new Error("live skill did not follow the slide-source switch");
+  }
+  liveRefs.slidesAsSource.set(false);
+  live.emit("loader/volatile-update", [["slidesAsSource"]]);
+  if (!live.skills[0].content.includes("本次会话：投影清单")) {
+    throw new Error("live skill did not return to the list-only mode");
+  }
+  liveRefs.slidesAsSource.set(true);
+  live.emit("loader/volatile-update", [["slidesAsSource"]]);
 
   liveRefs.registerSkill.set(false);
   live.emit("loader/volatile-update", [["registerSkill"]]);
@@ -358,6 +443,8 @@ try {
     tools: names,
     toolsWithStudy: namesWithStudy,
     toolsWithSlides: namesFull,
+    toolsWithSource: namesSource,
+    toolsSlidesOnly: namesOnly,
     toolsFull: namesFull,
     skill: coreSkill.name,
     skills: core.skills.map((item) => item.name),

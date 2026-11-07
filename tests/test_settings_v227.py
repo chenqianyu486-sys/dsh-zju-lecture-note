@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""v2.2.7: dsh 设置页的可用性（Agent 真实读取）与完整性。
+"""v2.2.7 起的设置页可用性（Agent 真实读取）与完整性；2.2.8 增加投影来源字段后继续覆盖。
 
 这组测试守的是三件事：
 
@@ -18,7 +18,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXPECTED_VERSION = "2.2.7"
+EXPECTED_VERSION = "2.2.8"
 
 #: dsh 设置页应当覆盖的所有字段。新增字段必须同时出现在这里、Config 与 client.js。
 SETTING_FIELDS = (
@@ -28,6 +28,7 @@ SETTING_FIELDS = (
     "renderPdf",
     "enableStudyNotes",
     "enableSlides",
+    "slidesAsSource",
     "embedSlideImages",
     "enableLoginTools",
     "typstAutoInstall",
@@ -255,6 +256,11 @@ class TestNodeSmokes(unittest.TestCase):
             [field for field, _ in payload["calls"]],
             ["enableSlides", "timeoutMs", "python", "typstPath", "typstMirror", "registerSkill"],
         )
+        self.assertEqual(payload["presets"], ["token", "study", "slides", "full"])
+        self.assertEqual(payload["activePreset"], "slides")
+        # Four presets × six module switches: a preset that forgets a field
+        # would silently inherit the previous config instead of fully applying.
+        self.assertEqual(len(payload["presetCalls"]), 24)
 
 
 if __name__ == "__main__":

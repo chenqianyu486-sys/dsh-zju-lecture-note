@@ -42,6 +42,7 @@ const formState = {
   status: 'ready',
   value: {
     enableSlides: false,
+    slidesAsSource: false,
     embedSlideImages: false,
     renderPdf: true,
     enableStudyNotes: false,
@@ -74,6 +75,7 @@ const mirror = {
         schema: {
           properties: {
             enableSlides: { type: 'boolean' },
+            slidesAsSource: { type: 'boolean' },
             embedSlideImages: { type: 'boolean' },
             renderPdf: { type: 'boolean' },
             enableStudyNotes: { type: 'boolean' },
@@ -88,6 +90,7 @@ const mirror = {
         },
         value: {
           enableSlides: false,
+          slidesAsSource: false,
           embedSlideImages: false,
           renderPdf: true,
           enableStudyNotes: false,
@@ -185,6 +188,49 @@ if (initial.value?.enableSlides !== false) throw new Error('unexpected enableSli
 const rendered = settingsSlot.component({ t: (key) => key, settings: face.settings })
 if (!rendered || rendered.type !== 'div') throw new Error('settings row component did not render a root div')
 
+/** Flatten the fake React tree into a node list. */
+function collectNodes(node, out = []) {
+  if (!node || typeof node !== 'object') return out
+  if (Array.isArray(node)) {
+    for (const child of node) collectNodes(child, out)
+    return out
+  }
+  out.push(node)
+  collectNodes(node.children, out)
+  return out
+}
+
+function presetButtons(tree) {
+  return collectNodes(tree).filter((node) => (
+    node.type === 'button'
+    && String(node.props?.className ?? '').split(' ').includes('zju-preset')
+  ))
+}
+
+function activePresetId(tree) {
+  const active = presetButtons(tree).filter((node) => (
+    String(node.props?.className ?? '').split(' ').includes('is-active')
+  ))
+  if (active.length > 1) {
+    throw new Error(`more than one preset is highlighted: ${active.map((node) => node.props['data-preset'])}`)
+  }
+  return active[0]?.props?.['data-preset'] ?? null
+}
+
+const initialPresets = presetButtons(rendered)
+const initialPresetIds = initialPresets.map((node) => node.props?.['data-preset'])
+if (JSON.stringify(initialPresetIds) !== JSON.stringify(['token', 'study', 'slides', 'full'])) {
+  throw new Error(`unexpected preset buttons: ${JSON.stringify(initialPresetIds)}`)
+}
+if (activePresetId(rendered) !== 'token') {
+  throw new Error(`the default config should highlight the token preset, got ${activePresetId(rendered)}`)
+}
+for (const node of initialPresets) {
+  if (node.props?.['aria-pressed'] !== (activePresetId(rendered) === node.props?.['data-preset'] ? 'true' : 'false')) {
+    throw new Error(`aria-pressed does not match the highlight for ${node.props?.['data-preset']}`)
+  }
+}
+
 const accepted = await face.settings.setField('enableSlides', true)
 if (accepted !== true) throw new Error('setField did not report acceptance')
 if (formCalls.length !== 1 || formCalls[0][0] !== 'enableSlides' || formCalls[0][1] !== true) {
@@ -215,6 +261,94 @@ for (const [field, value] of [
 const inputCalls = formCalls.slice(1)
 if (inputCalls.length !== 5) throw new Error(`advanced writes were not forwarded: ${JSON.stringify(formCalls)}`)
 
+// A preset is only a bulk write over the same switches: all four presets must
+// write every module field, and the highlight must follow the resulting config
+// (not a stored "selected preset" flag).
+const manualCalls = formCalls.slice()
+const presetExpectations = {
+  token: {
+    renderPdf: true,
+    enableStudyNotes: false,
+    enableSlides: false,
+    slidesAsSource: false,
+    embedSlideImages: false,
+    enableLoginTools: false,
+  },
+  study: {
+    renderPdf: true,
+    enableStudyNotes: true,
+    enableSlides: false,
+    slidesAsSource: false,
+    embedSlideImages: false,
+    enableLoginTools: false,
+  },
+  slides: {
+    renderPdf: true,
+    enableStudyNotes: false,
+    enableSlides: true,
+    slidesAsSource: true,
+    embedSlideImages: true,
+    enableLoginTools: false,
+  },
+  full: {
+    renderPdf: true,
+    enableStudyNotes: true,
+    enableSlides: true,
+    slidesAsSource: true,
+    embedSlideImages: true,
+    enableLoginTools: true,
+  },
+}
+const presetCalls = []
+for (const [id, expected] of Object.entries(presetExpectations)) {
+  const tree = settingsSlot.component({ t: (key) => key, settings: face.settings })
+  const button = presetButtons(tree).find((node) => node.props?.['data-preset'] === id)
+  if (!button) throw new Error(`missing preset button: ${id}`)
+  const before = formCalls.length
+  const ok = await button.props.onClick()
+  if (ok !== true) throw new Error(`preset ${id} did not report success`)
+  face.settings.sync()
+  const calls = formCalls.slice(before)
+  presetCalls.push(...calls)
+  if (calls.length !== Object.keys(expected).length) {
+    throw new Error(`preset ${id} wrote ${calls.length} fields: ${JSON.stringify(calls)}`)
+  }
+  const written = Object.fromEntries(calls)
+  for (const [field, value] of Object.entries(expected)) {
+    if (written[field] !== value) {
+      throw new Error(`preset ${id} wrote ${field}=${written[field]}, expected ${value}`)
+    }
+  }
+  const active = activePresetId(settingsSlot.component({ t: (key) => key, settings: face.settings }))
+  if (active !== id) throw new Error(`preset ${id} did not highlight itself, got ${active}`)
+}
+
+// Selecting a preset and setting the same switches by hand must be
+// indistinguishable: no hidden selection state, only the config comparison.
+formState.value = {
+  ...formState.value,
+  renderPdf: true,
+  enableStudyNotes: false,
+  enableSlides: true,
+  slidesAsSource: true,
+  embedSlideImages: true,
+  enableLoginTools: false,
+}
+face.settings.sync()
+if (activePresetId(settingsSlot.component({ t: (key) => key, settings: face.settings })) !== 'slides') {
+  throw new Error('a hand-written slides config did not highlight the slides preset')
+}
+formState.value = { ...formState.value, slidesAsSource: false }
+face.settings.sync()
+if (activePresetId(settingsSlot.component({ t: (key) => key, settings: face.settings })) !== null) {
+  throw new Error('a partial slides config must not highlight a preset')
+}
+formState.value = { ...formState.value, slidesAsSource: true }
+face.settings.sync()
+if (activePresetId(settingsSlot.component({ t: (key) => key, settings: face.settings })) !== 'slides') {
+  throw new Error('restoring the slides switch did not restore the highlight')
+}
+
 process.stdout.write(`${JSON.stringify({
   ok: true,
   id: definition.id,
@@ -226,6 +360,9 @@ process.stdout.write(`${JSON.stringify({
   sidebarRow: rowSlot.registration.id,
   sidebarOrder: rowSlot.registration.order,
   slots: slotEntries.map((entry) => entry.registration.name),
-  calls: formCalls,
+  presets: initialPresetIds,
+  activePreset: activePresetId(settingsSlot.component({ t: (key) => key, settings: face.settings })),
+  calls: manualCalls,
+  presetCalls,
   writable: initial.writable,
 })}\n`)

@@ -536,13 +536,32 @@ class TestEmbedSlideSetting(unittest.TestCase):
             with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": value}):
                 self.assertFalse(mcp_server.embed_slides_enabled())
 
-    def test_dsh_and_mcp_expose_the_switch(self):
+    def test_slide_source_switch_is_independent(self):
+        import mcp_server
+
+        for value in ("1", "true", "YES", "on"):
+            with mock.patch.dict(os.environ, {"ZJU_SLIDES_SOURCE": value}):
+                self.assertTrue(mcp_server.slides_as_source_enabled())
+        for value in ("", "0", "false", "off"):
+            with mock.patch.dict(os.environ, {"ZJU_SLIDES_SOURCE": value}):
+                self.assertFalse(mcp_server.slides_as_source_enabled())
+        with mock.patch.dict(
+            os.environ, {"ZJU_SLIDES_SOURCE": "1", "ZJU_EMBED_SLIDES": "0"}
+        ):
+            self.assertTrue(mcp_server.slides_as_source_enabled())
+            self.assertFalse(mcp_server.embed_slides_enabled())
+            self.assertIn("投影作为讲义来源：开启", mcp_server.slide_image_mode_text())
+
+    def test_dsh_and_mcp_expose_the_switches(self):
         with open(os.path.join(ROOT, "lib", "index.js"), encoding="utf-8") as handle:
             index_source = handle.read()
         with open(os.path.join(ROOT, "lib", "bridge.js"), encoding="utf-8") as handle:
             bridge_source = handle.read()
         with open(os.path.join(ROOT, "zju-lecture.mcp.json"), encoding="utf-8") as handle:
             mcp_source = handle.read()
+        self.assertIn("slidesAsSource", index_source)
+        self.assertIn("ZJU_SLIDES_SOURCE", bridge_source)
+        self.assertIn("ZJU_SLIDES_SOURCE", mcp_source)
         self.assertIn("embedSlideImages", index_source)
         self.assertIn("ZJU_EMBED_SLIDES", bridge_source)
         self.assertIn("ZJU_EMBED_SLIDES", mcp_source)
@@ -558,6 +577,8 @@ class TestToolSchema(unittest.TestCase):
             self.assertIn(name, properties)
         self.assertNotIn("文字层与 OCR", tool["description"])
         self.assertIn("ZJU_EMBED_SLIDES", tool["description"])
+        self.assertIn("ZJU_SLIDES_SOURCE", tool["description"])
+        self.assertIn("slidesAsSource", tool["description"])
 
 
 class TestMcpHandler(unittest.TestCase):
@@ -637,7 +658,7 @@ class TestMcpHandler(unittest.TestCase):
             "total_bytes": 10,
             "note_example": "![第 1 页](ppt-assets/123/images/slide-0001.jpg)",
         }
-        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "1"}), \
+        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "1", "ZJU_SLIDES_SOURCE": "0"}), \
                 mock.patch.object(
                     mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
                 ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
@@ -669,7 +690,7 @@ class TestMcpHandler(unittest.TestCase):
             "image_url": "https://media.cmc.zju.edu.cn/1.jpg",
             "text": "",
         }]
-        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "0"}), \
+        with mock.patch.dict(os.environ, {"ZJU_EMBED_SLIDES": "0", "ZJU_SLIDES_SOURCE": "0"}), \
                 mock.patch.object(
                     mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
                 ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
@@ -683,6 +704,52 @@ class TestMcpHandler(unittest.TestCase):
             })
         download_mock.assert_not_called()
         self.assertIn("讲义插图模式: 关闭（默认）", output)
+        self.assertIn("投影作为讲义来源: 关闭（默认）", output)
+
+    def test_slide_source_downloads_without_the_embed_switch(self):
+        """Projection-as-source is its own reason to download the deck."""
+        import mcp_server
+
+        slides = [{
+            "page": 1,
+            "image_url": "https://media.cmc.zju.edu.cn/1.jpg",
+            "text": "",
+            "local_path": "/tmp/slide-0001.jpg",
+            "workspace_rel": "ppt-assets/123/images/slide-0001.jpg",
+        }]
+        summary = {
+            "downloaded": 1,
+            "failed": 0,
+            "skipped": 0,
+            "duplicates": 0,
+            "images_dir": "/tmp/images",
+            "pages": slides,
+            "total_bytes": 10,
+            "note_example": "![第 1 页](ppt-assets/123/images/slide-0001.jpg)",
+        }
+        with mock.patch.dict(
+            os.environ, {"ZJU_EMBED_SLIDES": "0", "ZJU_SLIDES_SOURCE": "1"}
+        ), \
+                mock.patch.object(
+                    mcp_server, "_resolve_cookie", return_value=("S=1", None, "cache", None)
+                ), mock.patch.object(mcp_server, "fetch_slides", return_value=slides), \
+                mock.patch.object(mcp_server, "artifact_dir", return_value=("/tmp/ppt", None)), \
+                mock.patch.object(
+                    slides_module, "download_slides", return_value=summary
+                ) as download_mock, \
+                mock.patch.object(
+                    slides_module, "build_slides_pdf", return_value="/tmp/ppt/PPT-123.pdf"
+                ):
+            output = mcp_server.handle_tool_call("zju_fetch_slides", {
+                "url_or_sub_id": (
+                    "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
+                ),
+                "confirm": True,
+            })
+        download_mock.assert_called_once()
+        self.assertIn("投影作为讲义来源: 开启", output)
+        self.assertIn("讲义插图模式: 关闭", output)
+        self.assertIn("结合截图内容与字幕写讲义", output)
 
 
 if __name__ == "__main__":

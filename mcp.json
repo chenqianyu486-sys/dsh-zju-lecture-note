@@ -9,6 +9,7 @@
       ],
       "env": {
         "ZJU_ENABLE_SLIDES": "0",
+        "ZJU_SLIDES_SOURCE": "0",
         "ZJU_EMBED_SLIDES": "0",
         "ZJU_ENABLE_STUDY_NOTES": "0",
         "ZJU_ENABLE_LOGIN_TOOLS": "0",

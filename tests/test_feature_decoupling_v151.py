@@ -207,6 +207,7 @@ class TestPluginWiring(unittest.TestCase):
             config = json.load(handle)
         env = config["mcpServers"]["zju-lecture"]["env"]
         self.assertEqual(env["ZJU_ENABLE_SLIDES"], "0")
+        self.assertEqual(env["ZJU_SLIDES_SOURCE"], "0")
         self.assertEqual(env["ZJU_EMBED_SLIDES"], "0")
         self.assertEqual(env["ZJU_ENABLE_STUDY_NOTES"], "0")
         self.assertEqual(env["ZJU_ENABLE_LOGIN_TOOLS"], "0")
@@ -262,6 +263,7 @@ class TestGuiSettingsPage(unittest.TestCase):
             "renderPdf",
             "enableStudyNotes",
             "enableSlides",
+            "slidesAsSource",
             "embedSlideImages",
             "enableLoginTools",
             "typstAutoInstall",
@@ -284,6 +286,7 @@ class TestGuiSettingsPage(unittest.TestCase):
             "role: 'switch'",
             "aria-checked",
             "enableSlides",
+            "slidesAsSource",
             "embedSlideImages",
         ):
             self.assertIn(needle, source)
