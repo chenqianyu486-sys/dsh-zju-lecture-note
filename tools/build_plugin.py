@@ -264,11 +264,6 @@ def validate_package() -> Tuple[List[str], dict]:
     manifest = _read_json(manifest_path)
     problems.extend(validate_manifest(manifest, manifest_path))
 
-    # A root plugin.json would be picked up as an Agent Plugins V1 manifest and
-    # would shadow the MiniMax manifest, so the package must not ship one.
-    if os.path.isfile(os.path.join(REPO_ROOT, "plugin.json")):
-        problems.append("包根存在 plugin.json：会遮蔽 .minimax-plugin 清单，请移出包外")
-
     for entry in manifest.get("mcpServers", []):
         mcp = _read_json(os.path.join(REPO_ROOT, entry))
         problems.extend(validate_mcp_file(mcp, entry))
@@ -277,6 +272,14 @@ def validate_package() -> Tuple[List[str], dict]:
         problems.extend(validate_skill(os.path.join(REPO_ROOT, entry)))
 
     files = collect_package_files()
+    # 仓库根同时是 Agent Plugins 1.0 包（根 plugin.json / mcp.json）。本脚本的产物
+    # 只经由 PACKAGE_FILES / PACKAGE_DIRS 收集，根清单一旦混进来就会遮蔽上面这份清单。
+    for forbidden in ("plugin.json", "mcp.json"):
+        if forbidden in files:
+            problems.append(
+                f"包内存在 {forbidden}：会遮蔽 .minimax-plugin/plugin.json，"
+                "请从 PACKAGE_FILES / PACKAGE_DIRS 移除"
+            )
     total_bytes = 0
     for rel in files:
         abs_path = os.path.join(REPO_ROOT, rel)
