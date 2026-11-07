@@ -1,7 +1,7 @@
 {
   "name": "dsh-zju-lecture-note",
-  "version": "2.2.7",
-  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，写完讲义自动排版同名 PDF；可选启用投影 PPT 截图抓取、基于 Typst scholia 模板排版的填空式学习笔记与登录辅助工具；一键登录窗口让用户正常登录后自动安全保存登录态（Windows DPAPI），不回显、不进入对话、不保存密码",
+  "version": "2.2.8",
+  "description": "浙大智云课堂回放讲义插件（DeepSeek Harness 原生插件）：以「语音字幕 + 本地课件」为主链路，写完讲义自动排版同名 PDF；可选启用投影 PPT 截图抓取、基于 Typst scholia 模板排版的填空式学习笔记与登录辅助工具；一键登录窗口让用户正常登录后把登录态加密保存到平台凭据库（Windows DPAPI / macOS 钥匙串 / Linux 密钥环，无可用凭据库时不落盘），不回显、不进入对话、不保存密码",
   "license": "MIT",
   "author": "chenqianyu486",
   "icon": "icon.png",
