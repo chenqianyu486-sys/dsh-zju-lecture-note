@@ -220,6 +220,10 @@ console.log(JSON.stringify({
         self.assertIn(".zju-group-rows{padding-left:", client)
         self.assertNotIn("zju-card", client)
         self.assertNotIn("h(Card", client)
+        # The page header keeps its original card frame and gradient.
+        self.assertIn("background-image:linear-gradient", client)
+        self.assertIn("border:1px solid var(--dsw-alias-border-l1)", client)
+        self.assertIn("border-radius:14px", client)
 
     def test_docs_describe_live_settings(self):
         readme = read_text("README.md")
