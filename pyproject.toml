@@ -25,18 +25,18 @@ cert = ["certifi"]
 zju-lecture = "zju_lecture.cli:main"
 
 [build-system]
-requires = ["setuptools>=61"]
+# Recursive package-data globs are supported by this build backend version.
+requires = ["setuptools>=65"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["zju_lecture"]
+py-modules = ["mcp_server"]
 
 [tool.setuptools.package-data]
 zju_lecture = [
   "py.typed", "cacert.pem", "prelude.typ", "handout_prelude.typ",
   "typst_assets.json",
   "fonts/*.ttf", "fonts/*.txt", "fonts/*.md",
-  "typst-packages/*.md",
-  "typst-packages/preview/*/*/*",
-  "typst-packages/preview/*/*/*/*",
+  "typst-packages/**/*",
 ]

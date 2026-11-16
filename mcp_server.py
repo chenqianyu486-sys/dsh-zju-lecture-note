@@ -50,6 +50,7 @@ from zju_lecture.client import (
     parse_lecture_url,
 )
 from zju_lecture.cookies import CookieAccessError, read_edge_cookies
+from zju_lecture.credential_store import StoreUnavailable
 from zju_lecture.courseware import CoursewareError, extract_courseware_text
 from zju_lecture.note_lint import (
     check_markdown,
@@ -66,6 +67,7 @@ from zju_lecture.paths import (
     primary_workspace,
     require_workspace_path,
     resolve_path,
+    validate_output_path,
 )
 from zju_lecture.formatter import (
     build_transcript_views,
@@ -537,6 +539,13 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "单次返回的字符上限（默认 60000）。超出会截断并在末尾标注，长课程建议改用 view_format=chunked",
                     "default": 60000,
                 },
+                "cursor": {
+                    "type": "string",
+                    "description": (
+                        "json/chunked 分页续取：原样传回上一页的 next_cursor，保持课程、视图和时间区间参数不变。"
+                        "next_start_minute 仅用于时间定位，不能代替精确游标"
+                    ),
+                },
             },
             "required": ["url_or_sub_id"],
         },
@@ -868,11 +877,15 @@ TOOLS: List[Dict[str, Any]] = [
                     "type": "string",
                     "description": "填空底稿 Markdown 的路径（mode=patch / compile 必填）",
                 },
+                "overwrite": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "mode=draft 是否覆盖已有底稿；默认拒绝覆盖，true 时先备份人工编辑内容",
+                },
                 "output_dir": {
                     "type": "string",
                     "description": (
-                        "输出目录，相对当前工作区（默认与源文件同目录；"
-                        "源文件在工作区外时写到工作区的 notes/ 下）"
+                        "输出目录，相对当前工作区（默认与源文件同目录；源文件与输出均须位于工作区内）"
                     ),
                 },
                 "title": {
@@ -994,30 +1007,87 @@ def _fit_prefix(items: List[Any], build, max_chars: int) -> int:
     return low
 
 
+def _page_records(records: List[Dict[str, Any]], max_chars: int, cursor: str, kind: str, build) -> str:
+    """Page whole records when possible, otherwise split one text losslessly.
+
+    The cursor identifies a stable record and a character offset inside it.
+    Metadata and escaped JSON are included in every budget calculation.
+    """
+    index = offset = 0
+    if cursor:
+        match = re.fullmatch(r"([cs]):(0|[1-9][0-9]{0,12}):(0|[1-9][0-9]{0,12})", cursor)
+        if not match or match.group(1) != kind:
+            raise ValueError("无效的字幕分页 cursor；请使用同一视图返回的 next_cursor")
+        index, offset = int(match.group(2)), int(match.group(3))
+        if index >= len(records) or (offset and offset >= len(str(records[index].get("text", "")))):
+            raise ValueError("字幕分页 cursor 超出当前字幕范围，请从第一页重新获取")
+
+    def payload(subset, next_index, next_offset=0):
+        continuation = f"{kind}:{next_index}:{next_offset}" if next_index < len(records) else None
+        return build(subset, next_index, continuation)
+
+    remaining = records[index:]
+    if offset:
+        first = dict(remaining[0])
+        first["text"] = str(first["text"])[offset:]
+        first["text_offset"] = offset
+        if "char_count" in first:
+            first["char_count"] = len(first["text"])
+        remaining = [first, *remaining[1:]]
+    keep = _fit_prefix(remaining, lambda subset: payload(subset, index + len(subset)), max_chars)
+    if keep or not remaining:
+        result = payload(remaining[:keep], index + keep)
+        if _payload_len(result) > max_chars:
+            raise ValueError("max_chars 不足以容纳字幕元数据，请增大字符上限")
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    first = dict(remaining[0])
+    text = str(first.get("text", ""))
+    first["text_offset"] = offset
+    first["text_truncated"] = True
+
+    def partial(length):
+        first["text"] = text[:length]
+        if "char_count" in first:
+            first["char_count"] = length
+        return payload([first], index, offset + length)
+
+    low, high = 0, max(0, len(text) - 1)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _payload_len(partial(middle)) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0:
+        raise ValueError("max_chars 不足以容纳一段字幕及分页元数据，请增大字符上限")
+    return json.dumps(partial(low), ensure_ascii=False, indent=2)
+
+
 def _chunked_payload(
     sub_id: str,
     minutes_map: Dict[int, List[str]],
     max_chars: int,
     quality: Optional[Dict[str, Any]] = None,
+    cursor: str = "",
 ) -> str:
     """Serialize transcript chunks within ``max_chars``.
 
-    ``chunked`` exists for long lectures, so returning every chunk regardless
-    of the budget would defeat its purpose. Chunks are built against half the
-    budget, then the largest fitting prefix is returned together with
-    ``truncated`` / ``next_start_minute`` so the agent can fetch the rest.
+    Logical chunks stay stable across pages; a large chunk may span multiple
+    responses. ``next_cursor`` resumes at the exact record/character offset.
     """
-    budget = max(1200, max_chars // 2)
-    chunks = chunk_transcript(minutes_map, max_chars=budget)
+    # Stable record boundaries let a continuation use a different max_chars.
+    chunks = chunk_transcript(minutes_map, max_chars=11000)
 
-    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def build(subset: List[Dict[str, Any]], next_index: int, next_cursor) -> Dict[str, Any]:
         returned = len(subset)
         payload = {
             "sub_id": sub_id,
             "total_chunks": len(chunks),
             "returned_chunks": returned,
-            "truncated": returned < len(chunks),
-            "next_start_minute": chunks[returned]["start_min"] if returned < len(chunks) else None,
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
+            "next_start_minute": chunks[next_index]["start_min"] if next_cursor else None,
             "chunks": subset,
         }
         if quality:
@@ -1026,27 +1096,7 @@ def _chunked_payload(
             payload["quality"] = quality
         return payload
 
-    keep = _fit_prefix(chunks, build, max_chars)
-    if keep == 0 and chunks:
-        first = dict(chunks[0])
-        text = str(first.get("text", ""))
-        low, high = 0, len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            first["text"] = text[:mid]
-            first["char_count"] = mid
-            if _payload_len(build([first])) <= max_chars:
-                low = mid
-            else:
-                high = mid - 1
-        first["text"] = text[:low]
-        first["char_count"] = low
-        first["text_truncated"] = True
-        payload = json.dumps(build([first]), ensure_ascii=False, indent=2)
-        if len(payload) <= max_chars:
-            return payload
-        return _hard_truncate(json.dumps(build([]), ensure_ascii=False, indent=2), max_chars)
-    return json.dumps(build(chunks[:keep]), ensure_ascii=False, indent=2)
+    return _page_records(chunks, max_chars, cursor, "c", build)
 
 
 def _segments_payload(
@@ -1055,19 +1105,21 @@ def _segments_payload(
     duration: str,
     max_chars: int,
     quality: Optional[Dict[str, Any]] = None,
+    cursor: str = "",
 ) -> str:
     """Serialize raw segments within ``max_chars``, reporting the cut point."""
 
-    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def build(subset: List[Dict[str, Any]], next_index: int, next_cursor) -> Dict[str, Any]:
         returned = len(subset)
         payload = {
             "sub_id": sub_id,
             "duration": duration,
             "total_segments": len(segments),
             "returned_segments": returned,
-            "truncated": returned < len(segments),
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
             "next_start_minute": (
-                segments[returned]["begin_sec"] // 60 if returned < len(segments) else None
+                segments[next_index]["begin_sec"] // 60 if next_cursor else None
             ),
             "segments": subset,
         }
@@ -1075,18 +1127,14 @@ def _segments_payload(
             payload["quality"] = quality
         return payload
 
-    keep = _fit_prefix(segments, build, max_chars)
-    payload = json.dumps(build(segments[:keep]), ensure_ascii=False, indent=2)
-    return payload if len(payload) <= max_chars else _hard_truncate(payload, max_chars)
+    return _page_records(segments, max_chars, cursor, "s", build)
 
 
 def _study_notes_output_dir(source_path: str, output_dir: str) -> Tuple[Optional[str], Optional[str]]:
     """Resolve the directory generated study-note files go into.
 
     An explicit ``output_dir`` wins (and must stay inside the workspace).
-    Otherwise the source file's own directory is used when that directory is
-    inside the workspace; a source living outside falls back to ``notes/``,
-    so a new file is never written outside the workspace.
+    Otherwise the validated source file's own workspace directory is used.
     """
     raw = str(output_dir or "").strip()
     if raw:
@@ -1356,13 +1404,11 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
         note_path = str(arguments.get("note_path") or "").strip()
         if not note_path:
             return "错误: mode=draft 需要 note_path（讲义 Markdown 的路径）"
-        resolved, tried = resolve_path(note_path)
-        if resolved is None:
-            return f"错误: 找不到讲义文件: {note_path}{describe_attempts(tried)}"
-        try:
-            resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="讲义文件")
-        except LocalFileError as exc:
-            return f"错误: {exc}"
+        resolved, path_error = require_workspace_path(
+            note_path, extensions=NOTE_EXTENSIONS, kind="讲义文件"
+        )
+        if path_error:
+            return f"错误: {path_error}"
         try:
             with open(resolved, "r", encoding="utf-8") as handle:
                 note_text = handle.read()
@@ -1387,9 +1433,19 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
             return f"错误: {target_error}"
         stem = os.path.splitext(os.path.basename(resolved))[0]
         target = os.path.join(target_dir, f"{stem}-填空底稿.md")
+        backup_path = ""
         try:
-            write_atomic(target, draft.text)
-        except OSError as exc:
+            validate_output_path(target, primary_workspace())
+            if os.path.exists(target):
+                if arguments.get("overwrite") is not True:
+                    return (
+                        f"未写入：同名填空底稿已存在: {target}\n"
+                        "请继续编辑已有底稿，或确认覆盖后传 overwrite=true（原内容会先备份）。"
+                    )
+                backup_path = write_with_backup(target, draft.text)
+            else:
+                write_atomic(target, draft.text)
+        except (OSError, LocalFileError) as exc:
             return f"错误: 写入填空底稿失败: {target}（{exc}）"
 
         lines = [
@@ -1409,18 +1465,18 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
             lines.append("")
             lines.append("无法机械转换的数学片段（请手工改）:")
             lines.extend(f"- {item}" for item in sorted(set(draft.warnings))[:10])
+        if backup_path:
+            lines.append(f"原底稿已备份到 {backup_path}")
         return "\n".join(lines)
 
     draft_path = str(arguments.get("draft_path") or "").strip()
     if not draft_path:
         return "错误: mode=compile 需要 draft_path（填空底稿的路径）"
-    resolved, tried = resolve_path(draft_path)
-    if resolved is None:
-        return f"错误: 找不到填空底稿: {draft_path}{describe_attempts(tried)}"
-    try:
-        resolved = guard_local_file(resolved, NOTE_EXTENSIONS, kind="填空底稿")
-    except LocalFileError as exc:
-        return f"错误: {exc}"
+    resolved, path_error = require_workspace_path(
+        draft_path, extensions=NOTE_EXTENSIONS, kind="填空底稿"
+    )
+    if path_error:
+        return f"错误: {path_error}"
     try:
         with open(resolved, "r", encoding="utf-8") as handle:
             draft_text = handle.read()
@@ -1442,15 +1498,20 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
         return f"错误: {target_error}"
     stem = os.path.splitext(os.path.basename(resolved))[0]
     project_dir = os.path.join(target_dir, f"{stem}-typst")
+    public_stem = stem[: -len("-填空底稿")] + "-填空" if stem.endswith("-填空底稿") else stem
+    sibling = os.path.join(target_dir, f"{public_stem}.pdf")
 
     try:
+        validate_output_path(project_dir, primary_workspace())
+        validate_output_path(sibling, primary_workspace())
         result = compile_project(
             project_dir,
             rendered.typst,
             make_png=bool(arguments.get("make_png", True)),
             pages=str(arguments.get("pages") or "").strip(),
+            workspace_root=primary_workspace(),
         )
-    except StudyNotesError as exc:
+    except (StudyNotesError, LocalFileError) as exc:
         return f"错误: {exc}"
 
     lines = [
@@ -1485,10 +1546,12 @@ def _build_study_notes(arguments: Dict[str, Any]) -> str:
         sibling = os.path.join(target_dir, f"{public_stem}.pdf")
         try:
             if os.path.abspath(sibling) != os.path.abspath(result.pdf_path):
-                shutil.copyfile(result.pdf_path, sibling)
+                from zju_lecture.handout import _atomic_copy
+                validate_output_path(sibling, primary_workspace())
+                _atomic_copy(result.pdf_path, sibling)
                 deliverable_pdf = sibling
-        except OSError:
-            pass
+        except (OSError, LocalFileError) as exc:
+            lines.append(f"交付 PDF 复制失败: {exc}")
         lines.append(f"PDF: {deliverable_pdf}")
         if deliverable_pdf != result.pdf_path:
             lines.append(f"Typst 工程: {project_dir}（out.pdf 是同一份）")
@@ -1563,6 +1626,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             result = clear_session(delete_profile=True)
             _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
             lines = [
+                "登录态清理未完成。"
+                if result.get("backend_error")
+                else
                 "已清除本机保存的登录态。"
                 if result.get("session_removed")
                 else "本机没有保存的登录态。"
@@ -1581,7 +1647,10 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     f"{REDACTOR.redact(str(result['backend_error']))}。"
                     "可在系统钥匙串/密钥环里手动删除后重试。"
                 )
-            return "\n".join(lines)
+            message = "\n".join(lines)
+            if result.get("backend_error") or result.get("profile_error"):
+                raise ZJUAPIError(message)
+            return message
 
         timeout = arguments.get("timeout_seconds") or 300
         try:
@@ -1629,6 +1698,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
         view_format = arguments.get("view_format", "per_minute")
         max_chars = arguments.get("max_chars") or 60000
+        cursor = str(arguments.get("cursor") or "")
+        if cursor and view_format not in ("json", "chunked"):
+            raise ValueError("cursor 仅适用于 json/chunked 字幕视图")
 
         start_min = arguments.get("start_minute")
         end_min = arguments.get("end_minute")
@@ -1699,9 +1771,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         if view_format == "per_segment":
             return _truncate(header + "\n" + per_seg, max_chars)
         if view_format == "chunked":
-            return _chunked_payload(sub_id, minutes_map, max_chars, quality)
+            return _chunked_payload(sub_id, minutes_map, max_chars, quality, cursor)
         if view_format == "json":
-            return _segments_payload(sub_id, raw_segments, duration_str, max_chars, quality)
+            return _segments_payload(sub_id, raw_segments, duration_str, max_chars, quality, cursor)
         return _truncate(header + "\n" + per_min, max_chars)
 
     if name == "zju_fetch_slides":
@@ -2148,6 +2220,7 @@ def handle_request(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             ZJUAPIError,
             CoursewareError,
             CookieAccessError,
+            StoreUnavailable,
             SlidesDisabledError,
             StudyNotesDisabledError,
             LoginToolsDisabledError,

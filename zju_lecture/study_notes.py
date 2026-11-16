@@ -30,13 +30,20 @@ Songti SC）子集进入可再分发的 PDF。残留风险见 ``skills/scholia-n
 只依赖标准库。
 """
 
+import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from itertools import count
 from typing import Dict, List, Optional, Sequence, Tuple
+
+from .markdown_code import (
+    INLINE_CODE_RE, fenced_line_flags, is_fence_close, opening_fence, transform_prose,
+)
 
 __all__ = [
     "StudyNotesError",
@@ -264,7 +271,7 @@ _LABEL_RE = re.compile(r"\s*<([A-Za-z][A-Za-z0-9_.:-]*)>\s*$")
 #: 原生交叉引用：`@def:xxx`
 _REF_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_.:-]*")
 #: 行内代码 span（`` `…` ``）。Typst 的反引号是 raw，内容原样输出。
-_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_INLINE_CODE_RE = INLINE_CODE_RE
 
 #: 独占一行的公式：``$ … $``。
 #:
@@ -477,7 +484,8 @@ _TYPST_BARE_NAMES = (
     _TYPST_MATH_FUNCTIONS
     | frozenset(w for w in _LATEX_SYMBOLS.values() if re.fullmatch(r"[A-Za-z]+", w))
     | frozenset({
-        "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op",
+        "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op", "bb",
+        "RR", "NN", "ZZ", "CC", "QQ",
         "mat", "cases", "quad", "wide", "thin", "med", "slash",
         "product", "integral", "sum", "dots",
         "overbrace", "underbrace", "overline", "underline",
@@ -985,11 +993,16 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
                 argument, next_index = _read_group(expression, index)
                 if argument is None:
                     warnings.append("\\mathbb")
-                    _emit("RR", next_index)
+                    _emit("bb", next_index)
                     index = next_index
                     continue
                 mapping = {"R": "RR", "N": "NN", "Z": "ZZ", "C": "CC", "Q": "QQ"}
-                _emit(mapping.get(argument.strip(), "RR"), next_index)
+                symbol = mapping.get(argument.strip())
+                if symbol is None:
+                    converted, issues = latex_to_typst(argument)
+                    warnings.extend(issues)
+                    symbol = "bb(" + converted + ")"
+                _emit(symbol, next_index)
                 index = next_index
                 continue
 
@@ -1258,7 +1271,8 @@ def escape_typst_text(text: str, known_labels: Optional[Sequence[str]] = None) -
             name = match.group(0)[1:]
             # 指向未知 label 的回指按字面量处理：正文里的邮箱
             # （foo@example.com）不该被 Typst 当成引用而报错。
-            return match.group(0) if name in allowed else "\\@"
+            return (match.group(0) if name in allowed
+                    else "\\" + match.group(0).replace("_", "\\_"))
 
         protected, kept_ref = _protect(protected, _REF_RE, _ref_builder)
 
@@ -1556,10 +1570,11 @@ def _collect_block_lines(
     body: List[str] = []
     total = len(lines)
     proof = name == "证明"
+    code_lines = list(fenced_line_flags(lines))
     while cursor < total:
         raw = lines[cursor]
         stripped = raw.strip()
-        if stripped and block_boundary(stripped, proof=proof):
+        if not code_lines[cursor] and stripped and block_boundary(stripped, proof=proof):
             break
         body.append(raw)
         cursor += 1
@@ -1594,6 +1609,10 @@ def _render_block_body(
     while index < total:
         raw = lines[index]
         stripped = raw.strip()
+        if opening_fence(raw):
+            code, index = _render_code_block(lines, index)
+            out.append(code)
+            continue
         if not stripped:
             out.append("")
             index += 1
@@ -1711,6 +1730,22 @@ def _render_block_marker(
     return fragment, label, rest_paragraphs
 
 
+def _render_code_block(lines: Sequence[str], index: int) -> Tuple[str, int]:
+    """Consume a fenced block without interpreting its examples as Markdown."""
+    marker, info = opening_fence(lines[index])
+    index += 1
+    code: List[str] = []
+    while index < len(lines) and not is_fence_close(lines[index], marker):
+        code.append(lines[index])
+        index += 1
+    if index < len(lines):
+        index += 1
+    args = [json.dumps("\n".join(code), ensure_ascii=False), "block: true"]
+    if info:
+        args.append("lang: " + json.dumps(info.split()[0], ensure_ascii=False))
+    return "#raw(" + ", ".join(args) + ")", index
+
+
 def _collapse_display_math(text: str) -> str:
     """把跨行的 ``$$ … $$`` 块压成单行 ``$ … $``。
 
@@ -1729,7 +1764,8 @@ _TYPST_SAFE_WORDS = (
     frozenset(w for w in _LATEX_SYMBOLS.values() if re.fullmatch(r"[A-Za-z]+", w))
     | frozenset(_LATEX_FUNCTIONS.values())
     | frozenset({
-        "frac", "sqrt", "root", "mat", "cases", "cal", "frak", "bold",
+        "frac", "sqrt", "root", "mat", "cases", "cal", "frak", "bold", "bb",
+        "RR", "NN", "ZZ", "CC", "QQ",
         "upright", "op", "compose", "norm", "abs", "floor", "ceil", "round",
         "diag", "rank", "Res", "tr", "det", "lim", "max", "min", "sup", "inf",
         "wide", "thin", "med", "slash", "degree",
@@ -1906,19 +1942,28 @@ def render_typst(
     labels: List[str] = []
     warnings: List[str] = []
 
-    normalized = _collapse_display_math(draft_text.replace("\r\n", "\n"))
-    normalized, _comments = _strip_html_comments(normalized)
-    if convert_math:
-        normalized, math_warnings = _convert_draft_math(normalized)
-        if math_warnings:
-            warnings.append(
-                "底稿里还有 LaTeX 写法的数学（已尽量自动改写），以下片段无法机械转换，请手工改成 Typst 写法："
-                + "、".join(sorted(set(math_warnings)))
-            )
+    math_warnings: List[str] = []
+
+    def prepare_prose(text: str) -> str:
+        text, _comments = _strip_html_comments(_collapse_display_math(text))
+        if convert_math:
+            text, issues = _convert_draft_math(text)
+            math_warnings.extend(issues)
+        return text
+
+    normalized = transform_prose(draft_text.replace("\r\n", "\n"), prepare_prose)
+    if math_warnings:
+        warnings.append(
+            "底稿里还有 LaTeX 写法的数学（已尽量自动改写），以下片段无法机械转换，请手工改成 Typst 写法："
+            + "、".join(sorted(set(math_warnings)))
+        )
 
     # 第一遍：先把全文里定义过的 label 收集出来。回指只有指向这些 label 时
     # 才按 Typst 引用保留，否则正文里的邮箱会被当成引用而报错。
-    known_labels = sorted({m.group(1) for m in re.finditer(r"<([A-Za-z][A-Za-z0-9_.:-]*)>", normalized)})
+    label_text: List[str] = []
+    transform_prose(normalized, lambda text: label_text.append(text) or text)
+    prose_text = "\n".join(label_text)
+    known_labels = sorted({m.group(1) for m in re.finditer(r"<([A-Za-z][A-Za-z0-9_.:-]*)>", prose_text)})
 
     section = ""
     in_cover = False
@@ -1939,6 +1984,12 @@ def render_typst(
         raw_line = input_lines[cursor]
         stripped = raw_line.strip()
         cursor += 1
+
+        if opening_fence(raw_line):
+            code, cursor = _render_code_block(input_lines, cursor - 1)
+            lines_out.append(code)
+            _count("code")
+            continue
 
         if not stripped:
             lines_out.append("")
@@ -2199,7 +2250,7 @@ def render_typst(
 
     typst = "\n".join(setup) + cover + "\n\n" + body_text + "\n"
 
-    references = sorted(set(_REF_RE.findall(normalized)))
+    references = sorted(set(_REF_RE.findall(prose_text)))
     dangling = [ref for ref in references if ref[1:] not in known_labels]
 
     if dangling:
@@ -2249,7 +2300,10 @@ def _render_cover(draft_text: str) -> str:
     """渲染 ``# 封面`` 块。"""
     fields: Dict[str, str] = {}
     in_cover = False
-    for line in draft_text.replace("\r\n", "\n").split("\n"):
+    lines = draft_text.replace("\r\n", "\n").split("\n")
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
+        if is_code:
+            continue
         stripped = line.strip()
         heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading:
@@ -2326,7 +2380,10 @@ def build_draft(
     doc_title = title.strip()
     body_lines: List[str] = []
     in_cover = False
-    for line in lines:
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
+        if is_code:
+            body_lines.append(line)
+            continue
         stripped = line.strip()
         heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading:
@@ -2347,8 +2404,8 @@ def build_draft(
     # 按标题切块
     blocks: List[Dict[str, object]] = []
     current: Optional[Dict[str, object]] = None
-    for line in body_lines:
-        heading = re.match(r"^(#{2,6})\s+(.*)$", line.strip())
+    for line, is_code in zip(body_lines, fenced_line_flags(body_lines)):
+        heading = None if is_code else re.match(r"^(#{2,6})\s+(.*)$", line.strip())
         if heading:
             current = {
                 "level": len(heading.group(1)),
@@ -2554,7 +2611,98 @@ def _run_typst(typst: str, args: Sequence[str], cwd: str, timeout: int) -> Tuple
     return completed.returncode, output
 
 
+def _snapshot_project_resources(project_dir: str, staging: str, workspace_root: str) -> None:
+    """Copy regular project resources without following links or old builds.
+
+    Relative read/include/image paths keep the same layout in the private
+    stage. Generated root files are supplied by the current compilation;
+    nested files with those names may be ordinary user-authored resources.
+    """
+    from .paths import validate_output_path
+
+    def copy_directory(source_dir: str, target_dir: str) -> None:
+        validate_output_path(source_dir, workspace_root)
+        with os.scandir(source_dir) as entries:
+            for entry in entries:
+                if entry.name.startswith(".zju-build-"):
+                    continue
+                if source_dir == project_dir and (
+                    entry.name in {"main.typ", "prelude.typ", "out.pdf"}
+                    or re.fullmatch(r"page-\d+\.png", entry.name)
+                ):
+                    continue
+                # The shared path guard checks every component with lstat,
+                # rejecting symlinks and Windows reparse points before any
+                # resource is opened or a resource directory is traversed.
+                source = validate_output_path(entry.path, workspace_root)
+                mode = os.lstat(source).st_mode
+                target = os.path.join(target_dir, entry.name)
+                if stat.S_ISDIR(mode):
+                    os.mkdir(target)
+                    copy_directory(source, target)
+                elif stat.S_ISREG(mode):
+                    with open(source, "rb") as src, open(target, "xb") as dst:
+                        shutil.copyfileobj(src, dst)
+                else:
+                    raise StudyNotesError(f"拒绝读取非普通项目资源: {source}")
+
+    copy_directory(project_dir, staging)
+
+
 def compile_project(
+    project_dir: str,
+    typst_source: str,
+    make_png: bool = True,
+    pages: str = "",
+    timeout: int = 180,
+    workspace_root: Optional[str] = None,
+) -> CompileResult:
+    """Build in a private directory, then publish only validated artifacts."""
+    from .paths import validate_output_path
+    from .security import LocalFileError
+    from .handout import _atomic_copy
+
+    project_dir = os.path.abspath(project_dir)
+    root = workspace_root or os.path.dirname(project_dir)
+    try:
+        validate_output_path(project_dir, root)
+        targets = ["main.typ", "prelude.typ", "out.pdf"]
+        if os.path.isdir(project_dir):
+            targets.extend(name for name in os.listdir(project_dir)
+                           if name.startswith("page-") and name.endswith(".png"))
+        for name in targets:
+            validate_output_path(os.path.join(project_dir, name), root)
+        os.makedirs(project_dir, exist_ok=True)
+        validate_output_path(project_dir, root)
+        with tempfile.TemporaryDirectory(prefix=".zju-build-", dir=project_dir) as staging:
+            _snapshot_project_resources(project_dir, staging, root)
+            result = _compile_project(staging, typst_source, make_png, pages, timeout)
+            artifacts = [os.path.join(staging, name) for name in ("main.typ", "prelude.typ")]
+            if result.ok:
+                artifacts += [result.pdf_path, *result.png_paths]
+            published = {}
+            for source in artifacts:
+                if not source or not os.path.isfile(source):
+                    continue
+                target = validate_output_path(os.path.join(project_dir, os.path.basename(source)), root)
+                _atomic_copy(source, target)
+                published[source] = target
+            result.pdf_path = published.get(result.pdf_path, "")
+            result.png_paths = [published[path] for path in result.png_paths if path in published]
+            if result.ok:
+                # A new PDF invalidates every old numbered page, including when
+                # PNG export was disabled, selected fewer pages, or failed.
+                current_pngs = {os.path.basename(path) for path in result.png_paths}
+                for name in os.listdir(project_dir):
+                    if re.fullmatch(r"page-\d+\.png", name) and name not in current_pngs:
+                        stale = validate_output_path(os.path.join(project_dir, name), root)
+                        os.unlink(stale)
+            return result
+    except (LocalFileError, OSError) as exc:
+        raise StudyNotesError(str(exc)) from exc
+
+
+def _compile_project(
     project_dir: str,
     typst_source: str,
     make_png: bool = True,
@@ -2616,10 +2764,12 @@ def compile_project(
                 "PDF 编译成功，但逐页 PNG 导出失败（不影响 PDF）：" +
                 (png_output.strip().splitlines()[-1] if png_output.strip() else f"退出码 {png_code}")
             )
-        result.png_paths = sorted(
-            os.path.join(project_dir, name)
-            for name in os.listdir(project_dir)
-            if name.startswith("page-") and name.endswith(".png")
-        )
+        else:
+            result.png_paths = sorted(
+                (os.path.join(project_dir, name)
+                 for name in os.listdir(project_dir)
+                 if re.fullmatch(r"page-\d+\.png", name)),
+                key=lambda path: int(os.path.basename(path)[5:-4]),
+            )
 
     return result

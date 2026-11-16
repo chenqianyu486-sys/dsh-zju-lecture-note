@@ -1,0 +1,5 @@
+# Runtime text and generated Skill manifests must hash identically on every OS.
+* text=auto eol=lf
+*.png -text
+*.ttf -text
+*.pdf -text

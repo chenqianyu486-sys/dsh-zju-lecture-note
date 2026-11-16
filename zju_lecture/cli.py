@@ -351,6 +351,9 @@ def main():
             if args.clear:
                 result = clear_session(delete_profile=True)
                 print(
+                    "登录态清理未完成。"
+                    if result.get("backend_error")
+                    else
                     "已清除本机登录态。"
                     if result.get("session_removed")
                     else "本机没有保存的登录态。"
@@ -369,6 +372,8 @@ def main():
                         f"{result['backend_error']}。可在系统钥匙串/密钥环里手动删除。",
                         file=sys.stderr,
                     )
+                if result.get("backend_error") or result.get("profile_error"):
+                    sys.exit(1)
                 return
             try:
                 result = open_login_window(args.url, args.timeout)

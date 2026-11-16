@@ -4,6 +4,18 @@
 `.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json` 与四个 Skill manifest
 共十处对齐。
 
+## Unreleased — 2026-11-16 审阅修复
+
+- P1：填空笔记在私有目录编译，对工程和最终交付路径拒绝链接/重解析点，并原子发布；bridge 超时后移除失效会话，旧子进程事件不会影响新请求。
+- 工作区：填空笔记 draft/compile 使用统一输入边界；显式 `ZJU_WORKSPACE` 是唯一授权根，失效时不回退到 PWD。
+- 凭据：临时清扫不覆写链接/硬链接或其他用户的文件；注销验证真实删除结果并报告失败；修复原生 DPAPI 明文判断和旧明文迁移失败清理。
+- 内容：保留黑板粗体字母、邮箱和未知引用原文；统一代码围栏和行内代码保护，避免数学转换、HTML 注释清理或自动修复改写代码示例。
+- 分页：json/chunked 返回精确 `next_cursor`，可拆分单条超长文本；用 `cursor` 续取可完整还原内容，`next_start_minute` 仅作时间定位。
+- 底稿：重复 draft 默认拒绝覆盖；显式 `overwrite=true` 先备份已有编辑。
+- 并发：忙碌会话不被 LRU 淘汰，第三工作区可正常调用；请求结束后回收空闲进程。
+- 输出：本次 PNG 来自本次构建；成功重编译清除旧数字页，PDF 失败保留原交付物，PNG 失败不发布半成品。
+- 分发：wheel 包含 MCP 入口和全部嵌套 Typst 资源；历史 ZIP 包含完整 scholia Skill，并核验 staging；支持 CRLF frontmatter，发布文本和 Skill hash 统一为 LF。
+
 ## 2.2.8 — 2026-11-07
 
 ### 设置：第四枚「投影讲义」预设

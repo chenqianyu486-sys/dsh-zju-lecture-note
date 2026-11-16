@@ -3,6 +3,24 @@
 本文件面向**改代码、审代码、排错**的读者。只想安装和使用请看 [README](../README.md)；
 版本历史见 [CHANGELOG](../CHANGELOG.md)。
 
+### 2026-11-16 接口补充
+
+- `zju_fetch_transcript(view_format="json"/"chunked")` 返回 `next_cursor`。当
+  `truncated=true` 时，保持课程、视图和时间区间不变，将它原样传入下一次调用的 `cursor`；
+  字符预算可改变。`next_start_minute` 是时间定位信息，不能代替游标。
+  单条字幕或一个逻辑 chunk 大于预算时，文本分片带 `text_offset`/`text_truncated`；
+  依返回顺序拼接同一记录的 `text` 可无损恢复原文。
+- `zju_build_study_notes(mode="draft")` 遇到已有底稿默认不写入。
+  明确要求重新生成时传 `overwrite=true`，工具先备份原内容并返回备份位置。
+  `draft`、`patch`、`compile` 的源文件均必须位于当前工作区内。
+- 一旦设置 `ZJU_WORKSPACE`，PWD 和进程 cwd 不会扩大授权范围；显式目录不存在则拒绝。
+- 填空工程在独立临时目录编译，再逐个检查派生路径并原子发布。成功重编译只返回本次 PNG；
+  编译失败不把旧 PDF/PNG 伪装成本次成功产物。
+- bridge 的 `maxWorkspaces` 是空闲缓存收缩目标；所有会话忙碌时可暂时超限，完成后回收。
+  超时后的同工作区请求会重建进程，旧进程的事件不再作用于新进程。
+- `zju_login(clear=true, confirm=true)` 清理失败返回 MCP 工具错误；CLI
+  `zju-lecture login --clear` 清理失败退出码为 1，不再报告“没有保存的登录态”。
+
 ## 1. 仓库结构与数据流
 
 本仓库既是插件的**能力核心**，也同时是两种入口的发布源：**dsh 原生插件包**与 **Agent Plugins 1.0
@@ -122,9 +140,9 @@ dsh-zju-lecture-note/
 打包脚本的 staged 产物，只含它自己的清单，根 `plugin.json` / `mcp.json` 不会混进去。
 
 **通用入口的工作目录**：Agent Plugins 1.0 规定 `cwd` 省略时客户端**必须**以插件根为子进程工作目录，
-而 `zju_lecture/paths.py` 的解析顺序是 绝对路径 → `ZJU_WORKSPACE` → `PWD` → cwd，所以相对输出路径
-会落进安装目录。根 `mcp.json` 不写死 `ZJU_WORKSPACE`（用户工作区无法静态预知），由用户给绝对路径
-或自行补 env；dsh 链路不受影响，bridge 按会话工作区传 `ZJU_WORKSPACE` 与 cwd。根 `mcp.json` 也不用
+未配置工作区时，相对输出路径可能落进安装目录。根 `mcp.json` 不写死 `ZJU_WORKSPACE`
+（用户工作区无法静态预知），用户须自行补 env 指向工作目录，绝对路径也要位于该工作区内；
+dsh 链路不受影响，bridge 按会话工作区传 `ZJU_WORKSPACE` 与 cwd。根 `mcp.json` 也不用
 `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` 占位符——部分客户端不展开它们，`./server.mjs` 配合默认 cwd
 才是跨客户端写法。
 
@@ -286,8 +304,9 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 | `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_SLIDES` / `ZJU_SLIDES_SOURCE` / `ZJU_EMBED_SLIDES` / `ZJU_ENABLE_LOGIN_TOOLS` | 可选模块开关；`ZJU_SLIDES_SOURCE` 把投影作为讲义来源，`ZJU_EMBED_SLIDES` 只控制插图；最后一项只控制登录辅助工具，字幕鉴权不受影响 |
 | `ZJU_ALLOW_SENSITIVE_PATHS` | 显式关闭本地敏感路径保护（不推荐） |
 
-相对路径解析顺序：绝对路径 → `ZJU_WORKSPACE` → `PWD` → 服务进程 cwd；都找不到时，
-错误信息会列出**尝试过的绝对路径**。
+绝对路径直接定位，但仍受工作区边界约束。相对路径在显式 `ZJU_WORKSPACE` 下解析；
+仅未设置时才尝试 `PWD` → 服务进程 cwd，授权根为首个有效目录，不取多个根的并集。
+找不到文件时，错误信息会列出**尝试过的绝对路径**。
 
 ## 4. 主链路：`zju_write_note` 内部
 

@@ -70,8 +70,8 @@ dsh plugin --profile desktop add github:chenqianyu486-sys/dsh-zju-lecture-note
 把客户端的插件目录指向仓库根（或解包后的 npm 包目录），Skill 与 MCP Server 会被自动发现，
 不用手工拼配置。依赖只有 PATH 上的 `node` 与 Python 3.9+。
 
-- **输出路径**：通用客户端按标准以插件根为工作目录，相对文件名会写进安装目录。请给绝对输出路径，
-  或在根 `mcp.json` 的 `env` 里加 `ZJU_WORKSPACE` 指向你的工作目录。dsh 原生入口不受影响，
+- **输出路径**：通用客户端按标准以插件根为工作目录，相对文件名会写进安装目录。请在根
+  `mcp.json` 的 `env` 里加 `ZJU_WORKSPACE` 指向你的工作目录；绝对路径也必须位于该目录内。dsh 原生入口不受影响，
   它按会话工作区传 `ZJU_WORKSPACE`。
 - **可选模块**：投影截图、填空笔记、登录辅助工具与自动 PDF 默认关闭，改根 `mcp.json` 的 `env` 开启
   （`ZJU_ENABLE_SLIDES` / `ZJU_ENABLE_STUDY_NOTES` / `ZJU_ENABLE_LOGIN_TOOLS` / `ZJU_RENDER_PDF`）。
@@ -116,6 +116,7 @@ python -m zju_lecture.cli slides "<回放链接>" --download
 - 讲义默认写在工作区根目录，文件名由 Agent 按「上课日期 + 本节内容」起名
   （`知识总结-2026-10-28-复变函数-保角映射.md`），PDF 同名同目录。
 - 同名讲义默认拒绝覆盖，要覆盖请明确说「覆盖」。
+- 同名填空底稿也默认保留人工编辑；确认重新生成时使用 `overwrite=true`，原内容先备份。
 - 讲义不进 Git：`.gitignore` 已挡掉任意层级的 `知识总结*.md` 与 `/notes/`。
 - 字幕先匿名；401/403 时自动用本机登录态重试一次。一次只抓一节课，不要批量抓取。
 

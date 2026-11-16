@@ -63,6 +63,10 @@
             "minimum": 1000,
             "description": "单次返回的字符上限（默认 60000）。超出会截断并在末尾标注，长课程建议改用 view_format=chunked",
             "default": 60000
+          },
+          "cursor": {
+            "type": "string",
+            "description": "json/chunked 分页续取：原样传回上一页的 next_cursor，保持课程、视图和时间区间参数不变。next_start_minute 仅用于时间定位，不能代替精确游标"
           }
         },
         "required": [
@@ -75,7 +79,7 @@
     "type": "function",
     "function": {
       "name": "zju_fetch_slides",
-      "description": "（可选投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF（省略时跟随 enableSlides / embedSlideImages，即 ZJU_ENABLE_SLIDES / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides 关闭时本工具不注册。",
+      "description": "（投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF。当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，写讲义前应调用一次并传 download=true, confirm=true；download 省略时跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides（ZJU_ENABLE_SLIDES）关闭时本工具不注册。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -95,7 +99,7 @@
           },
           "download": {
             "type": "boolean",
-            "description": "是否下载截图到工作区并合成 PDF。省略时跟随插件设置（dsh 的 embedSlideImages / 环境变量 ZJU_EMBED_SLIDES，默认关闭）；显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图"
+            "description": "是否下载截图到工作区并合成 PDF。省略时跟随插件设置（slidesAsSource 或 embedSlideImages 开启即下载；环境变量 ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）；显式传 true/false 可覆盖。一节 1 小时的课通常有几十到几百张截图"
           },
           "output_dir": {
             "type": "string",
@@ -105,6 +109,11 @@
             "type": "boolean",
             "description": "是否折叠连续字节完全相同的截图（默认 true，只影响 PDF 页数，下载的原图都会保留）",
             "default": true
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "确认执行有副作用的操作（默认 false）。confirm=true 才批量下载截图（最多 2000 张）到工作区并合成 PDF；否则只返回清单，不写盘",
+            "default": false
           }
         },
         "required": [
@@ -131,6 +140,11 @@
             "minimum": 100,
             "description": "最多提取字符数（默认 10000 字符）",
             "default": 10000
+          },
+          "allow_outside_workspace": {
+            "type": "boolean",
+            "description": "是否允许读取工作区之外的课件（默认 false）。显式设为 true 时仍拒绝凭据/浏览器数据/密钥文件，并在结果首行标注「已读取工作区外文件」",
+            "default": false
           }
         },
         "required": [
@@ -172,7 +186,7 @@
     "type": "function",
     "function": {
       "name": "zju_check_note",
-      "description": "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。fix=true 自动修正机械问题并先备份；报告按问题类型聚合。pdf=true 时检查后重新排版一份同名 PDF。",
+      "description": "检查/修正已有讲义 Markdown 的公式与渲染规范（静态、不联网）。write_note 已自动检查，通常无需重复调用；只有手工改过文件时才用它修复。fix=true 自动修正机械问题并先备份；报告按问题类型聚合。pdf=true 时检查后重新排版一份同名 PDF。只处理工作区内的讲义。",
       "parameters": {
         "type": "object",
         "additionalProperties": false,
@@ -282,6 +296,11 @@
             "type": "boolean",
             "description": "只清除本机保存的登录态与独立登录窗口配置，不打开窗口（默认 false）",
             "default": false
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "确认执行有副作用的操作（默认 false）。clear=true 时必须同时传 confirm=true 才会删除登录态与浏览器配置",
+            "default": false
           }
         }
       }
@@ -352,9 +371,14 @@
             "type": "string",
             "description": "填空底稿 Markdown 的路径（mode=patch / compile 必填）"
           },
+          "overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "mode=draft 是否覆盖已有底稿；默认拒绝覆盖，true 时先备份人工编辑内容"
+          },
           "output_dir": {
             "type": "string",
-            "description": "输出目录，相对当前工作区（默认与源文件同目录；源文件在工作区外时写到工作区的 notes/ 下）"
+            "description": "输出目录，相对当前工作区（默认与源文件同目录；源文件与输出均须位于工作区内）"
           },
           "title": {
             "type": "string",
@@ -415,6 +439,11 @@
           "login": {
             "type": "boolean",
             "description": "是否读取本机登录态检查可用性（默认否；不会回显凭据）",
+            "default": false
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "确认执行有副作用的操作（默认 false）。install=true 时必须同时传 confirm=true 才会下载安装 Typst（约 20 MB）",
             "default": false
           }
         }

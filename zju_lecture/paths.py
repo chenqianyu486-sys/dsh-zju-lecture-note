@@ -14,13 +14,10 @@ used to fail with ``错误: 找不到讲义文件`` because the lookup only cons
 ``os.getcwd()``. The agent had to fall back to absolute paths, and the error
 never said *where* the server looked, so the failure was hard to diagnose.
 
-Resolution order (first hit wins, duplicates removed):
-
-1. the path exactly as given — absolute paths always mean exactly one place;
-2. ``ZJU_WORKSPACE`` — the session workspace, injected by the dsh plugin
-   (see ``lib/bridge.js``) and settable by any host that knows better;
-3. ``PWD`` — the directory the parent shell reported (POSIX convention);
-4. the server's own working directory.
+Absolute paths identify exactly one candidate. For relative paths, an explicit
+``ZJU_WORKSPACE`` is the only root, even if that directory no longer exists.
+Only when it is unset do resolvers try ``PWD`` and then the server's working
+directory. Authorization still uses the first valid root, never their union.
 
 Every resolver also returns the list of candidates it tried, so the caller can
 say ``找不到讲义文件: 知识总结.md（已尝试: ...）`` instead of a bare "not found".
@@ -32,6 +29,7 @@ file is opened or created, and note writing refuses to leave the workspace.
 
 import os
 import re
+import stat
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .security import LocalFileError, guard_local_file
@@ -76,6 +74,10 @@ def _current_directory() -> Optional[str]:
 
 def workspace_roots() -> List[str]:
     """Directories a relative path may be resolved against, in priority order."""
+    explicit = os.environ.get(WORKSPACE_ENV, "").strip()
+    if explicit:
+        normalized = _normalize_directory(explicit)
+        return [normalized] if normalized else []
     roots: List[str] = []
     seen = set()
     for value in (
@@ -96,6 +98,10 @@ def workspace_roots() -> List[str]:
 
 def primary_workspace() -> str:
     """The directory a *new* file should be written to."""
+    explicit = os.environ.get(WORKSPACE_ENV, "").strip()
+    if explicit:
+        # A missing explicit workspace must fail closed, not select PWD.
+        return os.path.abspath(os.path.expanduser(explicit))
     roots = workspace_roots()
     if roots:
         return roots[0]
@@ -212,6 +218,33 @@ def _is_inside(directory: str, candidate: str) -> bool:
     return child.startswith(parent.rstrip("\\/") + os.sep)
 
 
+def validate_output_path(path: str, root: str) -> str:
+    """Confine a derived output and refuse links/reparse points below root.
+
+    This accepts missing targets, unlike the input-file guard. Call again
+    immediately before publishing an artifact, including every derived name.
+    """
+    base = os.path.abspath(root)
+    target = os.path.abspath(path)
+    try:
+        lexical_inside = os.path.normcase(os.path.commonpath([base, target])) == os.path.normcase(base)
+    except ValueError:
+        lexical_inside = False
+    if not lexical_inside or not _is_inside(base, target):
+        raise LocalFileError(f"拒绝写入工作区之外的位置: {target}")
+    current = target
+    while os.path.normcase(current) != os.path.normcase(base):
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise LocalFileError(f"拒绝写入符号链接或重解析点: {current}")
+        current = os.path.dirname(current)
+    return target
+
+
 def note_target(
     sub_id: str,
     slug: str = "",
@@ -253,22 +286,15 @@ def note_target(
 
 
 def is_inside_workspace(path: str) -> bool:
-    """Whether ``path`` lies inside one of the workspace roots.
-
-    Used to decide where generated files may be written: a *source* file can
-    live anywhere on disk (the user may point at a note in another folder),
-    but a *new* file is only ever written inside the workspace.
-    """
+    """Whether ``path`` lies inside the one authoritative workspace."""
     if not path:
         return False
     try:
         candidate = os.path.abspath(os.path.expanduser(str(path)))
     except (OSError, ValueError):
         return False
-    for root in workspace_roots():
-        if _is_inside(root, candidate):
-            return True
-    return False
+    root = primary_workspace()
+    return os.path.isdir(root) and _is_inside(root, candidate)
 
 
 def require_workspace_path(

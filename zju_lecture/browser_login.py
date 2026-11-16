@@ -261,7 +261,11 @@ def _migrate_legacy_plaintext(backend: Any) -> Optional[str]:
         backend.save(payload)
     except StoreUnavailable:
         pass
-    _secure_remove(path)
+    if not _secure_remove(path) and os.path.lexists(path):
+        raise credential_store.StoreCleanupError(
+            "旧明文登录态未能删除。",
+            "关闭占用 session.bin 的程序并检查文件权限，再调用 zju_login(clear=true) 清理。",
+        )
     return _cookie_from_payload(payload)
 
 
@@ -290,6 +294,8 @@ def load_session_cookie() -> Optional[str]:
     backend = credential_store.backend()
     try:
         payload = backend.load()
+    except credential_store.StoreCleanupError:
+        raise
     except StoreUnavailable:
         payload = None
     cookie = _cookie_from_payload(payload)
@@ -360,24 +366,28 @@ def _wipe_profile() -> Tuple[bool, str]:
 def clear_session(delete_profile: bool = True) -> Dict[str, Any]:
     """Delete the saved session (all backends) and the browser profile."""
     backend = credential_store.backend()
-    removed_file = os.path.exists(session_file())
-    if removed_file:
-        _secure_remove(session_file())
     backend_error = ""
     cleared = False
     try:
         cleared = bool(backend.clear())
     except StoreUnavailable as exc:
         backend_error = exc.reason
-    if removed_file:
-        cleared = True
+    # POSIX keyrings may also have a legacy file. Confirm its removal rather
+    # than using its pre-delete existence as proof that logout succeeded.
+    if backend.name != "dpapi" and os.path.lexists(session_file()):
+        if _secure_remove(session_file()):
+            cleared = True
+        else:
+            backend_error = "; ".join(filter(None, (
+                backend_error, "旧登录态文件未能删除（可能被占用或没有写权限）。"
+            )))
     removed_profile, profile_error = _wipe_profile() if delete_profile else (False, "")
     try:
         os.rmdir(login_dir())
     except OSError:
         pass
     return {
-        "session_removed": bool(cleared or removed_file),
+        "session_removed": bool(cleared and not backend_error),
         "backend": backend.name,
         "backend_error": backend_error,
         "profile_removed": removed_profile,

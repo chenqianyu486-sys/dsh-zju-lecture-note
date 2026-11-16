@@ -182,7 +182,9 @@ class TestTranscriptBudget(unittest.TestCase):
         self.assertLessEqual(len(text), 1000)
         payload = json.loads(text)
         self.assertTrue(payload["truncated"])
-        self.assertLess(payload["returned_chunks"], payload["total_chunks"])
+        # A page may contain only part of the final (large) logical chunk.
+        self.assertGreater(payload["returned_chunks"], 0)
+        self.assertTrue(payload["next_cursor"])
 
     def test_json_view_respects_max_chars(self):
         text = self._call(view_format="json", max_chars=1000)

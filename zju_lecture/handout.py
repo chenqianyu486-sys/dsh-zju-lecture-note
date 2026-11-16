@@ -36,6 +36,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from .markdown_code import INLINE_CODE_RE, fenced_line_flags, is_fence_close, transform_prose
+
 from .study_notes import (
     KNOT_BUDGET_PER_SECTION,
     MARKERS,
@@ -398,12 +400,12 @@ def _render_inline(
 
         # 行内代码
         if char == "`":
-            close = text.find("`", index + 1)
-            if close != -1:
+            code_match = INLINE_CODE_RE.match(text, index)
+            if code_match:
                 flush()
-                code = text[index + 1:close]
+                code = code_match.group(2)
                 out.append("#raw(" + _json_string(code) + ")")
-                index = close + 1
+                index = code_match.end()
                 continue
 
         # 粗体
@@ -811,10 +813,11 @@ def _collect_marker_body(
     body: List[str] = [first] if first else []
     total = len(lines)
     if absorb:
+        code_lines = list(fenced_line_flags(lines))
         while index < total:
             raw = lines[index]
             stripped = raw.strip()
-            if block_boundary(stripped, proof=proof):
+            if not code_lines[index] and block_boundary(stripped, proof=proof):
                 break
             body.append(raw)
             index += 1
@@ -973,7 +976,7 @@ def _render_block_sequence(
             info = fence.group(2) or ""
             code: List[str] = []
             index += 1
-            while index < total and not lines[index].strip().startswith(marker_text[:3]):
+            while index < total and not is_fence_close(lines[index], marker_text):
                 code.append(lines[index])
                 index += 1
             if index < total:
@@ -1076,11 +1079,12 @@ def _collect_refs(lines: Sequence[str]) -> Dict[str, str]:
 
     index = 0
     total = len(lines)
+    code_lines = list(fenced_line_flags(lines))
     while index < total:
         raw = lines[index]
         stripped = raw.strip()
         index += 1
-        if not stripped:
+        if code_lines[index - 1] or not stripped:
             continue
         heading = _HEADING_RE.match(stripped)
         if heading:
@@ -1262,7 +1266,7 @@ def _render_body(
             info = fence.group(2) or ""
             body = []
             index += 1
-            while index < total and not lines[index].strip().startswith(marker_text[:3]):
+            while index < total and not is_fence_close(lines[index], marker_text):
                 body.append(lines[index])
                 index += 1
             if index < total:
@@ -1400,7 +1404,10 @@ def _extract_cover(
     in_cover = False
     consumed_h1 = False
 
-    for line in lines:
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
+        if is_code:
+            body.append(line)
+            continue
         stripped = line.strip()
         heading = _HEADING_RE.match(stripped)
         if heading:
@@ -1481,7 +1488,9 @@ def render_handout(
         raise StudyNotesError(f"theme 只能是 light / dark，收到 {theme!r}")
 
     warnings: List[str] = []
-    cleaned = _HTML_COMMENT_RE.sub("", markdown.replace("\r\n", "\n"))
+    cleaned = transform_prose(
+        markdown.replace("\r\n", "\n"), lambda text: _HTML_COMMENT_RE.sub("", text)
+    )
     # `<details>` / `<summary>` 不再预先摊平：自测题的题干与答案要分别排成
     # `#selftest`（琥珀框）与 `#answer`（框外、灰色左线），见 _render_body。
 
@@ -1490,7 +1499,9 @@ def render_handout(
     )
     # 没有封面标题时，不能整份文档只有小节；把第一个 H1 当正文标题。
     if not fields.get("title"):
-        for line in body_lines:
+        for line, is_code in zip(body_lines, fenced_line_flags(body_lines)):
+            if is_code:
+                continue
             heading = _HEADING_RE.match(line.strip())
             if heading and len(heading.group(1)) == 1:
                 fields["title"] = heading.group(2).strip()

@@ -100,8 +100,13 @@ class TestNotePdfCopy(unittest.TestCase):
             self.assertEqual(handle.read(), b"untouched")
         with open(target, "rb") as handle:
             self.assertEqual(handle.read(), b"%PDF-1.4 new")
+        # The planted link belongs to the caller. The copy must ignore it,
+        # not remove it; only temporary files created by the copy are cleaned.
+        self.assertTrue(os.path.islink(target + ".tmp"))
+        self.assertTrue(os.path.samefile(target + ".tmp", outside))
         self.assertEqual(
-            [name for name in os.listdir(directory) if name.endswith(".tmp")], []
+            [name for name in os.listdir(directory) if name.endswith(".tmp")],
+            [os.path.basename(target) + ".tmp"],
         )
 
 

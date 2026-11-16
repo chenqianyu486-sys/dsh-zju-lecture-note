@@ -70,7 +70,7 @@ PACKAGE_FILES = [
     "skills/zju-lecture-summarizer-help/SKILL.md",
     "skills/zju-lecture-summarizer-login/SKILL.md",
 ]
-PACKAGE_DIRS = ["zju_lecture"]
+PACKAGE_DIRS = ["zju_lecture", "skills/scholia-notes"]
 
 # V1 package limits.
 MAX_ENTRIES = 2048
@@ -114,7 +114,8 @@ def _check_relative_path(rel_path: str, where: str) -> None:
             raise ValidationError(f"{where} 路径段不能以 '.' 结尾: {rel_path}")
 
 
-def validate_manifest(manifest: dict, manifest_path: str) -> List[str]:
+def validate_manifest(manifest: dict, manifest_path: str, package_root: Optional[str] = None) -> List[str]:
+    package_root = package_root or REPO_ROOT
     problems: List[str] = []
     for field in ("schemaVersion", "name", "version", "description", "author",
                   "icon", "category", "exampleQueries", "apps", "mcpServers", "skills"):
@@ -153,7 +154,7 @@ def validate_manifest(manifest: dict, manifest_path: str) -> List[str]:
         if not icon:
             continue
         _check_relative_path(icon, f"{icon_field}")
-        icon_path = os.path.join(REPO_ROOT, icon)
+        icon_path = os.path.join(package_root, icon)
         if not os.path.isfile(icon_path):
             problems.append(f"{icon_field} 指向的文件不存在: {icon}")
         elif not icon.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
@@ -166,7 +167,7 @@ def validate_manifest(manifest: dict, manifest_path: str) -> List[str]:
             continue
         for entry in entries:
             _check_relative_path(entry, field)
-            if not os.path.isfile(os.path.join(REPO_ROOT, entry)):
+            if not os.path.isfile(os.path.join(package_root, entry)):
                 problems.append(f"{field} 指向的文件不存在: {entry}")
             if field == "mcpServers" and not entry.endswith(".mcp.json"):
                 problems.append(f"mcpServers 条目必须以 .mcp.json 结尾: {entry}")
@@ -211,7 +212,7 @@ def validate_skill(path: str) -> List[str]:
         raw = handle.read()
     if raw.startswith(b"\xef\xbb\xbf"):
         problems.append(f"{path} 含 BOM")
-    text = raw.decode("utf-8")
+    text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         problems.append(f"{path} 缺少 YAML frontmatter")
         return problems
@@ -240,8 +241,10 @@ def collect_package_files() -> List[str]:
         if not os.path.isdir(abs_dir):
             continue
         for current, dirs, names in os.walk(abs_dir):
-            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            dirs[:] = [d for d in dirs if d not in {"__pycache__", ".git", "node_modules"}]
             for entry in sorted(names):
+                if entry.endswith(".pyc"):
+                    continue
                 relative = os.path.relpath(os.path.join(current, entry), REPO_ROOT)
                 # .pem：随包 CA；.typ / .json / .ttf / .md：PDF 排版需要的
                 # prelude、Typst 资产清单、中文字体与 vendor 的 Typst 包。
@@ -250,7 +253,7 @@ def collect_package_files() -> List[str]:
                 # 代码却不带许可。
                 allowed = (".py", ".pem", ".typ", ".json", ".ttf", ".md", ".toml", ".txt")
                 licence_files = {"LICENSE", "UNLICENSE", "COPYING"}
-                if entry.endswith(allowed) or entry in licence_files:
+                if package_dir.startswith("skills/") or entry.endswith(allowed) or entry in licence_files:
                     files.append(relative.replace(os.sep, "/"))
     return files
 
@@ -306,6 +309,20 @@ def stage_package(staging: str) -> None:
         dst = os.path.join(staging, *rel.split("/"))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
+    # Validate what will actually be installed, not only the source checkout.
+    manifest_path = os.path.join(staging, ".minimax-plugin", "plugin.json")
+    manifest = _read_json(manifest_path)
+    problems = validate_manifest(manifest, manifest_path, package_root=staging)
+    for entry in manifest.get("skills", []):
+        path = os.path.join(staging, entry)
+        if os.path.isfile(path):
+            problems.extend(validate_skill(path))
+    for entry in manifest.get("mcpServers", []):
+        path = os.path.join(staging, entry)
+        if os.path.isfile(path):
+            problems.extend(validate_mcp_file(_read_json(path), entry))
+    if problems:
+        raise ValidationError("暂存安装包校验失败:\n" + "\n".join(problems))
 
 
 def install_package(dest: str) -> None:

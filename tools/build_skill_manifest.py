@@ -34,6 +34,8 @@ SKILLS = (
 
 EXCLUDED_DIRS = {".git", "__pycache__", "node_modules"}
 EXCLUDED_FILES = {".DS_Store", "README.en.md"}
+TEXT_EXTENSIONS = {".md", ".typ", ".json", ".toml", ".txt"}
+TEXT_NAMES = {"LICENSE", "UNLICENSE", "COPYING"}
 
 
 def package_version():
@@ -50,6 +52,22 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def normalize_skill_text(path):
+    """Keep shipped text bytes canonical before recording their hash and size.
+
+    Git enforces LF for checkouts; this also covers ZIP/manual CRLF copies.
+    Hashes always describe the actual packaged bytes, never a virtual version.
+    """
+    if os.path.splitext(path)[1].lower() not in TEXT_EXTENSIONS and os.path.basename(path) not in TEXT_NAMES:
+        return
+    with open(path, "rb") as handle:
+        raw = handle.read()
+    normalized = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    if normalized != raw:
+        with open(path, "wb") as handle:
+            handle.write(normalized)
+
+
 def collect(skill_name):
     skill_dir = os.path.join(ROOT, "skills", skill_name)
     files = []
@@ -59,6 +77,7 @@ def collect(skill_name):
             if name in EXCLUDED_FILES or name.endswith(".pyc"):
                 continue
             path = os.path.join(root, name)
+            normalize_skill_text(path)
             rel = os.path.relpath(path, skill_dir).replace(os.sep, "/")
             files.append({
                 "path": rel,

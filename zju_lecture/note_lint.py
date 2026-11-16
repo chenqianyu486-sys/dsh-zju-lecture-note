@@ -22,6 +22,7 @@ import tempfile
 import time
 from typing import List, NamedTuple
 
+from .markdown_code import INLINE_CODE_RE, fenced_line_flags
 from .study_notes import MARKERS, _UNKNOWN_MARKER_RE
 
 ERROR = "error"
@@ -72,7 +73,7 @@ def _complex_context(math: str, line: str) -> bool:
         return True
     return bool(_COMPLEX_MATH_RE.search(math))
 
-_INLINE_CODE_RE = re.compile(r"`[^`]*`")
+_INLINE_CODE_RE = INLINE_CODE_RE
 
 #: 「本该是方框、却被写成小标题或粗体」。这类写法在 PDF 里只是小标题 / 粗体，
 #: 拿不到方框的编号、配色与左侧竖线 —— 实测一份 3.5 万字的讲义里 10 处「例 N」
@@ -136,18 +137,14 @@ def check_markdown(text: str) -> List[Issue]:
     issues: List[Issue] = []
     lines = text.split("\n")
 
-    in_fence = False
     in_display = False
     display_start = 0
 
-    for idx, raw in enumerate(lines, start=1):
+    for idx, (raw, is_code) in enumerate(zip(lines, fenced_line_flags(lines)), start=1):
         stripped = raw.strip()
 
         # Fenced code blocks: never lint their contents.
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
+        if is_code:
             continue
 
         # Block display math: ``$$`` alone on its own line.
@@ -627,7 +624,6 @@ def _isolate_display_blocks(lines: List[str]) -> tuple:
     Returns ``(new_lines, number_of_inserted_blank_lines)``.
     """
     out: List[str] = []
-    in_fence = False
     inside = False
     pending_blank = False
     fixed = 0
@@ -638,16 +634,12 @@ def _isolate_display_blocks(lines: List[str]) -> tuple:
             out.append("")
             pending_blank = False
 
-    for line in lines:
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
         stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
+        if is_code:
             if pending_blank:
                 pending_blank = False
                 out.append("")
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
             out.append(line)
             continue
 
@@ -686,19 +678,14 @@ def fix_markdown(text: str) -> tuple:
     lines = text.split("\n")
 
     out = []
-    in_fence = False
     display_fixed = 0
     math_fixed = 0
     pipe_fixed = 0
     details_fixed = 0
 
-    for line in lines:
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
         stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
+        if is_code:
             out.append(line)
             continue
 

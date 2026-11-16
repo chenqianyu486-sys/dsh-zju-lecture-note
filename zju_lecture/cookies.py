@@ -12,6 +12,7 @@ import os
 import pathlib
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -206,28 +207,24 @@ def _dpapi_unprotect(data: bytes) -> bytes:
         ctypes.windll.kernel32.LocalFree(blob_out.pbData)
 
 
-# DPAPI blobs start with a DWORD version (1) followed by the payload length.
+# Native DPAPI blobs start with a DWORD version (1), before the provider GUID.
 _DPAPI_MAGIC = b"\x01\x00\x00\x00"
 
 
 def _decrypt_win_cookie(encrypted: bytes) -> str:
-    """Decrypt a Windows Edge cookie value.
+    """Decrypt legacy native DPAPI values, not Chromium v10/v20 formats.
 
-    Chromium stores the value either as a raw DPAPI blob or with a ``v10`` /
-    ``v20`` version prefix in front of the DPAPI payload. Both layouts are
-    attempted, and the result is validated against the DPAPI blob header so a
-    wrong guess cannot silently yield garbage.
+    A successful DPAPI call returns the cookie plaintext, not another DPAPI
+    blob. Versioned Chromium values use different encryption and must be read
+    by the browser through the dedicated login flow instead.
     """
-    if not encrypted:
+    if not encrypted or not encrypted.startswith(_DPAPI_MAGIC):
         return ""
-    candidates = [encrypted]
-    if encrypted[:3] in (b"v10", b"v20"):
-        candidates.append(encrypted[3:])
-    for blob in candidates:
-        plain = _dpapi_unprotect(blob)
-        if plain.startswith(_DPAPI_MAGIC):
-            return plain.decode("utf-8", "ignore")
-    return ""
+    plain = _dpapi_unprotect(encrypted)
+    try:
+        return plain.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
 
 
 def _edge_root() -> Optional[str]:
@@ -347,36 +344,78 @@ def _query_cookie_rows(
         conn.close()
 
 
-def _secure_remove(path: str) -> None:
-    """Overwrite then delete a temporary file that held browser cookies."""
+def _is_owned(info: os.stat_result) -> bool:
+    """On POSIX only the current user's files belong to this cleanup."""
+    getuid = getattr(os, "getuid", None)
+    return getuid is None or info.st_uid == getuid()
+
+
+def _is_link_or_reparse(info: os.stat_result) -> bool:
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
+def _secure_remove(path: str) -> bool:
+    """Overwrite and unlink an owned regular file, never a link or alias.
+
+    Return whether removal actually succeeded. Callers clearing credentials
+    must report False while the path still exists instead of claiming logout.
+    """
     try:
-        with open(path, "r+b") as handle:
-            length = handle.seek(0, os.SEEK_END)
-            handle.seek(0)
-            if length:
-                handle.write(b"\0" * length)
-                handle.flush()
-                os.fsync(handle.fileno())
-    except OSError:
-        pass
-    try:
+        before = os.lstat(path)
+        if (_is_link_or_reparse(before) or not stat.S_ISREG(before.st_mode)
+                or before.st_nlink != 1 or not _is_owned(before)):
+            return False
+        flags = os.O_RDWR | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "r+b") as handle:
+            opened = os.fstat(handle.fileno())
+            if (not os.path.samestat(before, opened) or opened.st_nlink != 1
+                    or not stat.S_ISREG(opened.st_mode) or not _is_owned(opened)):
+                return False
+            remaining = opened.st_size
+            while remaining:
+                chunk = min(remaining, 64 * 1024)
+                handle.write(b"\0" * chunk)
+                remaining -= chunk
+            handle.flush()
+            os.fsync(handle.fileno())
         os.unlink(path)
+        return not os.path.lexists(path)
     except OSError:
-        pass
+        return False
 
 
-def _secure_remove_tree(tmp_dir: str) -> None:
-    """Shred every file copied into a private temp dir, then remove the dir."""
+def _private_copy_dir(path: str) -> Optional[os.stat_result]:
+    """Reject links and directories writable by another POSIX user."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    if _is_link_or_reparse(info) or not stat.S_ISDIR(info.st_mode) or not _is_owned(info):
+        return None
+    if os.name != "nt" and info.st_mode & 0o077:
+        return None
+    return info
+
+
+def _secure_remove_tree(tmp_dir: str) -> bool:
+    """Shred owned regular files inside a private copy directory only."""
+    if _private_copy_dir(tmp_dir) is None:
+        return False
     try:
         names = os.listdir(tmp_dir)
     except OSError:
-        return
+        return False
     for name in names:
         _secure_remove(os.path.join(tmp_dir, name))
     try:
         os.rmdir(tmp_dir)
+        return True
     except OSError:
-        pass
+        return False
 
 
 def _sweep_stale_cookie_copies(max_age_seconds: int = 3600) -> int:
@@ -399,14 +438,14 @@ def _sweep_stale_cookie_copies(max_age_seconds: int = 3600) -> int:
         if not name.startswith("zju-lecture-cookie-"):
             continue
         path = os.path.join(root, name)
-        try:
-            age = now - os.path.getmtime(path)
-        except OSError:
+        info = _private_copy_dir(path)
+        if info is None:
             continue
+        age = now - info.st_mtime
         if age < max_age_seconds:
             continue
-        _secure_remove_tree(path)
-        removed += 1
+        if _secure_remove_tree(path):
+            removed += 1
     return removed
 
 

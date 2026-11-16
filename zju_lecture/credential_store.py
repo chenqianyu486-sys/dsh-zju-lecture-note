@@ -93,6 +93,10 @@ class StoreUnavailable(Exception):
         super().__init__(f"{reason}\n{hint}" if hint else reason)
 
 
+class StoreCleanupError(StoreUnavailable):
+    """Old credential material remains on disk; callers must not hide this."""
+
+
 # --------------------------------------------------------------------- encoding
 
 
@@ -377,16 +381,26 @@ class DpapiFileBackend(SessionBackend):
             # is rewritten through DPAPI in place.
             try:
                 self.save(payload)
-            except StoreUnavailable:
-                pass
+            except StoreUnavailable as exc:
+                # Keep the current call usable, but never retain the old
+                # plaintext merely because the encrypted replacement failed.
+                if not _secure_remove(path) and os.path.lexists(path):
+                    raise StoreCleanupError(
+                        "旧明文登录态未能迁移，也未能删除。",
+                        "关闭占用 session.bin 的程序并检查文件权限，再调用 zju_login(clear=true) 清理。",
+                    ) from exc
         return payload
 
     def clear(self) -> bool:
         path = self._path_provider()
-        if not os.path.exists(path):
+        if not os.path.lexists(path):
             return False
-        _secure_remove(path)
-        return not os.path.exists(path)
+        if not _secure_remove(path) and os.path.lexists(path):
+            raise StoreCleanupError(
+                "本地登录态文件未能删除（可能被占用或没有写权限）。",
+                "关闭占用 session.bin 的程序并检查权限后重试清除。",
+            )
+        return True
 
 
 def _security_failure(code: int, stdout: str, stderr: str) -> str:
@@ -456,17 +470,16 @@ class KeychainBackend(SessionBackend):
         return decode_secret(out)
 
     def clear(self) -> bool:
-        try:
-            code, out, err = self._run(
-                [_which("security") or "security", "delete-generic-password",
-                 "-s", SERVICE, "-a", ACCOUNT]
-            )
-        except StoreUnavailable:
-            return False
+        code, out, err = self._run(
+            [_which("security") or "security", "delete-generic-password",
+             "-s", SERVICE, "-a", ACCOUNT]
+        )
         if code == 44:
             return False
         problem = _security_failure(code, out, err)
-        return not problem
+        if problem:
+            raise StoreUnavailable(problem, "解锁系统钥匙串后重试清除。")
+        return True
 
 
 class SecretToolBackend(SessionBackend):
@@ -516,12 +529,17 @@ class SecretToolBackend(SessionBackend):
         return None
 
     def clear(self) -> bool:
-        try:
-            code, _out, _err = self._run(
-                ["secret-tool", "clear", "service", SERVICE, "account", ACCOUNT]
-            )
-        except StoreUnavailable:
+        code, _out, err = self._run(
+            ["secret-tool", "clear", "service", SERVICE, "account", ACCOUNT]
+        )
+        if code == 1 and not err.strip():
             return False
+        if code != 0:
+            detail = err.strip().splitlines()
+            raise StoreUnavailable(
+                "清除密钥环失败：" + (detail[0] if detail else f"exit {code}"),
+                "解锁系统密钥环后重试清除。",
+            )
         return code == 0
 
 

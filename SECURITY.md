@@ -190,7 +190,7 @@
   自动修复的备份默认写到系统临时目录下的 `zju-lecture-backups/`（可用 `ZJU_BACKUP_DIR` 指定），
   备份是讲义原文的副本——**不要把备份目录指向公开同步目录**。
 - **多会话**：每个工作区有独立的 Python 子进程（cwd 与 `ZJU_WORKSPACE` 固定），
-  LRU 最多保留 2 个；工作区未声明或不存在时调用被拒绝，不会退回插件目录（第 7.1 节）。
+  空闲时按 LRU 收缩到 2 个；忙碌请求可暂时超限，完成后回收。工作区未声明或不存在时调用被拒绝，不会退回插件目录（第 7.1 节）。
 - **共享电脑**：POSIX 备份权限、本机 CDP 调试接口和"同一系统用户可信"的凭据库边界都要求
   共享多用户机器上不要处理敏感课程材料。
 
@@ -271,13 +271,15 @@ python tools/privacy_scan.py --tarball <npm pack 产物>
 
 ## 9. 工作区边界
 
-**定义**：会话工作区是 `/`（首个命中）`ZJU_WORKSPACE` → `PWD` → 服务进程 cwd。dsh 插件在
+**定义**：设置了 `ZJU_WORKSPACE` 时它是唯一授权根，目录不存在也不会退回 PWD；未设置时才按
+`PWD` → 服务进程 cwd 选择一个根。dsh 插件在
 `lib/bridge.js` 里把每个会话的 workspace 固定成子进程的 cwd 并写入 `ZJU_WORKSPACE`；
-同一工作区最多保留 2 个 Python 子进程（LRU），不同工作区**绝不共用一个进程**。
+同一工作区使用一个 Python 子进程，不同工作区**绝不共用一个进程**。
+全局空闲缓存按 LRU 收缩到 2 个；忙碌会话不被淘汰，全部忙碌时允许暂时超限。
 工作区缺失或目录不存在时，该次调用直接返回
 「工作区不可用，已拒绝执行以避免写入插件目录」，不会回退到插件安装目录。
 
-**读取**：`zju_extract_courseware` 与 `zju_check_note` 默认只接受工作区内的文件。
+**读取**：`zju_extract_courseware`、`zju_check_note` 与填空笔记全部模式默认只接受工作区内的文件。
 `zju_lecture.paths.require_workspace_path()` 的顺序是
 `resolve_path` → `realpath` → 工作区判定 → `guard_local_file`（扩展名 / 凭据 / 浏览器数据）
 →（`write=True` 时）再次 `realpath` 复检，防止检查与打开之间被换成外部链接。
@@ -291,6 +293,12 @@ python tools/privacy_scan.py --tarball <npm pack 产物>
 `zju_check_note(fix=true)` 与 `zju_build_study_notes(mode="patch")` 在任何情况下都拒绝
 工作区外目标（含符号链接）；PDF 只在讲义位于工作区内时生成；截图只写
 `ppt-assets/<sub_id>/` 或 `output_dir` 指定的工作区内目录。
+
+填空工程及交付文件的每个派生目标还会检查符号链接/Windows 重解析点；编译先写私有
+临时目录，再原子发布。再次生成同名底稿必须显式 `overwrite=true`，已有内容先备份。
+临时 Cookie 清扫只处理本用户私有目录中的普通单链接文件，拒绝符号链接、重解析点与
+硬链接；删除失败不会作为注销成功。旧明文会话在加密迁移失败时也尝试清除，无法清除则
+明确报告错误。原生 DPAPI 的解密结果按明文处理，不将新版 Chromium v10/v20 误当 DPAPI。
 
 **副作用确认**：分两类，不要混为一谈。
 
