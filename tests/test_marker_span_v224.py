@@ -207,6 +207,18 @@ class TestReadingHandoutSpans(unittest.TestCase):
         self.assertIn("#keypoint[*重点*　这是重点提示。]", typst)
         self.assertNotIn(")[*重点*", typst)
 
+    def test_important_inline_body_is_a_blue_paragraph(self):
+        text = "## 一节\n\n> [!IMPORTANT] 这是同行重点。\n"
+        typst = render_handout(text).typst
+        self.assertIn("#keypoint[*重点*　这是同行重点。]", typst)
+        self.assertNotIn("[!IMPORTANT] 这是同行重点", typst)
+
+    def test_warning_inline_body_keeps_alert_label(self):
+        text = "## 一节\n\n> [!WARNING] 第一行。\n> 第二行。\n"
+        typst = render_handout(text).typst
+        self.assertIn("*注意*　第一行。第二行。", typst)
+        self.assertNotIn("[!WARNING] 第一行", typst)
+
     def test_derivation_qed_lands_before_the_warning_paragraph(self):
         text = (
             "## 一节\n\n"
@@ -429,6 +441,18 @@ class TestFillInDraftSpans(unittest.TestCase):
         typst = render_typst(draft).typst
         self.assertIn("#keypoint[*重点*　这是重点提示。]", typst)
         self.assertNotIn("[!IMPORTANT]", typst)
+
+    def test_important_inline_body_becomes_a_keypoint_paragraph(self):
+        draft = "## 一节\n\n> [!IMPORTANT] 这是同行重点。\n"
+        typst = render_typst(draft).typst
+        self.assertIn("#keypoint[*重点*　这是同行重点。]", typst)
+        self.assertNotIn("[!IMPORTANT] 这是同行重点", typst)
+
+    def test_warning_inline_body_becomes_a_quoted_alert(self):
+        draft = "## 一节\n\n> [!WARNING] 第一行。\n> 第二行。\n"
+        typst = render_typst(draft).typst
+        self.assertIn("#quoted[*注意*　第一行。第二行。]", typst)
+        self.assertNotIn("[!WARNING] 第一行", typst)
 
     def test_derivation_qed_lands_before_the_warning_paragraph(self):
         draft = (

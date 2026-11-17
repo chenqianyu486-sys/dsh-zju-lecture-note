@@ -2,6 +2,9 @@
 
 ## 2.2.9 — 2026-11-17
 
+- 修复 GitHub alert 同行正文解析：`> [!IMPORTANT] 正文` 以前会原样印出
+  `[!IMPORTANT]`；现在由共用 `split_quote_alert()` 识别标记并把同行正文并入
+  引用块，阅读版与填空笔记两条链路同时兼容「标记独占一行」和「标记后接正文」。
 - 跟进上游互动式课堂支持：`zju_parse_url` 兼容
   `interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...` 的 hash 路由回放链接；
   字幕带登录态时主站失败自动回退互动式课堂后端，投影为空/失败时回退

@@ -47,6 +47,7 @@ from .study_notes import (
     find_typst,
     latex_to_typst,
     pad_inline_math,
+    split_quote_alert,
     split_quote_items,
     split_question_number,
     split_review_labels,
@@ -619,16 +620,7 @@ def _quote_block(
     引用块里常放「视频来源 + 时间点清单」，必须保留项目符号：把所有行
     揉成一段会把清单压成一行长句（实测很难读）。
     """
-    cleaned: List[str] = []
-    kind = ""
-    for line in lines:
-        text = line.strip()
-        if text.startswith(">"):
-            text = text[1:].lstrip()
-        if not cleaned and re.match(r"^\[!(IMPORTANT|WARNING|CAUTION|NOTE|TIP)\]$", text, re.I):
-            kind = text[2:-1].upper()
-            continue
-        cleaned.append(text)
+    kind, cleaned = split_quote_alert(lines)
 
     parts: List[str] = []
     buffer: List[str] = []

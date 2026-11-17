@@ -49,6 +49,7 @@ __all__ = [
     "find_typst",
     "latex_to_typst",
     "pad_inline_math",
+    "split_quote_alert",
 ]
 
 
@@ -1767,6 +1768,45 @@ _QUOTE_LIST_RE = re.compile(r"^[-*+]\s+")
 _CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff\u3000-\u303f\uff00-\uffef]")
 
 
+#: GitHub 风格引用提示的首行：标记后可接同一行的正文。
+_QUOTE_ALERT_RE = re.compile(
+    r"^\[!(IMPORTANT|WARNING|CAUTION|NOTE|TIP)\](?:[ \t]+(.*))?$", re.I
+)
+
+
+def split_quote_alert(lines: Sequence[str]) -> Tuple[str, List[str]]:
+    """拆出引用块首行的 GitHub alert，并保留同一行的正文。
+
+    同时兼容两种写法::
+
+        > [!IMPORTANT]
+        > 正文
+
+        > [!IMPORTANT] 正文
+
+    返回 ``(kind, cleaned_lines)``。``kind`` 是大写的 alert 类型；没有
+    alert 时为空串。``cleaned_lines`` 已去掉行首 ``>``，可直接交给
+    :func:`split_quote_items`。
+    """
+    kind = ""
+    cleaned: List[str] = []
+    for raw in lines:
+        text = raw.strip()
+        if text.startswith(">"):
+            text = text[1:].lstrip()
+        alert = None
+        if not cleaned and not kind:
+            alert = _QUOTE_ALERT_RE.match(text)
+        if alert:
+            kind = alert.group(1).upper()
+            inline_body = (alert.group(2) or "").strip()
+            if inline_body:
+                cleaned.append(inline_body)
+            continue
+        cleaned.append(text)
+    return kind, cleaned
+
+
 def split_quote_items(lines: Sequence[str]) -> List[List[str]]:
     """把 ``> `` 引用块拆成「条目」，每个条目是一组需要接成一段的行。
 
@@ -2072,19 +2112,7 @@ def render_typst(
             while cursor < len(input_lines) and input_lines[cursor].strip().startswith(">"):
                 quote_lines.append(input_lines[cursor])
                 cursor += 1
-            kind = ""
-            cleaned: List[str] = []
-            for line in quote_lines:
-                text_line = line.strip()
-                if text_line.startswith(">"):
-                    text_line = text_line[1:].lstrip()
-                alert = re.match(
-                    r"^\[!(IMPORTANT|WARNING|CAUTION|NOTE|TIP)\]$", text_line, re.I
-                )
-                if alert and not cleaned:
-                    kind = alert.group(1).upper()
-                    continue
-                cleaned.append(line)
+            kind, cleaned = split_quote_alert(quote_lines)
             items = split_quote_items(cleaned)
             body = " \\\n".join(
                 escape_typst(join_cjk_lines(item), known_labels) for item in items
