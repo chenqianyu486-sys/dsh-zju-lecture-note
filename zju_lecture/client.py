@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Client for Zhejiang University 智云课堂 (classroom.zju.edu.cn) APIs.
+Client for Zhejiang University 智云课堂 (classroom.zju.edu.cn) and the
+interactive-classroom backend (interactivemeta.cmc.zju.edu.cn) APIs.
 Pure Python standard library implementation with zero external dependencies.
 """
 
@@ -21,6 +22,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from .security import REDACTOR, sanitize_cookie_header
 
 BASE_URL = "https://classroom.zju.edu.cn"
+#: 互动式课堂回放与备用 API 后端；回放链接形如
+#: ``https://interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...``。
+INTERACTIVE_BASE_URL = "https://interactivemeta.cmc.zju.edu.cn"
 BASE_HOST = (urllib.parse.urlparse(BASE_URL).hostname or "classroom.zju.edu.cn").lower()
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -312,17 +316,19 @@ def _redirect_block_reason(old_url: str, new_url: str) -> str:
 
 
 class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only on the classroom **origin**.
+    """Follow redirects only on the **same origin as the request**.
 
     ``urllib`` re-sends request headers on a redirect, so a compromised or
     misconfigured endpoint that answers ``302`` to another origin would leak
-    the ``Cookie`` header. Scheme, host and port must all match — a downgrade
-    to HTTP or a different port is refused as well.
+    the ``Cookie`` / ``Authorization`` headers. This is used for both the
+    primary classroom host and the interactive-classroom backend; scheme, host
+    and port must all match the request — a downgrade to HTTP or a different
+    port is refused as well.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
         reason = _redirect_block_reason(req.full_url, newurl)
-        if not reason and _origin(newurl) != _origin(BASE_URL):
+        if not reason and _origin(newurl) != _origin(req.full_url):
             reason = f"拒绝跨域重定向到 {_origin(newurl)[1] or '(未知主机)'}（保护登录凭据）"
         if reason:
             raise urllib.error.HTTPError(
@@ -338,11 +344,11 @@ class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
 class _StripAuthOnCrossHostRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Allow slide-CDN redirects, but never carry credentials across origins.
 
-    Slide screenshots are static files and may redirect to a media host. Only
-    ``*.zju.edu.cn`` targets are followed (one hop at a time, re-validated by
-    urllib for every hop); everything else is blocked and recorded. Whenever
-    the redirect changes scheme/host/port, ``Cookie`` / ``Authorization`` /
-    ``Proxy-Authorization`` are dropped.
+    Slide screenshots are static files and may redirect to a ZJU media host or
+    an official image CDN. Only those targets are followed (one hop at a time,
+    re-validated by urllib for every hop); everything else is blocked and
+    recorded. Whenever the redirect changes scheme/host/port, ``Cookie`` /
+    ``Authorization`` / ``Proxy-Authorization`` are dropped.
     """
 
     def __init__(self, diagnostics: Optional[List[str]] = None) -> None:
@@ -357,8 +363,11 @@ class _StripAuthOnCrossHostRedirectHandler(urllib.request.HTTPRedirectHandler):
         reason = _redirect_block_reason(req.full_url, newurl)
         if not reason:
             _, new_host, _ = _origin(newurl)
-            if not is_zju_host(new_host):
-                reason = f"已阻止跳转到非浙大域: {new_host or '(未知主机)'}"
+            if not is_allowed_image_host(new_host):
+                reason = (
+                    "已阻止跳转到非浙大域/非官方图片 CDN: "
+                    f"{new_host or '(未知主机)'}"
+                )
         if reason:
             self._blocked(reason)
             return None
@@ -403,13 +412,27 @@ class TranscriptAuthError(ZJUAPIError):
         super().__init__(f"字幕接口返回 HTTP {status}，当前请求未获访问许可。")
 
 
+def _fragment_query(fragment: str) -> Dict[str, List[str]]:
+    """Parse the query part of a hash-route fragment.
+
+    The interactive classroom page uses ``#/replay?course_id=...&sub_id=...``;
+    ``urllib.parse.urlparse`` puts everything after ``#`` in ``fragment``, so a
+    normal ``parse_qs(parsed.query)`` would see nothing.
+    """
+    value = (fragment or "").strip()
+    if "?" in value:
+        value = value.split("?", 1)[1]
+    return urllib.parse.parse_qs(value)
+
+
 def parse_lecture_url(url_or_sub_id: str) -> Dict[str, str]:
-    """Extract course_id, sub_id, and tenant_code from a classroom URL or sub_id.
-    
-    Accepts:
-    - Full livingroom URL: https://classroom.zju.edu.cn/livingroom?course_id=123&sub_id=456&tenant_code=112
-    - Short query string: ?sub_id=456
-    - Pure sub_id integer string: "456"
+    """Extract course_id, sub_id, and tenant_code from a replay URL or sub_id.
+
+    Accepts both classroom link shapes:
+    - ``https://classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...``
+    - ``https://interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...``
+    - a short query string ``?sub_id=456``
+    - a pure sub_id integer string ``"456"``
     """
     url_or_sub_id = url_or_sub_id.strip()
     if not url_or_sub_id:
@@ -426,6 +449,12 @@ def parse_lecture_url(url_or_sub_id: str) -> Dict[str, str]:
     try:
         parsed = urllib.parse.urlparse(url_or_sub_id)
         query = urllib.parse.parse_qs(parsed.query)
+        # Hash routes keep the replay parameters after ``#``. Merge them in
+        # only when the outer query has no sub_id, so a normal livingroom URL
+        # cannot be overridden by an unrelated fragment.
+        if parsed.fragment and not query.get("sub_id"):
+            for key, values in _fragment_query(parsed.fragment).items():
+                query.setdefault(key, values)
     except Exception as e:
         raise ZJUAPIError(f"URL 格式解析失败: {e}")
 
@@ -439,7 +468,11 @@ def parse_lecture_url(url_or_sub_id: str) -> Dict[str, str]:
                 break
 
     if not sub_id:
-        raise ZJUAPIError("无法从 URL 中识别 sub_id 参数，请确认输入包含有效 sub_id")
+        raise ZJUAPIError(
+            "无法从 URL 中识别 sub_id。请粘贴完整回放地址，支持两种形态：\n"
+            "  · https://classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...\n"
+            "  · https://interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=..."
+        )
 
     return {
         "course_id": query.get("course_id", [""])[0],
@@ -482,10 +515,19 @@ def fetch_transcript(
     *,
     cookie: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch transcript segments, optionally authenticating with a locally supplied session."""
+    """Fetch transcript segments, optionally authenticating with a local session.
+
+    The primary classroom backend is tried first. When a cookie is supplied,
+    the interactive-classroom backend (``interactivemeta.cmc.zju.edu.cn``) is
+    tried as a fallback; both accept the same ``search-trans-result`` path and
+    the Bearer token extracted from ``_token``. Subtitle requests deliberately
+    do **not** send the Cookie header: the Bearer token alone is sufficient and
+    keeps the credential surface minimal.
+    """
     query = urllib.parse.urlencode({"sub_id": sub_id, "tenant_code": tenant_code, "format": "json"})
-    url = f"{BASE_URL}/courseapi/v3/web-socket/search-trans-result?{query}"
-    req_headers = {"User-Agent": USER_AGENT}
+    path = f"/courseapi/v3/web-socket/search-trans-result?{query}"
+
+    token: Optional[str] = None
     if cookie is not None:
         cookie = sanitize_cookie_header(cookie)
         REDACTOR.add_cookie(cookie)
@@ -495,29 +537,66 @@ def fetch_transcript(
                 "本地登录态缺少可用的 _token，无法进行字幕鉴权；请重新登录智云课堂并更新本机登录态。"
             )
         REDACTOR.add(token)
-        req_headers["Authorization"] = f"Bearer {token}"
-    try:
-        data = json.loads(_fetch_bytes(url, req_headers, timeout).decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        e.close()
-        if e.code in (401, 403):
-            raise TranscriptAuthError(e.code) from e
-        raise ZJUAPIError(f"字幕接口返回 HTTP {e.code}。") from e
-    except Exception as e:
+        origins = (BASE_URL, INTERACTIVE_BASE_URL)
+    else:
+        origins = (BASE_URL,)
+
+    data: Optional[Dict[str, Any]] = None
+    last_error = ""
+    auth_status: Optional[int] = None
+    saw_non_auth_error = False
+    for origin in origins:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Referer": f"{origin}/",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            payload = json.loads(_fetch_bytes(f"{origin}{path}", headers, timeout).decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            error.close()
+            last_error = f"HTTP {error.code}"
+            if error.code in (401, 403):
+                auth_status = error.code
+            else:
+                saw_non_auth_error = True
+            continue
+        except Exception as error:  # noqa: BLE001 - aggregate attempts below
+            last_error = REDACTOR.redact(describe_network_error(error))
+            saw_non_auth_error = True
+            continue
+
+        if not isinstance(payload, dict):
+            last_error = "接口返回了非对象 JSON，可能改版了"
+            saw_non_auth_error = True
+            continue
+        code = payload.get("code")
+        if code != 0:
+            message = REDACTOR.redact(payload.get("msg") or f"未知错误 (code={code})")
+            last_error = f"字幕接口返回非零状态码: {message}"
+            saw_non_auth_error = True
+            continue
+        if not payload.get("list"):
+            last_error = "字幕数据列表为空，可能课程刚结束尚未生成字幕或该课程未开启录制转写"
+            saw_non_auth_error = True
+            continue
+        data = payload
+        break
+
+    if data is None:
+        if cookie is None:
+            if auth_status is not None:
+                raise TranscriptAuthError(auth_status)
+            raise ZJUAPIError("请求字幕接口失败。\n" + last_error)
+        if auth_status is not None and not saw_non_auth_error:
+            raise TranscriptAuthError(auth_status)
         raise ZJUAPIError(
-            "请求字幕接口失败。\n" + REDACTOR.redact(describe_network_error(e))
-        ) from e
+            "字幕接口抓取失败（主站与互动式课堂后端均不可用）。\n"
+            + (last_error or "未获得可用的字幕响应")
+        )
 
-    code = data.get("code")
-    if code != 0:
-        msg = REDACTOR.redact(data.get("msg") or f"未知错误 (code={code})")
-        raise ZJUAPIError(f"字幕接口返回非零状态码: {msg}")
-
-    items = data.get("list") or []
-    if not items:
-        raise ZJUAPIError("字幕数据列表为空，可能课程刚结束尚未生成字幕或该课程未开启录制转写")
-
-    raw_segments = items[0].get("all_content") or []
+    raw_segments = data["list"][0].get("all_content") or []
     # 老课程（trans_type="ai"）只有 time/zhtext/entext，没有 BeginSec；
     # 用第一条时间戳作为相对零点，至少保证顺序与间隔正确。
     uses_clock = not any(item.get("BeginSec") not in (None, "") for item in raw_segments)
@@ -569,6 +648,32 @@ def is_zju_host(host: Optional[str]) -> bool:
     return value == "zju.edu.cn" or value.endswith(".zju.edu.cn")
 
 
+_IMAGE_HOST_SUFFIXES = (
+    ".zju.edu.cn",
+    ".chinamcloud.com",
+    ".chinamcloud.cn",
+    ".chinamcache.com",
+)
+
+
+def is_allowed_image_host(host: Optional[str]) -> bool:
+    """True for ZJU hosts and the official image CDNs used by the classroom.
+
+    The interactive-classroom projector backend may return screenshots from
+    ``chinamcloud`` / ``chinamcache``. These are a closed allowlist, never a
+    wildcard: lookalikes such as ``evilchinamcloud.com`` do not match.
+    """
+    value = (host or "").strip().lower().rstrip(".")
+    if not value:
+        return False
+    if is_zju_host(value):
+        return True
+    return any(
+        value == suffix.lstrip(".") or value.endswith(suffix)
+        for suffix in _IMAGE_HOST_SUFFIXES
+    )
+
+
 def secure_zju_url(url: str) -> str:
     """Upgrade ZJU ``http://`` URLs to HTTPS; leave other URLs untouched.
 
@@ -580,6 +685,17 @@ def secure_zju_url(url: str) -> str:
         value = "https:" + value
     parsed = urllib.parse.urlparse(value)
     if parsed.scheme.lower() == "http" and is_zju_host(parsed.hostname):
+        return "https" + value[4:]
+    return value
+
+
+def secure_image_url(url: str) -> str:
+    """Normalise an image URL and upgrade allowed image hosts to HTTPS."""
+    value = (url or "").strip()
+    if value.startswith("//"):
+        value = "https:" + value
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme.lower() == "http" and is_allowed_image_host(parsed.hostname):
         return "https" + value[4:]
     return value
 
@@ -615,12 +731,24 @@ def _classroom_headers(
     cookie: str,
     token: Optional[str],
     sub_id: str,
+    origin: str = BASE_URL,
 ) -> Dict[str, str]:
-    """Headers shared by the authenticated classroom endpoints."""
+    """Headers shared by the authenticated classroom endpoints.
+
+    ``origin`` is the API backend actually being queried. The cookie/token are
+    still only sent to ZJU hosts; callers must not pass an arbitrary origin.
+    """
+    if origin not in (BASE_URL, INTERACTIVE_BASE_URL):
+        raise ValueError("拒绝向非浙大官方主机发送课堂凭据")
+    referer = (
+        f"{origin}/livingroom?sub_id={sub_id}"
+        if origin == BASE_URL
+        else f"{origin}/"
+    )
     headers = {
         "User-Agent": USER_AGENT,
         "Cookie": cookie,
-        "Referer": f"{BASE_URL}/livingroom?sub_id={sub_id}",
+        "Referer": referer,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -636,6 +764,36 @@ def _first_not_none(*values: Any) -> Any:
         if value is not None:
             return value
     return None
+
+
+_SLIDE_CAPTURE_RE = re.compile(r"/(\d{13})\.(?:jpe?g|png)(?:\?.*)?$", re.IGNORECASE)
+_CAPTURE_MIN_MS = 946684800000   # 2000-01-01T00:00:00Z
+_CAPTURE_MAX_MS = 4102444800000  # 2100-01-01T00:00:00Z
+
+
+def _slide_capture_ms(image_url: str) -> Optional[int]:
+    """Read the capture time encoded in a classroom screenshot URL.
+
+    ``search-ppt`` returns image URLs whose basename is a 13-digit epoch
+    millisecond timestamp, e.g. ``.../1794441389000.jpg``.  That timestamp is
+    the only page-time signal the API gives us, and it lines up with the
+    transcript duration almost exactly (within seconds for a 100-minute
+    lecture), so it is worth keeping instead of discarding.
+    """
+    raw = str(image_url or "").strip()
+    if not raw:
+        return None
+    try:
+        path = urllib.parse.urlparse(raw).path
+    except ValueError:
+        return None
+    match = _SLIDE_CAPTURE_RE.search(path)
+    if not match:
+        return None
+    value = int(match.group(1))
+    if not _CAPTURE_MIN_MS <= value <= _CAPTURE_MAX_MS:
+        return None
+    return value
 
 
 def normalize_slide(item: Any, index: int) -> Dict[str, Any]:
@@ -674,7 +832,7 @@ def normalize_slide(item: Any, index: int) -> Dict[str, Any]:
                     return value
         return ""
 
-    image_url = secure_zju_url(
+    image_url = secure_image_url(
         pick("pptimgurl", "ppt_img_url", "image_url", "imgurl")
     )
     text = text or pick("ocr_content", "ocr_text", "text", "ppttext", "ppt_text")
@@ -683,6 +841,9 @@ def normalize_slide(item: Any, index: int) -> Dict[str, Any]:
         "image_url": image_url,
         "text": text,
     }
+    capture_ms = _slide_capture_ms(image_url)
+    if capture_ms is not None:
+        slide["capture_ms"] = capture_ms
     time_point = _first_not_none(
         row.get("time"),
         row.get("time_point"),
@@ -695,6 +856,28 @@ def normalize_slide(item: Any, index: int) -> Dict[str, Any]:
     if not image_url and not text:
         slide["raw"] = json.dumps(item, ensure_ascii=False)[:500]
     return slide
+
+
+def _apply_slide_time_axis(slides: List[Dict[str, Any]]) -> None:
+    """Turn URL capture timestamps into transcript-relative seconds.
+
+    The first captured page is the zero point.  This keeps the slide index
+    aligned with the ``[HH:MM]`` transcript timestamps without needing the
+    wall-clock lecture start.  API-provided ``time`` values win; they are
+    left untouched.
+    """
+    captures = [
+        (slide, slide.get("capture_ms"))
+        for slide in slides
+        if isinstance(slide.get("capture_ms"), int)
+    ]
+    if not captures:
+        return
+    base = min(int(value) for _slide, value in captures)
+    for slide, value in captures:
+        if slide.get("time") is not None:
+            continue
+        slide["time"] = max(0, int(round((int(value) - base) / 1000.0)))
 
 
 def fetch_slides(
@@ -712,6 +895,12 @@ def fetch_slides(
     per page; it also sometimes ignores ``per_page`` and repeats the first
     page, so URLs are de-duplicated in order.
 
+    The main classroom backend is queried first; when it returns an empty deck
+    or a transport/business failure, the interactive-classroom backend
+    (``interactivemeta.cmc.zju.edu.cn/pptnoteapi``) is tried. Auth failures
+    (401/403) are not retried against the fallback: the same session is bad and
+    the user needs to log in again.
+
     Requires a login cookie that contains the classroom ``_token`` (found in
     the parent-domain ``.zju.edu.cn`` session cookie). ``diagnostics`` records
     one human-readable degradation reason on failure.
@@ -727,82 +916,101 @@ def fetch_slides(
         return None
 
     token = extract_classroom_token(cookie)
-    headers = _classroom_headers(cookie, token, sub_id)
-    endpoint = f"{BASE_URL}/pptnote/v1/schedule/search-ppt"
-
-    slides: List[Dict[str, Any]] = []
-    seen: set = set()
-    total = 0
-    page = 1
+    backends = (
+        (BASE_URL, "/pptnote"),
+        (INTERACTIVE_BASE_URL, "/pptnoteapi"),
+    )
     max_pages = 50
-    while page <= max_pages:
-        params = {
-            "sub_id": sub_id,
-            "tenant_code": tenant_code,
-            "page": page,
-            "per_page": 100,
-        }
-        if course_id:
-            params["course_id"] = course_id
-        url = f"{endpoint}?{urllib.parse.urlencode(params)}"
-        try:
-            data = json.loads(_fetch_bytes(url, headers, timeout).decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            hint = ""
-            if error.code in (401, 403):
-                hint = "；登录态无效或 Cookie 缺少 _token，请重新登录智云课堂后重试"
-            _record(diagnostics, f"PPT 接口返回 HTTP {error.code}{hint}")
-            return slides or None
-        except Exception as error:  # noqa: BLE001 - degradation path, reason is recorded
-            _record(diagnostics, "PPT 接口请求失败。" + describe_network_error(error))
-            return slides or None
+    slides: List[Dict[str, Any]] = []
+    total = 0
+    last_reason = ""
+    reached_limit = False
 
-        if not isinstance(data, dict):
-            _record(diagnostics, "PPT 接口返回了非对象 JSON，可能改版了")
-            return slides or None
+    for origin, prefix in backends:
+        headers = _classroom_headers(cookie, token, sub_id, origin=origin)
+        endpoint = f"{origin}{prefix}/v1/schedule/search-ppt"
+        backend_slides: List[Dict[str, Any]] = []
+        seen: set = set()
+        backend_total = 0
+        page = 1
 
-        code = data.get("code")
-        if code != 0:
-            message = data.get("msg") or f"未知错误 (code={code})"
-            hint = (
-                ""
-                if token
-                else "；Cookie 中未解析到 _token，请确认包含父域 .zju.edu.cn 的会话 Cookie"
-            )
-            _record(diagnostics, f"PPT 接口返回 code={code}: {message}{hint}")
-            return slides or None
+        while page <= max_pages:
+            params = {
+                "sub_id": sub_id,
+                "tenant_code": tenant_code,
+                "page": page,
+                "per_page": 100,
+            }
+            if course_id:
+                params["course_id"] = course_id
+            url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+            try:
+                data = json.loads(_fetch_bytes(url, headers, timeout).decode("utf-8"))
+            except urllib.error.HTTPError as error:
+                if error.code in (401, 403):
+                    hint = "；登录态无效或 Cookie 缺少 _token，请重新登录智云课堂后重试"
+                    _record(diagnostics, f"PPT 接口返回 HTTP {error.code}{hint}")
+                    return None
+                last_reason = "PPT 接口请求失败。" + describe_network_error(error)
+                break
+            except Exception as error:  # noqa: BLE001 - degradation path, reason is recorded
+                last_reason = "PPT 接口请求失败。" + describe_network_error(error)
+                break
 
-        items = data.get("list") or []
-        try:
-            page_total = int(data.get("total") or 0)
-        except (TypeError, ValueError):
-            page_total = 0
-        if page_total:
-            total = page_total
+            if not isinstance(data, dict):
+                last_reason = "PPT 接口返回了非对象 JSON，可能改版了"
+                break
 
-        added = 0
-        for item in items:
-            slide = normalize_slide(item, len(slides) + 1)
-            key = (
-                slide.get("image_url")
-                or slide.get("text")
-                or json.dumps(item, sort_keys=True, ensure_ascii=False)
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            slides.append(slide)
-            added += 1
+            code = data.get("code")
+            if code != 0:
+                message = data.get("msg") or f"未知错误 (code={code})"
+                hint = (
+                    ""
+                    if token
+                    else "；Cookie 中未解析到 _token，请确认包含父域 .zju.edu.cn 的会话 Cookie"
+                )
+                last_reason = f"PPT 接口返回 code={code}: {message}{hint}"
+                break
 
-        # The API may return the whole deck on page 1 and repeat it on page 2.
-        if not items or added == 0:
+            items = data.get("list") or []
+            try:
+                page_total = int(data.get("total") or 0)
+            except (TypeError, ValueError):
+                page_total = 0
+            if page_total:
+                backend_total = page_total
+
+            added = 0
+            for item in items:
+                slide = normalize_slide(item, len(backend_slides) + 1)
+                key = (
+                    slide.get("image_url")
+                    or slide.get("text")
+                    or json.dumps(item, sort_keys=True, ensure_ascii=False)
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                backend_slides.append(slide)
+                added += 1
+
+            # The API may return the whole deck on page 1 and repeat it on page 2.
+            if not items or added == 0:
+                break
+            if backend_total and len(backend_slides) >= backend_total:
+                break
+            page += 1
+
+        if backend_slides:
+            slides = backend_slides
+            total = backend_total
+            reached_limit = page > max_pages and (not total or len(slides) < total)
             break
-        if total and len(slides) >= total:
-            break
-        page += 1
 
     if not slides:
-        if not course_id:
+        if last_reason:
+            _record(diagnostics, last_reason)
+        elif not course_id:
             _record(
                 diagnostics,
                 "PPT 列表为空；如果输入的是纯 sub_id，请补上 course_id"
@@ -817,8 +1025,9 @@ def fetch_slides(
             diagnostics,
             f"PPT 接口标记共 {total} 张，去重后取到 {len(slides)} 张（后续分页无新数据）",
         )
-    if page > max_pages and (not total or len(slides) < total):
+    if reached_limit:
         _record(diagnostics, f"PPT 分页达到上限 {max_pages} 页，已停止")
+    _apply_slide_time_axis(slides)
     return slides
 
 

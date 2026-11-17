@@ -25,7 +25,8 @@
 > `enableStudyNotes` / `enableSlides` / `slidesAsSource` / `embedSlideImages` / `enableLoginTools`。
 > 关闭时不注册对应可选工具、不加载对应代码、不追加 Skill 附录；投影的子开关仍由 `enableSlides` 总控。
 > **字幕鉴权与一键登录 `zju_login` 属于核心链路**：先匿名请求，只有 HTTP 401/403 才读取本地登录态、
-> 解析 Bearer 重试一次；仍失败就由 `zju_login` 打开独立登录窗口。登录辅助开关
+> 解析 Bearer 重试；携带登录态时若主站失败，工具会自动回退 `interactivemeta.cmc.zju.edu.cn`
+> 互动式课堂后端。仍失败就由 `zju_login` 打开独立登录窗口。登录辅助开关
 > （`enableLoginTools` / `ZJU_ENABLE_LOGIN_TOOLS`）只控制视频直链与读取浏览器登录态两个可选工具。
 > 本文件中与截图下载、填空笔记、登录辅助工具相关的边界，只在对应模块开启时适用。
 
@@ -44,8 +45,8 @@
 | **凭据落盘（一键登录）** | 登录态为了免重复登录被明文写到磁盘，或被其他本机用户、备份、磁盘镜像读取 | `zju_login` 只保存 Cookie、不保存账号密码；写入平台凭据库（Windows DPAPI / macOS 钥匙串 / Linux Secret Service，均为静态加密），**没有可用后端时只在内存里保留、不落盘**；提取后删除 `login-profile/`；`zju_login(clear=true)` 同时清除凭据项、旧明文文件与浏览器配置 |
 | **本机调试端口暴露** | 独立登录窗口的 CDP 端口被本机进程利用 | 只用 `--remote-debugging-port=0` 随机端口 + `127.0.0.1` 绑定；使用专用 profile；不向 CDP 传 Cookie，也不开放给模型；登录结束即关闭浏览器。端口本身无应用层认证，共享电脑需避免使用 |
 | **中间人窃取** | 本机根证书不全时"关闭证书校验"以让请求成功 | **绝不关闭证书校验**；信任库按 `certifi` → 随包 `cacert.pem` → 系统根证书 三级回落，三级都失败才报错，并在错误里写明当前生效的是哪一级 |
-| **跨域重定向带走 Cookie** | 服务端 302 到第三方域，urllib 原样重发 Cookie | 课堂 API 只允许**完整 origin**（scheme + host + port）一致的重定向；截图下载跨 origin 时剥离 Cookie / Authorization / Proxy-Authorization，非浙大目标不跟随（第 7.2 节、第 10 节） |
-| **截图下载 SSRF / 明文凭证** | API 返回恶意图片地址，诱导插件读取内网资源或明文发送登录态 | **初始**地址只接受 `https://*.zju.edu.cn`；**每一跳**重新校验 HTTPS、浙大域、非 IP 字面量/loopback/私网，拒绝 HTTPS→HTTP 降级；Cookie 只发给 ZJU 主机，图片按魔数校验（第 7.2 节、第 10 节） |
+| **跨域重定向带走 Cookie** | 服务端 302 到第三方域，urllib 原样重发 Cookie | 课堂 API 只允许**完整 origin**（scheme + host + port）一致的重定向；截图下载跨 origin 时剥离 Cookie / Authorization / Proxy-Authorization，白名单外目标不跟随（第 7.2 节、第 10 节） |
+| **截图下载 SSRF / 明文凭证** | API 返回恶意图片地址，诱导插件读取内网资源或明文发送登录态 | **初始**地址只接受 `https://*.zju.edu.cn` 或官方图片 CDN 白名单；**每一跳**重新校验 HTTPS、白名单域、非 IP 字面量/loopback/私网，拒绝 HTTPS→HTTP 降级；Cookie 只发给 ZJU 主机，图片按魔数校验（第 7.2 节、第 10 节） |
 | **安装副作用** | 插件把 Skill 复制进 `$DSH_HOME`，卸载后仍留副本 | 插件在 `apply()` 期间把 Skill **注册到 dsh 技能表**，不写用户目录 |
 | **仓库泄露** | 把本机路径、真实课程号、Cookie、API key 提交进 git | `tools/privacy_scan.py` 扫描工作区、git 历史与 npm tarball；默认只输出 path:line、规则名与命中长度，摘录需 `--show-excerpt` 且前后各 6 字符（第 7.5 节） |
 
@@ -63,11 +64,12 @@
      `ZJU_COOKIE_FILE`，**不会**要求模型向用户索要 Cookie，也不会让普通用户开开发者工具。
 2. **校验**：拒绝换行/回车（HTTP 头注入）、拒绝空 name、限制 8 KiB；不合法时返回原因但**不回显内容**。
 3. **使用**：字幕不发送 Cookie 头；匿名请求被拒后，从 Cookie 中解析 `_token`，
-   仅向 `classroom.zju.edu.cn` 发送 `Authorization: Bearer` 重试一次，跨域重定向拒绝。
-   投影 / 视频直链的 Cookie 仍只放在发往 `classroom.zju.edu.cn` 的请求头里；智云接口解析的
-   Bearer 同样只发往该域。截图下载只把 Cookie 发给 `*.zju.edu.cn` 图片主机；
+   向 `classroom.zju.edu.cn` 发送 `Authorization: Bearer` 重试；主站失败时再向
+   `interactivemeta.cmc.zju.edu.cn` 发同一个 Bearer。两个请求都按同 origin 校验重定向。
+   投影 Cookie 只发往 `classroom.zju.edu.cn`；回退到 `interactivemeta.cmc.zju.edu.cn` 时也只发往
+   该浙大官方域。视频直链仍只走主站。截图下载只把 Cookie 发给 `*.zju.edu.cn` 图片主机；
    图片响应为 401/403 时才会把 Bearer 重试到同一图片主机。
-   重定向逐跳校验：只允许浙大主机、拒绝 HTTPS 降级与 IP/loopback/私网目标；
+   重定向逐跳校验：只允许浙大域或官方图片 CDN 白名单、拒绝 HTTPS 降级与 IP/loopback/私网目标；
    跨 origin 时剥离 Cookie / Authorization / Proxy-Authorization（第 7.2 节、第 10 节）。
 4. **缓存**：运行时缓存存于 Python 子进程内存（`_COOKIE_CACHE`），进程退出即消失；
    唯一的持久凭据副本是第 8 条由 `zju_login` 保存的登录态。
@@ -120,7 +122,7 @@
   Typst 仍可能访问包注册表；底稿不是安全边界，见第 7.8 节。
 - **截图/PDF 写入范围**：`zju_fetch_slides(download=true)` 只写工作区内的 `ppt-assets/<sub_id>/`
   （或 `output_dir` 指定的工作区内目录）；最多 2000 张、单张 ≤32 MiB、总量 512 MiB 硬停，
-  只落盘通过魔数校验的 JPEG/PNG。非浙大主机、HTTP 降级、IP/loopback/私网目标与跨 origin 凭据
+  只落盘通过魔数校验的 JPEG/PNG。白名单外主机、HTTP 降级、IP/loopback/私网目标与跨 origin 凭据
   都会被拒绝（第 7.2 与 7.9 节、第 10 节）。`output_dir` 指向非默认目录时，该目录可能不在
   `.gitignore` 内，提交前请自行确认。
 - **投影三档**：`enableSlides` 只负责注册工具；`slidesAsSource`（`ZJU_SLIDES_SOURCE`）决定
@@ -146,15 +148,17 @@
 ## 4. 不收集、不外传
 
 - 无遥测、无统计、无自动更新、无后台常驻进程。
-- 正常请求发往 `https://classroom.zju.edu.cn`（字幕、投影列表、视频直链）与
-  `https://*.zju.edu.cn` 图片主机（仅投影截图下载，且只在该模块开启时）。
+- 正常请求发往 `https://classroom.zju.edu.cn`（字幕、投影列表、视频直链）、
+  `https://interactivemeta.cmc.zju.edu.cn`（互动式课堂字幕 / 投影回退后端）、
+  `https://*.zju.edu.cn` 图片主机与官方图片 CDN（`chinamcloud.com` / `chinamcloud.cn` /
+  `chinamcache.com`，仅投影截图下载，且只在该模块开启时）。
   `zju_login` 的独立浏览器会访问 `classroom.zju.edu.cn` 与浙大 SSO
   （`zjuam.zju.edu.cn`，同一 `*.zju.edu.cn` 域），由浏览器按正常网页流程发起。
   例外：
   - 缺少 Typst 且允许自动安装时，会从 GitHub 官方 Release 下载归档（约 20 MB），
     按固定 SHA256 校验；归档镜像可通过 `ZJU_TYPST_MIRROR` 改为用户指定地址；
   - 底稿引用未 vendor 的 Typst 包时，编译器可能访问 `https://typst.app` 包注册表；
-  - 截图重定向逐跳校验，非浙大主机、HTTP 降级、IP/loopback/私网目标都不会被访问
+  - 截图重定向逐跳校验，白名单外主机、HTTP 降级、IP/loopback/私网目标都不会被访问
     （第 7.2 节、第 10 节）。
 - 不写 `~/.dsh`、不写 `~/.minimax`；为了提示同名旧 Skill 冲突，会**只读**检查
   `$DSH_HOME/skills/<name>/SKILL.md` 或 `~/.dsh/skills/...` 的内容哈希，不会修改它。
@@ -234,7 +238,7 @@
 | 编号 | 等级 | 审查确认的问题 | 修复（commit） | 回归测试 |
 | :--- | :--- | :--- | :--- | :--- |
 | 7.1 | **高** | dsh 的整个插件共用一个 Python bridge；会话 A 有在途调用时，会话 B 切换工作区被 `pending.size > 0` 挡住，B 按 A 的 cwd / `ZJU_WORKSPACE` 解析相对路径。 | `c69fbdf`：按绝对 workspace 建 `Map<key, WorkspaceSession>`（LRU 2），每个会话独立 cwd / `ZJU_WORKSPACE` / pending / stderr；删除 `PLUGIN_ROOT` 回退，工作区缺失或不存在时直接拒绝。 | `tests/bridge_workspace_isolation.mjs`；`bridge_workspace_smoke.mjs`。 |
-| 7.2 | 中 | 截图只校验初始 URL；重定向按 hostname 决定是否剥凭据，同主机 HTTPS→HTTP / 换端口仍带 Cookie，跨主机可到 loopback / 内网。 | `a45e551`：按完整 origin（scheme + host + port）比较；拒绝 HTTPS 降级、URL userinfo、IP 字面量、localhost 与私网；非浙大目标不跟随并写 diagnostics；跨 origin 剥离 Cookie / Authorization / Proxy-Authorization（第 10 节）。 | `tests/test_redirect_security.py`（15 条，含本地 server「目标 0 请求」断言）。 |
+| 7.2 | 中 | 截图只校验初始 URL；重定向按 hostname 决定是否剥凭据，同主机 HTTPS→HTTP / 换端口仍带 Cookie，跨主机可到 loopback / 内网。 | `a45e551`：按完整 origin（scheme + host + port）比较；拒绝 HTTPS 降级、URL userinfo、IP 字面量、localhost 与私网；非浙大目标不跟随并写 diagnostics；跨 origin 剥离 Cookie / Authorization / Proxy-Authorization（第 10 节）。 | `tests/test_redirect_security.py`（17 条，含本地 server「目标 0 请求」断言）。 |
 | 7.3 | 中 | `zju_check_note(fix=true)` 与 `mode=patch` 可写工作区外 Markdown；`patch` 不生成备份。 | `0d7f037`：`paths.require_workspace_path()` 统一 resolve → realpath → 工作区 → guard →（写入）realpath 复检；三个分支接入，读工具新增显式 `allow_outside_workspace`（默认 false，第 9 节）。 | `tests/test_workspace_boundary.py`（10 条，含软链/junction 与 mtime 断言）。 |
 | 7.4 | 中 | `ZJU_TYPST_MIRROR` 原样进入 `zju_doctor`、下载进度与 stderr，userinfo / 签名 query 会进入模型上下文或宿主日志。 | `db46f38`：`deps._redact_url()` 只保留 `scheme://host[:port]/path`；describe / progress / 异常全部脱敏；bridge.js 对 Python stderr 再做一层 JS 脱敏（Cookie 头、URL userinfo、token/key/secret/signature）。 | `tests/test_deps_redaction.py`（6 条）。 |
 | 7.5 | 中 | `privacy_scan.py` 的摘录只截断不掩码，文本与 JSON 输出都包含命中原文。 | `d6f0668`：Finding 增加 `match_length`；摘录保留前后各 6 字符、中间 `***`；默认只输出 path:line / 规则 / 长度，`--show-excerpt` 才输出掩码摘录。 | `tests/test_privacy_scan_mask.py`（7 条）。 |
@@ -313,15 +317,18 @@ python tools/privacy_scan.py --tarball <npm pack 产物>
 **origin 定义**：`(scheme, host, port)`，缺省端口按 80/443 补齐。只看 hostname 会让
 `https://a:443 → https://a:8443` 或 `https → http` 继续携带 Cookie，所以两者都按不同 origin 处理。
 
-1. **课堂 API（`_SameHostRedirectHandler`）**：只允许与 `https://classroom.zju.edu.cn`
-   完全同 origin 的跳转；跨 origin、HTTPS→HTTP、带 userinfo 的 URL 一律抛 `HTTPError`。
-2. **截图下载（`_StripAuthOnCrossHostRedirectHandler`）**：目标必须是 `*.zju.edu.cn`，
-   否则**不跟随**（返回 3xx），并把原因写入 `diagnostics`
-   （「已阻止跳转到非浙大域: …」「已阻止跳转到受限主机: …」）。
+1. **课堂 API（`_SameHostRedirectHandler`）**：每个请求只允许与其当前 origin 完全一致的跳转
+   （`classroom.zju.edu.cn` 或 `interactivemeta.cmc.zju.edu.cn`）；跨 origin、HTTPS→HTTP、
+   带 userinfo 的 URL 一律抛 `HTTPError`。互动式课堂后端是独立请求，不是 302 跳转。
+2. **截图下载（`_StripAuthOnCrossHostRedirectHandler`）**：目标必须是 `*.zju.edu.cn` 或官方图片 CDN
+   白名单（`chinamcloud.com` / `chinamcloud.cn` / `chinamcache.com`），否则**不跟随**（返回 3xx），
+   并把原因写入 `diagnostics`（「已阻止跳转到非浙大域/非官方图片 CDN: …」
+   「已阻止跳转到受限主机: …」）。
    跨 origin 时剥离 `Cookie` / `Authorization` / `Proxy-Authorization`；同 origin 才保留。
 3. **SSRF 目标**：IP 字面量（含 `127.0.0.0/8`、`169.254.0.0/16`、`10/8`、`172.16/12`、
    `192.168/16`、`::1`）、`localhost` / `*.localhost` 一律拒绝，且拒绝发生在建立连接之前。
-4. **初始地址**仍是 `https://*.zju.edu.cn`；`http` 只对浙大主机升级为 HTTPS，其他直接拒绝。
+4. **初始地址**仍是 `https://*.zju.edu.cn` 或上述官方图片 CDN；`http` 只对这些白名单主机
+   升级为 HTTPS，其他直接拒绝。
 5. **诊断不含凭据**：阻断原因只写 host/origin，不写请求头；与第 7.4 节的 URL 脱敏共用出口。
 
 回归：`tests/test_redirect_security.py`（origin 单元测试 + 本地 HTTP server：

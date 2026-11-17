@@ -1,5 +1,28 @@
 # 更新日志
 
+## 2.2.9 — 2026-11-17
+
+- 跟进上游互动式课堂支持：`zju_parse_url` 兼容
+  `interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...` 的 hash 路由回放链接；
+  字幕带登录态时主站失败自动回退互动式课堂后端，投影为空/失败时回退
+  `interactivemeta.cmc.zju.edu.cn/pptnoteapi`。
+- 投影截图允许上游互动式课堂实际使用的官方图片 CDN（`chinamcloud.com` /
+  `chinamcloud.cn` / `chinamcache.com`，闭集白名单）；仍强制 HTTPS，跨 origin 剥离
+  Cookie / Authorization，Cookie 只发往浙大图片主机。字幕仍不发 Cookie 头。
+- `zju_write_note` 新增 `content_file`（与 `content` 二选一）：长讲义先 `write` 落盘，
+  再 finalize，避免在 `run_code` 模板字符串里重复粘贴全文；草稿与目标同名时允许原地
+  finalize 并备份原稿。
+- `zju_fetch_slides` 从截图 URL 的 13 位毫秒文件名解析拍摄时间，转成相对第一页的
+  `time`；返回紧凑索引（目录 + 命名模式 + `页时间轴` + 建议抽查页），不再逐页打印
+  绝对/相对路径。150 页索引从约 18–21k 字符降到约 1.8k。
+- 系统提示与 Skill 增加投影阅读预算：按字幕关键节点抽查 15–25 页，超过 60 页不要逐页通读；
+  并明确 `run_code` 每次是独立进程，构造 Markdown 与调用 `zju_write_note` 必须在同一程序。
+- 修复 `time=0` 被 `or` 丢掉、`/images/` 截图路径示例与实际输出不一致的问题。
+- `zju_write_note` / `zju_check_note` 新增 `图片引用: N 张 | ...` 检查：区分本地缺失、
+  工作区外与外链；PDF 成功时把 Typst 的图片/排版警告以 `PDF 提示:` 回传。
+- `SLIDES.md` 的登录指引统一到 `zju_login` 优先；去重输出改为
+  「连续字节完全重复折叠」，投影索引使用折叠后的 kept pages，避免索引页数与 PDF 页数不一致。
+
 版本号在 `package.json`、`pyproject.toml`、`mcp_server.SERVER_VERSION`、根 `plugin.json`、
 `.minimax-plugin/plugin.json`、`adapters/claude_code/plugin.json` 与四个 Skill manifest
 共十处对齐。

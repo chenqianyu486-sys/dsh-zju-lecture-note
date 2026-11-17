@@ -92,6 +92,30 @@ class TestSameOriginRedirectHandler(unittest.TestCase):
                 self._request(), None, 302, "Found", {}, "https://evil.example/steal"
             )
 
+    def test_interactive_backend_allows_only_its_own_origin(self):
+        request = urllib.request.Request(
+            "https://interactivemeta.cmc.zju.edu.cn/courseapi/v3/example",
+            headers={"Authorization": "Bearer tok"},
+        )
+        follow = client._SameHostRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            {},
+            "https://interactivemeta.cmc.zju.edu.cn/courseapi/v3/other",
+        )
+        self.assertIsNotNone(follow)
+        with self.assertRaises(urllib.error.HTTPError):
+            client._SameHostRedirectHandler().redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://classroom.zju.edu.cn/other",
+            )
+
 
 class TestStripAuthRedirectHandler(unittest.TestCase):
 
@@ -140,6 +164,23 @@ class TestStripAuthRedirectHandler(unittest.TestCase):
             "https://media.cmc.zju.edu.cn:8443/2.jpg",
         )
         self.assertIsNotNone(follow)
+        self.assertEqual(
+            self._headers(follow),
+            {"Cookie": None, "Authorization": None, "Proxy-Authorization": None},
+        )
+
+    def test_official_image_cdn_is_allowed_but_credentials_are_stripped(self):
+        diagnostics = []
+        follow = client._StripAuthOnCrossHostRedirectHandler(diagnostics).redirect_request(
+            self._request(),
+            None,
+            302,
+            "Found",
+            {},
+            "https://cdn.chinamcloud.com/2.jpg",
+        )
+        self.assertIsNotNone(follow)
+        self.assertEqual(diagnostics, [])
         self.assertEqual(
             self._headers(follow),
             {"Cookie": None, "Authorization": None, "Proxy-Authorization": None},

@@ -10,7 +10,7 @@
 | 文件 | 来源 | 说明 |
 | :--- | :--- | :--- |
 | `zju_lecture/cookies.py` | 上游 `browser_cookies.py` | Edge Cookie 数据库定位、内置纯 Python AES-128-CBC 解密（macOS Keychain + PBKDF2-SHA1(1003)）、Windows DPAPI 解密。移植时改进了错误分类、临时文件清理与 Windows 侧 v10/v20 前缀兼容。 |
-| `zju_lecture/client.py` | 上游 `pipeline.py` 的抓取逻辑 | 智云课堂公开字幕接口 `courseapi/v3/web-socket/search-trans-result`、投影 PPT 接口 `pptnote/v1/schedule/search-ppt`、播放器配置接口 `courseapi/v2/play-template/get-config`。 |
+| `zju_lecture/client.py` | 上游 `pipeline.py` 的抓取逻辑 | 智云课堂公开字幕接口 `courseapi/v3/web-socket/search-trans-result`、投影 PPT 接口 `pptnote/v1/schedule/search-ppt`、播放器配置接口 `courseapi/v2/play-template/get-config`；互动式课堂 hash 回放链接解析、`interactivemeta.cmc.zju.edu.cn` 字幕 / `pptnoteapi` 备用后端与官方图片 CDN 白名单。 |
 | `zju_lecture/formatter.py` | 上游 `pipeline.py` 的格式化逻辑 | 按分钟聚合、按字符数分块、时间戳格式化。 |
 | `zju_lecture/courseware.py` | 上游 `pipeline.py` 的课件提取逻辑 | PPTX / DOCX / TXT / MD / PDF 纯标准库文本提取。 |
 | `skills/zju-lecture-summarizer/SKILL.md` | 上游 README 与总结提示词 | 五段式讲义模板（速览表 / 分章详解 / 公式清单 / 考试信息 / 考点预测）、降噪规则、LaTeX 公式规范。 |

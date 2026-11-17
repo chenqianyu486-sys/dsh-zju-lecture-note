@@ -78,14 +78,21 @@ dsh-zju-lecture-note/
     →（compile）scholia PDF + 逐页 PNG
 ```
 
+回放地址支持两种官方形态：`classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...`，
+以及互动式课堂的 hash 路由 `interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...`。
+`parse_lecture_url()` 先读普通 query；没有 `sub_id` 时再解析 `#` 后的 fragment query，两种链接都可以
+直接交给 `zju_fetch_transcript` / `zju_fetch_slides`。
+
 字幕保留 `classroom.zju.edu.cn`：先匿名请求，**仅 HTTP 401/403** 时调用 `_resolve_cookie`
 （进程缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 保存的本机登录态 → Edge）
-解析 `_token`，用 Bearer 重试一次。
+解析 `_token`，用 Bearer 重试。携带登录态时，主站失败或业务错误会再试一次
+`interactivemeta.cmc.zju.edu.cn` 的同一个 `search-trans-result` 路径；这是工具内部的自动回退，
+不要手工换主机。字幕请求**不发 Cookie 头**，Bearer 只发往这两个浙大官方主机。
 兼容两种返回：`ainew` 用 `BeginSec` / `Text`，老课程 `ai` 用 `time` / `zhtext` / `entext`
 （以第一条时间戳为相对零点换算秒数）。
 字幕鉴权属于核心链路，**不需要开启登录辅助工具**（`enableLoginTools` 只控制视频直链与读 Cookie 工具）。
-字幕请求**不发 Cookie 头**；官网实证同一课匿名 403、Bearer-only HTTP 200 / code 0、返回 942 条字幕，
-不需要更换主机。CLI 默认自动重试，`--no-login` 可关闭，`--cookie-file` 可指定本地文件；没有明文 token 参数。
+官网实证同一课匿名 403、Bearer-only HTTP 200 / code 0；CLI 默认自动重试，`--no-login` 可关闭，
+`--cookie-file` 可指定本地文件；没有明文 token 参数。
 
 ### 一键登录窗口（`zju_login`）
 
@@ -255,9 +262,13 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
   讲义内容来源（写前必须抓取并下载一次）；`embedSlideImages` 只决定是否插入 3–8 张关键页。
   两个子开关都关闭时，提示词仍要求写讲义前调用一次 `download=false` 核对清单，避免
   「打开了抓取开关但模型从不调用」。系统提示、Skill 附录和工具描述三处都写明顺序。
+- 投影接口主站为 `classroom.zju.edu.cn/pptnote`，空列表或请求失败时回退
+  `interactivemeta.cmc.zju.edu.cn/pptnoteapi`；两个后端都使用同一份登录态。401/403 不重试后端，
+  直接提示重新登录。
 - 投影截图默认下载到 `<工作区>/ppt-assets/<sub_id>/`（已 gitignore）；接口没有文字层 / OCR，
   需要幻灯片原文时走 `zju_extract_courseware`。模型不能读图时禁止臆造幻灯片文字，
   只在文末列截图索引。
+- 截图 URL 的时间戳会转成相对第一页的 `time`；`zju_fetch_slides` 返回紧凑的 `页时间轴`。
 - 登录辅助默认关闭（dsh `enableLoginTools=false`），只影响视频直链与读 Cookie 工具，不影响字幕。
   `zju_login` 是核心工具，始终注册；字幕鉴权由字幕工具内部自动完成，不需模型先调读 Cookie 工具，
   也不新增工具或凭据参数。
@@ -300,7 +311,12 @@ v2.0.1 起，「字幕 → 讲义 → PDF」主链路与投影、填空笔记等
 4. **写文件**：原子替换；回写前备份到 `ZJU_BACKUP_DIR`。
 5. **排版 PDF**：把同一份内容写进 `<工作区>/.zju-lecture/handout/<stem>/main.typ` 并编译；
    成功时 PDF 落在讲义同目录，返回一行 `PDF: <路径>（N 页）`；失败只回一行
-   `PDF 跳过: …`，Markdown 已写入。
+   `PDF 跳过: …`，Markdown 已写入。成功时也把 Typst 的图片/排版警告以
+   `PDF 提示:` 回传，不再静默丢弃。
+6. **图片检查**：扫描 Markdown 图片引用，返回 `图片引用: N 张 | ...`；
+   区分本地缺失、工作区外与外链，避免 PDF 里只剩「图片未嵌入」占位。
+
+输入支持 `content` 或 `content_file`（二选一；后者读取工作区 `.md` 草稿，适合长讲义，避免在 `run_code` 里重复粘贴）。
 
 省 token 的约定：`zju_write_note` 已经包含校验，**通常不需要**再调 `zju_check_note`；
 只有手工改过文件、或想给已有讲义补 PDF 时才用 `zju_check_note(pdf=true)`。
@@ -508,8 +524,9 @@ python tools/check_note.py --fix 讲义.md       # 自动修正机械问题
 
 1. 来源只有本地：内存缓存 → `ZJU_COOKIE` → `ZJU_COOKIE_FILE` → `zju_login` 保存的登录态 → 本机 Edge；
 2. 校验：拒绝换行（HTTP 头注入）、空 name、超长；不合法只返回原因，不回显内容；
-3. 使用：字幕先匿名，仅 HTTP 401/403 后自动读取本地登录态、解析 Bearer 重试一次；
-   字幕不发 Cookie 头，Bearer 仅发往 `classroom.zju.edu.cn`，课堂 API 跨域重定向拒绝；投影边界见下；
+3. 使用：字幕先匿名，仅 HTTP 401/403 后自动读取本地登录态、解析 Bearer 重试；
+   主站失败时自动回退 `interactivemeta.cmc.zju.edu.cn`。字幕不发 Cookie 头，Bearer 只发往这两个
+   浙大官方主机；每次请求仍按同 origin 校验重定向；投影边界见下；
 4. 缓存：Python 子进程内存；
 5. 回显：Cookie / 密码 / Bearer 没有；工具 schema 中没有 cookie / password / reveal / domain 参数。
    签名视频直链是例外，会作为预期结果返回给调用方；
@@ -551,13 +568,16 @@ dsh 0.2.x 不为工具参数生成根级封闭声明，但 `handle_tool_call` �
 - TLS 证书校验**永远不会被关闭**。信任库按 `certifi` → 随包 `cacert.pem` → 系统根证书三级回落；
   三级都不够时才失败，并返回原因 + 下一步（当前信任库、CA 张数、`HTTPS_PROXY`、该装什么）。
 - 瞬时故障（`IncompleteRead` / `SSLEOFError` / 超时 / 5xx）重试 3 次，指数退避 + 抖动；
-  证书校验失败**不重试**。字幕 HTTP 401/403 只做一次 Bearer 重试，不能循环尝试；
-  区分 HTTP 状态、接口业务错误与本地凭据读取失败，不把 403 直接判为校园网限制或要求更换后端。
-- 课堂 API 的 Cookie（投影 / 视频直链）与 Bearer 仅发往 `classroom.zju.edu.cn`；字幕不发 Cookie 头。
-  课堂 API 的跨域 302 直接拒绝，避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
-- 投影截图的**初始**地址只允许 `https://*.zju.edu.cn`；ZJU 的 `http://` 自动升级 HTTPS；
+  证书校验失败**不重试**。字幕 HTTP 401/403 只做一次 Bearer 重试；携带登录态时主站失败再试
+  一次互动式课堂后端，不能无限循环；区分 HTTP 状态、接口业务错误与本地凭据读取失败，
+  不把 403 直接判为校园网限制。
+- 课堂 API 的 Cookie（投影 / 视频直链）与 Bearer 只发往 `classroom.zju.edu.cn` 与
+  `interactivemeta.cmc.zju.edu.cn`；字幕不发 Cookie 头。每个课堂请求的跨域 302 直接拒绝，
+  避免 `urllib` 把 `Cookie` / `Authorization` 头重发到第三方域。
+- 投影截图的**初始**地址只允许 `https://*.zju.edu.cn` 或官方图片 CDN 白名单
+  （`chinamcloud.com` / `chinamcloud.cn` / `chinamcache.com`）；`http://` 对这些主机自动升级 HTTPS。
   Cookie 只给 ZJU 图片主机。图片返回 401/403 时 Bearer 只重试到同一图片主机。
-  重定向逐跳校验：目标必须是浙大主机，拒绝 HTTPS→HTTP、URL userinfo、IP 字面量与
+  重定向逐跳校验：目标必须属于上述白名单，拒绝 HTTPS→HTTP、URL userinfo、IP 字面量与
   私网/loopback；跨 origin 时剥离 Cookie / Authorization / Proxy-Authorization，
   被阻止的跳转只写 diagnostics（见 [SECURITY.md](../SECURITY.md) §10）。
 - 可选的 Typst 自动安装会访问 GitHub 官方 Release，并通过 `ZJU_TYPST_MIRROR` 支持镜像；

@@ -213,7 +213,8 @@ def _validated_payload(cookie: str, browser: str = "") -> Dict[str, Any]:
     if not extract_classroom_token(header):
         raise LoginError(
             "登录态里没有 _token，无法用于字幕鉴权。",
-            "请确认登录的是 classroom.zju.edu.cn（不是其他浙大站点），然后重试。",
+            "请确认登录的是智云课堂 / 互动式课堂（classroom.zju.edu.cn 或 "
+            "interactivemeta.cmc.zju.edu.cn），而不是其他浙大站点，然后重试。",
             reason="save_failed",
         )
     return {

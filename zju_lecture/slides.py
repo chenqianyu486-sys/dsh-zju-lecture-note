@@ -9,8 +9,9 @@ inflated (FlateDecode), and no image is re-encoded.
 
 Security boundaries:
 
-* only ``https://*.zju.edu.cn`` image URLs are fetched;
-* plain ``http`` is upgraded to HTTPS for ZJU hosts and refused otherwise;
+* image URLs must be HTTPS on ``*.zju.edu.cn`` or the official image CDN
+  allowlist (``chinamcloud`` / ``chinamcache``); everything else is refused;
+* plain ``http`` is upgraded to HTTPS for those hosts;
 * the login Cookie is only sent to ZJU hosts (never to arbitrary URLs the
   API may return), and ``Authorization`` is never sent to image hosts;
 * image bytes are validated by magic number before anything is written.
@@ -30,8 +31,9 @@ from .client import (
     USER_AGENT,
     _fetch_bytes,
     extract_classroom_token,
+    is_allowed_image_host,
     is_zju_host,
-    secure_zju_url,
+    secure_image_url,
 )
 from .paths import primary_workspace
 from .security import sanitize_cookie_header
@@ -52,14 +54,14 @@ def _record(diagnostics: Optional[List[str]], message: str) -> None:
 
 
 def _safe_image_url(url: str) -> Optional[str]:
-    """Return the HTTPS ZJU URL to fetch, or ``None`` when it is unsafe."""
-    value = secure_zju_url(url)
+    """Return the HTTPS ZJU/official-CDN URL to fetch, or ``None`` if unsafe."""
+    value = secure_image_url(url)
     parsed = urllib.parse.urlparse(value)
     if parsed.scheme != "https":
         return None
     if parsed.username or parsed.password:
         return None
-    if not is_zju_host(parsed.hostname):
+    if not is_allowed_image_host(parsed.hostname):
         return None
     return value
 
@@ -87,7 +89,7 @@ def _download_one(
         return index, None, "该页没有截图地址"
     safe_url = _safe_image_url(url)
     if safe_url is None:
-        return index, None, "截图地址不是 HTTPS 浙大主机，已拒绝下载"
+        return index, None, "截图地址不是 HTTPS 浙大主机或官方图片 CDN，已拒绝下载"
 
     host = (urllib.parse.urlparse(safe_url).hostname or "").lower()
     headers = {

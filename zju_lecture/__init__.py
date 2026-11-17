@@ -9,14 +9,17 @@ ship this same implementation, so their tools behave identically.
 
 from .client import (
     BASE_URL,
+    INTERACTIVE_BASE_URL,
     ZJUAPIError,
     extract_classroom_token,
     fetch_slides,
     fetch_transcript,
     fetch_video_url,
+    is_allowed_image_host,
     is_zju_host,
     normalize_slide,
     parse_lecture_url,
+    secure_image_url,
     secure_zju_url,
 )
 from .cookies import CookieAccessError, get_edge_cookie, read_edge_cookies
@@ -99,6 +102,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "BASE_URL",
+    "INTERACTIVE_BASE_URL",
     "ZJUAPIError",
     "CookieAccessError",
     "CoursewareError",
@@ -110,6 +114,8 @@ __all__ = [
     "normalize_slide",
     "extract_classroom_token",
     "is_zju_host",
+    "is_allowed_image_host",
+    "secure_image_url",
     "secure_zju_url",
     "download_slides",
     "build_slides_pdf",

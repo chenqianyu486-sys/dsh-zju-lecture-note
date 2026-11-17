@@ -148,6 +148,20 @@ class TestNormalizeSlide(unittest.TestCase):
         self.assertEqual(slide["text"], "手写内容")
         self.assertEqual(slide["image_url"], "")
 
+    def test_capture_timestamp_is_parsed_from_image_url(self):
+        slide = client_module.normalize_slide(
+            {
+                "content": json.dumps({
+                    "pptimgurl": (
+                        "https://media.cmc.zju.edu.cn/ai3/ppt/20261112/"
+                        "uuid/1794441389000.jpg"
+                    )
+                })
+            },
+            1,
+        )
+        self.assertEqual(slide["capture_ms"], 1794441389000)
+
 
 class TestFetchSlides(unittest.TestCase):
     def _fake_fetch(self, pages, calls):
@@ -220,6 +234,29 @@ class TestFetchSlides(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertTrue(any("只取到 1" in item or "1 张" in item for item in diagnostics))
 
+    def test_capture_timestamps_become_relative_times(self):
+        page = {
+            "code": 0,
+            "total": 2,
+            "list": [
+                {"content": json.dumps({
+                    "pptimgurl": "https://media.cmc.zju.edu.cn/1794441389000.jpg"
+                })},
+                {"content": json.dumps({
+                    "pptimgurl": "https://media.cmc.zju.edu.cn/1794441424000.jpg"
+                })},
+            ],
+        }
+        with mock.patch.object(
+            client_module, "_fetch_bytes", self._fake_fetch({1: page}, [])
+        ):
+            slides = client_module.fetch_slides(
+                "123456", cookie=_token_cookie(), course_id="58133"
+            )
+        self.assertEqual(slides[0]["capture_ms"], 1794441389000)
+        self.assertEqual(slides[0]["time"], 0)
+        self.assertEqual(slides[1]["time"], 35)
+
     def test_http_401_names_the_login_problem(self):
         def fake_fetch(url, headers, timeout, **kwargs):
             raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
@@ -232,6 +269,54 @@ class TestFetchSlides(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(len(diagnostics), 1)
         self.assertIn("401", diagnostics[0])
+        self.assertIn("重新登录", diagnostics[0])
+
+    def test_empty_primary_falls_back_to_interactive_backend(self):
+        second = {
+            "code": 0,
+            "total": 1,
+            "list": [
+                {"content": json.dumps({"pptimgurl": "https://media.cmc.zju.edu.cn/1.jpg"})},
+            ],
+        }
+        responses = [b'{"code":0,"total":0,"list":[]}', json.dumps(second).encode("utf-8")]
+        calls = []
+
+        def fake_fetch(url, headers, timeout, **kwargs):
+            calls.append((url, dict(headers)))
+            return responses.pop(0)
+
+        with mock.patch.object(client_module, "_fetch_bytes", fake_fetch):
+            slides = client_module.fetch_slides(
+                "123456", cookie=_token_cookie(), course_id="58133"
+            )
+
+        self.assertEqual([slide["image_url"] for slide in slides], [
+            "https://media.cmc.zju.edu.cn/1.jpg",
+        ])
+        self.assertEqual(len(calls), 2)
+        first = urllib.parse.urlparse(calls[0][0])
+        second_url = urllib.parse.urlparse(calls[1][0])
+        self.assertEqual(first.hostname, "classroom.zju.edu.cn")
+        self.assertEqual(second_url.hostname, "interactivemeta.cmc.zju.edu.cn")
+        self.assertEqual(second_url.path, "/pptnoteapi/v1/schedule/search-ppt")
+        self.assertTrue(calls[1][1]["Referer"].startswith("https://interactivemeta.cmc.zju.edu.cn/"))
+
+    def test_primary_401_is_not_hidden_by_fallback(self):
+        calls = []
+
+        def fake_fetch(url, headers, timeout, **kwargs):
+            calls.append(url)
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+        diagnostics = []
+        with mock.patch.object(client_module, "_fetch_bytes", fake_fetch):
+            result = client_module.fetch_slides(
+                "123456", cookie=_token_cookie(), course_id="58133", diagnostics=diagnostics
+            )
+        self.assertIsNone(result)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(diagnostics), 1)
         self.assertIn("重新登录", diagnostics[0])
 
     def test_empty_list_without_course_id_asks_for_it(self):
@@ -348,6 +433,18 @@ class TestDownloadAndPdf(unittest.TestCase):
         self.assertEqual(len(re.findall(rb"/Type /Page(?!s)", data)), 2)
         self.assertIn(b"/DCTDecode", data)
         self.assertIn(b"/FlateDecode", data)
+
+    def test_official_image_cdn_is_accepted_and_upgraded_to_https(self):
+        self.assertEqual(
+            slides_module._safe_image_url("http://cdn.chinamcloud.com/a.jpg"),
+            "https://cdn.chinamcloud.com/a.jpg",
+        )
+        self.assertIsNone(
+            slides_module._safe_image_url("https://evilchinamcloud.com/a.jpg")
+        )
+        self.assertIsNone(
+            slides_module._safe_image_url("https://cdn.chinamcloud.com.evil.example/a.jpg")
+        )
 
     def test_non_zju_image_url_is_refused(self):
         slides = [{"page": 1, "image_url": "https://evil.example/a.jpg", "text": ""}]
@@ -524,6 +621,55 @@ class TestSlideFormatter(unittest.TestCase):
             text,
         )
 
+    def test_zero_time_is_not_dropped(self):
+        text = format_slides_as_markdown([{
+            "page": 1,
+            "time": 0,
+            "local_path": "/tmp/workspace/ppt-assets/123/slide-0001.jpg",
+            "workspace_rel": "ppt-assets/123/slide-0001.jpg",
+        }])
+        self.assertIn("[00:00:00]", text)
+
+    def test_compact_index_uses_time_axis_and_file_pattern(self):
+        text = format_slides_as_markdown(
+            [
+                {
+                    "page": 1,
+                    "time": 0,
+                    "capture_ms": 1794441389000,
+                    "local_path": "/tmp/workspace/ppt-assets/123/slide-0001.jpg",
+                    "workspace_rel": "ppt-assets/123/slide-0001.jpg",
+                },
+                {
+                    "page": 2,
+                    "time": 125,
+                    "capture_ms": 1794441514000,
+                    "local_path": "/tmp/workspace/ppt-assets/123/slide-0002.jpg",
+                    "workspace_rel": "ppt-assets/123/slide-0002.jpg",
+                },
+            ],
+            compact=True,
+        )
+        self.assertIn("拍摄日期: 2026-11-12（周四）", text)
+        self.assertIn("页时间轴（相对第 1 页）: 1=00:00 2=00:02", text)
+        self.assertIn("截图目录: ppt-assets/123", text)
+        self.assertIn("文件命名: slide-0001.jpg … slide-0002.jpg", text)
+        self.assertIn("建议抽查（无明确关键页时）: 1, 2", text)
+        self.assertIn("引用示例: ![第 1 页](ppt-assets/123/slide-0001.jpg)", text)
+        self.assertNotIn("工作区相对路径:", text)
+
+    def test_compact_index_keeps_one_remote_example(self):
+        text = format_slides_as_markdown(
+            [{
+                "page": 1,
+                "time": 0,
+                "image_url": "https://media.cmc.zju.edu.cn/1794441389000.jpg",
+            }],
+            compact=True,
+        )
+        self.assertIn("截图地址示例: https://media.cmc.zju.edu.cn/1794441389000.jpg", text)
+        self.assertIn("download=false", text)
+
 
 class TestEmbedSlideSetting(unittest.TestCase):
     def test_truthy_env_values(self):
@@ -616,7 +762,8 @@ class TestMcpHandler(unittest.TestCase):
                 "confirm": True,
             })
         self.assertIn("PDF: /tmp/ppt/PPT-123.pdf", output)
-        self.assertIn("截图文件: /tmp/slide-0001.jpg", output)
+        self.assertIn("截图目录: /tmp", output)
+        self.assertIn("文件命名: slide-0001.jpg", output)
         self.assertIn("不是文字层", output)
 
     def test_metadata_only_shows_remote_url(self):
@@ -635,7 +782,7 @@ class TestMcpHandler(unittest.TestCase):
                     "https://classroom.zju.edu.cn/livingroom?course_id=1&sub_id=123"
                 ),
             })
-        self.assertIn("截图: https://media.cmc.zju.edu.cn/2.jpg", output)
+        self.assertIn("截图地址示例: https://media.cmc.zju.edu.cn/2.jpg", output)
         self.assertNotIn("PDF:", output)
 
     def test_setting_on_downloads_when_download_is_omitted(self):

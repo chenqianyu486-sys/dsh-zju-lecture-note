@@ -90,6 +90,15 @@ class TestFormatters(unittest.TestCase):
         self.assertEqual(res2["sub_id"], "987654")
         self.assertEqual(res2["tenant_code"], "112")
 
+        # 互动式课堂使用 hash 路由，参数在 # 后面而不是普通 query。
+        res3 = parse_lecture_url(
+            "https://interactivemeta.cmc.zju.edu.cn/"
+            "#/replay?course_id=87766&sub_id=765432&tenant_code=112"
+        )
+        self.assertEqual(res3["course_id"], "87766")
+        self.assertEqual(res3["sub_id"], "765432")
+        self.assertEqual(res3["tenant_code"], "112")
+
         with self.assertRaises(Exception):
             parse_lecture_url("")
 
@@ -330,6 +339,14 @@ class TestMCPTools(unittest.TestCase):
         url = "https://classroom.zju.edu.cn/livingroom?sub_id=112233"
         parsed = json.loads(handle_tool_call("zju_parse_url", {"url": url}))
         self.assertEqual(parsed["sub_id"], "112233")
+
+        interactive = (
+            "https://interactivemeta.cmc.zju.edu.cn/"
+            "#/replay?course_id=445566&sub_id=778899"
+        )
+        parsed = json.loads(handle_tool_call("zju_parse_url", {"url": interactive}))
+        self.assertEqual(parsed["course_id"], "445566")
+        self.assertEqual(parsed["sub_id"], "778899")
 
     def test_unknown_tool_raises(self):
         with self.assertRaises(ValueError):
@@ -920,6 +937,55 @@ class TranscriptAuthTests(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer " + self.TOKEN)
         self.assertNotIn("Cookie", headers)
         self.assertEqual(result, self.SEGMENTS)
+
+    def test_cookie_falls_back_to_interactive_classroom_backend(self):
+        import io
+        import urllib.parse
+
+        payload = json.dumps({"code": 0, "list": [{"all_content": [{"BeginSec": 1, "Text": "互动字幕"}]}]}).encode()
+        denied = urllib.error.HTTPError(
+            self.client.BASE_URL, 403, "Forbidden", {}, io.BytesIO(b"")
+        )
+        with mock.patch.object(
+            self.client, "_fetch_bytes", side_effect=[denied, payload]
+        ) as request:
+            result = self.client.fetch_transcript("123456", cookie=self.COOKIE)
+
+        self.assertEqual(result, [{"begin_sec": 1, "text": "互动字幕"}])
+        self.assertEqual(request.call_count, 2)
+        first, second = request.call_args_list
+        first_url = urllib.parse.urlparse(first.args[0])
+        second_url = urllib.parse.urlparse(second.args[0])
+        self.assertEqual(first_url.hostname, "classroom.zju.edu.cn")
+        self.assertEqual(second_url.hostname, "interactivemeta.cmc.zju.edu.cn")
+        self.assertEqual(second.args[1]["Authorization"], "Bearer " + self.TOKEN)
+        self.assertNotIn("Cookie", second.args[1])
+
+    def test_cookie_falls_back_on_business_error_too(self):
+        payload = json.dumps({"code": 0, "list": [{"all_content": [{"BeginSec": 2, "Text": "备用"}]}]}).encode()
+        with mock.patch.object(
+            self.client,
+            "_fetch_bytes",
+            side_effect=[json.dumps({"code": 1, "msg": "main down"}).encode(), payload],
+        ) as request:
+            result = self.client.fetch_transcript("123456", cookie=self.COOKIE)
+        self.assertEqual(result, [{"begin_sec": 2, "text": "备用"}])
+        self.assertEqual(request.call_count, 2)
+
+    def test_cookie_auth_failure_on_both_backends_is_still_auth_error(self):
+        import io
+
+        errors = [
+            urllib.error.HTTPError(self.client.BASE_URL, 403, "Forbidden", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError(
+                self.client.INTERACTIVE_BASE_URL, 401, "Unauthorized", {}, io.BytesIO(b"")
+            ),
+        ]
+        with mock.patch.object(self.client, "_fetch_bytes", side_effect=errors) as request:
+            with self.assertRaises(self.client.TranscriptAuthError) as caught:
+                self.client.fetch_transcript("123456", cookie=self.COOKIE)
+        self.assertEqual(caught.exception.status, 401)
+        self.assertEqual(request.call_count, 2)
 
     def test_missing_token_does_not_send_request(self):
         with mock.patch.object(self.client, "_fetch_bytes") as request:

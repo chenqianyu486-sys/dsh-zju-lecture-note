@@ -5,6 +5,9 @@ Formats timestamps, groups text by minutes, slices by time window,
 and prepares structured text for agent consumption.
 """
 
+import datetime
+import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -277,18 +280,213 @@ def format_quality_line(quality: Dict[str, Any]) -> str:
     return line
 
 
+def _slide_seconds(slide: Dict[str, Any]) -> Optional[int]:
+    """Return the transcript-relative second for one slide, if available.
+
+    Use explicit ``is not None`` checks: page 1 is legitimately ``time=0`` and
+    must not be skipped by a truthiness test.
+    """
+    for key in ("time", "time_point", "sec"):
+        if key not in slide:
+            continue
+        value = slide.get(key)
+        if value is None:
+            continue
+        try:
+            return max(0, int(round(float(value))))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _minute_label(seconds: int) -> str:
+    """``HH:MM`` label aligned with the transcript's ``[HH:MM]`` lines."""
+    seconds = max(0, int(seconds))
+    return f"{seconds // 3600:02d}:{(seconds % 3600) // 60:02d}"
+
+
+def _suggest_pages(pages: List[int], budget: int = 24) -> List[int]:
+    """Evenly spaced page fallback when the model has no key-point map."""
+    unique = sorted({int(page) for page in pages if page})
+    if not unique:
+        return []
+    if len(unique) <= budget:
+        return unique
+    if budget <= 1:
+        return [unique[0]]
+    step = (len(unique) - 1) / float(budget - 1)
+    picked = {unique[0], unique[-1]}
+    for index in range(1, budget - 1):
+        picked.add(unique[int(round(index * step))])
+    return sorted(picked)
+
+
+def _capture_date(slides_list: List[Dict[str, Any]]) -> str:
+    values: List[int] = []
+    for slide in slides_list:
+        value = slide.get("capture_ms")
+        if value is None:
+            continue
+        try:
+            values.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    if not values:
+        return ""
+    try:
+        moment = datetime.datetime.fromtimestamp(
+            min(values) / 1000.0,
+            tz=datetime.timezone(datetime.timedelta(hours=8)),
+        )
+    except (OverflowError, OSError, ValueError):
+        return ""
+    weekdays = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    return f"{moment:%Y-%m-%d}（{weekdays[moment.weekday()]}）"
+
+
+def _format_compact_slides(
+    slides_list: List[Dict[str, Any]],
+    pdf_path: str = "",
+    download_attempted: bool = False,
+) -> str:
+    """A page-time index instead of 150 × two absolute-path lines.
+
+    The model only needs the directory, the file-name pattern, and the
+    page→time axis to pick the 15–25 pages worth reading.  Repeating every
+    local path for a 150-page deck is pure context cost.
+    """
+    total = len(slides_list)
+    pages: List[int] = []
+    timed: List[Tuple[int, int]] = []
+    for idx, slide in enumerate(slides_list, start=1):
+        page = int(slide.get("page") or idx)
+        pages.append(page)
+        seconds = _slide_seconds(slide)
+        if seconds is not None:
+            timed.append((page, seconds))
+
+    span = ""
+    if timed:
+        span = f"，时间轴 {_minute_label(timed[0][1])}–{_minute_label(timed[-1][1])}"
+    lines = [f"### 课堂投影 PPT 截图（共 {total} 页{span}）"]
+
+    captured = _capture_date(slides_list)
+    if captured:
+        lines.append(f"拍摄日期: {captured}")
+
+    local = [
+        slide for slide in slides_list
+        if str(slide.get("local_path") or "").strip()
+    ]
+    if local:
+        first = local[0]
+        last = local[-1]
+        relative = str(first.get("workspace_rel") or "").strip()
+        if relative and "/" in relative:
+            directory = relative.rsplit("/", 1)[0]
+        elif relative:
+            directory = "."
+        else:
+            directory = os.path.dirname(str(first.get("local_path") or ""))
+        lines.append(f"截图目录: {directory}")
+        first_name = os.path.basename(str(first.get("local_path") or ""))
+        last_name = os.path.basename(str(last.get("local_path") or ""))
+        stem, extension = os.path.splitext(first_name)
+        pattern = re.sub(r"\d+$", "XXXX", stem) + extension
+        lines.append(f"文件命名: {first_name} … {last_name}（模式 {pattern}）")
+    else:
+        urls = [
+            str(slide.get("image_url") or "").strip()
+            for slide in slides_list
+            if str(slide.get("image_url") or "").strip()
+        ]
+        if urls:
+            lines.append(f"截图地址示例: {urls[0]}")
+        if download_attempted:
+            lines.append(
+                "说明: 本次 download=true，但没有可用的本地截图；"
+                "请检查上方下载失败诊断，或重试一次下载。"
+            )
+        else:
+            lines.append(
+                "说明: 本次 download=false，未下载截图；"
+                "需要本地文件/PDF 时再按工具提示执行下载。"
+            )
+
+    if pdf_path:
+        lines.append(f"完整 PDF: {pdf_path}")
+
+    if timed:
+        shown = timed[:240]
+        axis = " ".join(
+            f"{page}={_minute_label(seconds)}" for page, seconds in shown
+        )
+        if len(timed) > len(shown):
+            axis += f" ...（仅列前 {len(shown)} 页，共 {len(timed)} 页）"
+        lines.append("页时间轴（相对第 1 页）: " + axis)
+    else:
+        lines.append("页时间轴: 接口未提供可用时间戳，按页码顺序抽样。")
+
+    suggested = _suggest_pages(pages, budget=24)
+    if suggested:
+        lines.append(
+            "建议抽查（无明确关键页时）: "
+            + ", ".join(str(page) for page in suggested)
+        )
+
+    texts: List[Tuple[int, str]] = []
+    for idx, slide in enumerate(slides_list, start=1):
+        page = int(slide.get("page") or idx)
+        value = str(slide.get("text") or slide.get("ocr_content") or "").strip()
+        if value:
+            texts.append((page, " ".join(value.split())))
+    if texts:
+        rendered = [f"{page}={value[:80]}" for page, value in texts[:20]]
+        lines.append("页面文字（接口返回时）: " + " | ".join(rendered))
+        if len(texts) > 20:
+            lines.append(f"（另有 {len(texts) - 20} 页有文字，未展开）")
+
+    example = next(
+        (
+            slide for slide in slides_list
+            if str(slide.get("workspace_rel") or "").strip()
+        ),
+        None,
+    )
+    if example:
+        page = int(example.get("page") or 1)
+        relative = str(example.get("workspace_rel") or "").strip()
+        lines.append(
+            f"引用示例: ![第 {page} 页]({relative})"
+            "（讲义在子目录时按层级补 ../）"
+        )
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def format_slides_as_markdown(
     slides_list: Optional[List[Dict[str, Any]]],
     pdf_path: str = "",
+    *,
+    compact: bool = False,
+    download_attempted: bool = False,
 ) -> str:
-    """Format normalized slide records into a compact, truthful outline.
+    """Format normalized slide records into a truthful outline.
 
     ``search-ppt`` returns screenshots, not OCR text. A slide therefore shows
     whatever the API actually provided: text (rare), a remote image URL, and
     the local file when ``zju_fetch_slides(download=true)`` saved it.
+
+    ``compact=True`` is the model-facing index: one directory, the file-name
+    pattern, a page→time axis, and a small suggested sample.  The legacy
+    per-page form is kept for the CLI and for callers that need every path.
     """
     if not slides_list:
         return ""
+    if compact:
+        return _format_compact_slides(
+            slides_list, pdf_path=pdf_path, download_attempted=download_attempted
+        )
 
     lines = ["### 课堂投影 PPT 截图"]
     if pdf_path:
@@ -296,8 +494,8 @@ def format_slides_as_markdown(
         lines.append("")
     for idx, slide in enumerate(slides_list, start=1):
         page = slide.get("page") or idx
-        time_point = slide.get("time") or slide.get("time_point") or slide.get("sec")
-        ts_str = f" [{format_timestamp(int(time_point))}]" if time_point is not None else ""
+        time_point = _slide_seconds(slide)
+        ts_str = f" [{format_timestamp(time_point)}]" if time_point is not None else ""
         title = slide.get("title") or f"第 {page} 页"
         lines.append(f"#### {title}{ts_str}")
 

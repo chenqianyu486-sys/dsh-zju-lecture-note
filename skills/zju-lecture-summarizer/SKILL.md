@@ -1,6 +1,6 @@
 ---
 name: zju-lecture-summarizer
-description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回放为结构化讲义。用户给出智云课堂回放链接或 sub_id、要求总结/整理课堂笔记、提取某段时间的讲解内容、整理考点预测或公式清单时使用。
+description: 整理浙江大学智云课堂（classroom.zju.edu.cn）与互动式课堂（interactivemeta.cmc.zju.edu.cn）课程回放为结构化讲义。用户给出普通或 hash 路由回放链接或 sub_id、要求总结/整理课堂笔记、提取某段时间的讲解内容、整理考点预测或公式清单时使用。
 ---
 
 # 智云课堂课程知识总结 (ZJU Lecture Summarizer)
@@ -25,7 +25,8 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 | `zju_login` | 打开独立登录窗口；用户登录后自动关闭，登录态安全保存到本机 | 需要用户点一下登录；不接收密码 / Cookie |
 
 > **字幕主链路**不依赖投影 PPT 抓取。字幕工具先匿名请求；仅 HTTP 401/403 时自动读取本地登录态、
-> 解析 Bearer 重试一次，不需要开启登录辅助工具。字幕只向 `classroom.zju.edu.cn` 发 Bearer，不发 Cookie 头。
+> 解析 Bearer 重试，不需要开启登录辅助工具。携带登录态时若主站失败，工具会自动回退
+> `interactivemeta.cmc.zju.edu.cn` 互动式课堂后端；字幕只向这两个浙大官方主机发 Bearer，不发 Cookie 头。
 > 本机没有可用登录态时，`zju_login` 会打开一个**独立**的 Edge / Chrome 登录窗口：
 > 不碰用户日常浏览器，不用开发者工具，登录页自己处理 SSO / 2FA；成功后窗口自动关闭，
 > Cookie 只写入平台凭据库（Windows DPAPI / macOS 钥匙串 / Linux 密钥环，静态加密；都不可用时不落盘），只存登录态、不存账号密码。
@@ -41,7 +42,8 @@ description: 整理浙江大学智云课堂（classroom.zju.edu.cn）课程回�
 
 ## 2. 触发场景
 
-- 用户给出智云课堂链接（如 `https://classroom.zju.edu.cn/livingroom?...`）要求总结或整理笔记；
+- 用户给出智云课堂链接（如 `https://classroom.zju.edu.cn/livingroom?...`）或互动式课堂链接
+  （如 `https://interactivemeta.cmc.zju.edu.cn/#/replay?course_id=...&sub_id=...`）要求总结或整理笔记；
 - 用户要求提取某节课的语音识别字幕；
 - 用户要求整理考点清单、重点公式或推导过程；
 - 用户询问某节课特定时间段（如"第 30 到 50 分钟"）老师讲解的内容。
@@ -74,8 +76,9 @@ flowchart TD
 2. **抓取语音字幕**（先匿名，整节课只抓一次）：
    - HTTP 401/403 后的 Bearer 重试由工具内部自动完成，不需先调读 Cookie 工具，也不需要开启登录辅助；
      登录态沿用本地缓存 / 环境变量 / 文件 / Edge，模型不传 Cookie 或 token。
-   - 若仍报 401/403，**不要反复重试、不要擅断为校园网限制，也不要擅自更换主机或后端**；
-     调用一次 `zju_login(url=<这节课的链接>)`：
+   - 主站失败时工具会自动尝试互动式课堂后端，不要自行拼 URL、换主机或换后端；
+     若仍报 401/403，**不要反复重试、不要擅断为校园网限制**，调用一次
+     `zju_login(url=<这节课的链接>)`：
        1. 先告诉用户：「会弹出一个独立的登录窗口，请在窗口里正常登录；成功后窗口会自动关闭。」
        2. 用户完成登录后，工具会返回「登录成功」并给出 Cookie 条数；**不要索要或复述 Cookie**。
        3. 登录成功后重试 `zju_fetch_transcript` **一次**。最多调用 `zju_login` 两次；
@@ -116,21 +119,43 @@ flowchart TD
 > `enableStudyNotes` → 写完讲义再出填空版（底稿的挖空用 `mode=patch` 一次写回，
 > 不要一处一处改）。
 
+:warning: **dsh 的 `run_code` 每次都是独立进程**：不要先在 A 次程序里生成一版 Markdown
+只 `console.log` 校验，再在 B 次程序里重发全文给 `zju_write_note`。把 Markdown 的构造和
+`zju_write_note` 调用放在**同一个**程序里，写入工具返回的检查报告就是校验结果。
+
+长篇讲义优先用 `content_file`：先用 `write` 把草稿落到工作区
+（建议 `.zju-lecture/drafts/知识总结-<日期>-<课程>-<主题>.md`），再调用
+`zju_write_note(sub_id=..., content_file="<草稿路径>", name="...")`，避免 20k 字符在
+`run_code` 的模板字符串里重复粘贴。`content` 与 `content_file` 二选一；
+草稿名以 `知识总结-` 开头且不传 `name` 时，工具会沿用草稿名。
+
+如果必须在 `String.raw` 模板字符串里构造 Markdown：反斜杠写成 `@@`、反引号写成 `@BT@`、
+`${` 写成 `@D{`，写入前再统一替换；不要留裸反引号。实地会话里一次裸反引号就导致整份
+20k 字符的讲义重新生成。
+
 按第 4 节的规范把字幕蒸馏成讲义，然后用 `zju_write_note` 写入。**文件名由你自己起**——
 按「上课日期 + 课程 + 本节内容」命名，一眼能看出是哪一讲：
 
 ```
+# 短讲义：直接传全文
 zju_write_note(
     sub_id="<sub_id>",
     name="知识总结-<上课日期 YYYY-MM-DD>-<课程简称>-<本节主题>",
     content="<讲义 Markdown 全文>",
+)
+
+# 长讲义：先落盘，再 finalize（与 content 二选一）
+zju_write_note(
+    sub_id="<sub_id>",
+    content_file=".zju-lecture/drafts/知识总结-<日期>-<课程>-<主题>.md",
+    name="知识总结-<上课日期 YYYY-MM-DD>-<课程简称>-<本节主题>",
 )
 ```
 
 - **命名模板**：`知识总结-2026-10-28-复变函数-保角映射与拉普拉斯变换.md`。
   日期写上，讲义就会按时间自然排序；主题写具体（「第 7 章」「上」这类含糊的词不要用）。
 - **不要往 `content` 里塞二进制**：不要把 PDF、图片或整份课件塞进讲义。投影截图只在可选的
-  「PPT 投影抓取」模块开启时按追加的规范处理。
+  「PPT 投影抓取」模块开启时按追加的规范处理。长篇讲义用 `content_file`，避免把全文重复粘贴。
 - **上课日期从哪来**（按优先级，都不要就省略日期段）：
   用户明确给出的日期 > 课件首页/回放页面上的日期 > 老师在课堂上提到"我们 10 月 28 日这节课…"。
   **拿不到日期就省略**，不要用今天的日期顶替——那会让文件名说谎。
@@ -143,6 +168,8 @@ zju_write_note(
 - 它写入前自动修可机械修复的公式问题，写入后立刻返回渲染检查报告；**默认还会在本地排一份同名 PDF**
   （插件设置 `renderPdf`，默认开启），所以通常**不需要再单独调 `zju_check_note`，也不需要额外调排版工具**。
   **先写文件，再校验，不要只在回复里贴公式。**
+- 返回里的 `图片引用: N 张 | ...` 已经检查了本地图片是否存在；**不要再 `glob` 逐张确认**。
+  出现「缺失/不可用」先修路径再交付；`PDF 提示:` 里是 Typst 对图片/排版的警告，也要读。
 - 交付时把两条路径都给用户：Markdown 是源文件，同名 `.pdf` 是阅读版。
   返回里出现 `PDF 跳过: …` 时照常交付 Markdown，**不要重试或假装 PDF 已生成**；
   若原因是 `找不到 typst`，调用一次 `zju_doctor(install=true, confirm=true)` 后重试 `zju_check_note(pdf=true)`，

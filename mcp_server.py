@@ -27,6 +27,7 @@ import sys
 import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
@@ -98,7 +99,7 @@ from zju_lecture.study_notes import (
 )
 
 SERVER_NAME = "zju-lecture-mcp"
-SERVER_VERSION = "2.2.8"
+SERVER_VERSION = "2.2.9"
 DEFAULT_TENANT = "112"
 DEFAULT_DOMAIN = "classroom.zju.edu.cn"
 
@@ -259,8 +260,11 @@ def _pdf_mode_text() -> str:
 def server_instructions() -> str:
     """MCP initialize instructions, reflecting the current feature gates."""
     parts = [
-        "提供浙大智云课堂（classroom.zju.edu.cn）回放的语音字幕与课件文本提取。"
-        "字幕先匿名请求；401/403 时自动使用本机登录态重试一次，无需开启登录辅助工具。"
+        "提供浙大智云课堂（classroom.zju.edu.cn）与互动式课堂"
+        "（interactivemeta.cmc.zju.edu.cn）回放的语音字幕与课件文本提取。"
+        "两种回放链接（普通 query 与 #/replay hash 路由）都可以直接交给工具。"
+        "字幕先匿名请求；401/403 时自动使用本机登录态重试一次，无需开启登录辅助工具；"
+        "主站失败时工具会自动回退互动式课堂后端，不要自行更换主机。"
         "本机没有可用登录态、或登录态已失效时，调用 zju_login(url=<这节课链接>) "
         "打开独立登录窗口：用户只需在窗口里正常登录，窗口会自动关闭并把登录态安全保存在本机；"
         "不要让用户打开开发者工具复制 Cookie，也不要索要 Cookie / 密码。",
@@ -476,14 +480,21 @@ def _cookie_failure_text(
 TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_parse_url",
-        "description": "解析浙大智云课堂 (classroom.zju.edu.cn) 回放链接，提取 sub_id、course_id 与 tenant_code。",
+        "description": (
+            "解析浙大智云课堂 / 互动式课堂回放链接，提取 sub_id、course_id 与 tenant_code；"
+            "兼容 classroom.zju.edu.cn/livingroom?... 与 "
+            "interactivemeta.cmc.zju.edu.cn/#/replay?... 两种 URL。"
+        ),
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "智云课堂回放 URL（例如 https://classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...）或纯 sub_id 数字",
+                    "description": (
+                        "回放 URL（classroom.zju.edu.cn/livingroom?... 或 "
+                        "interactivemeta.cmc.zju.edu.cn/#/replay?...）或纯 sub_id 数字"
+                    ),
                 }
             },
             "required": ["url"],
@@ -492,8 +503,9 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_transcript",
         "description": (
-            "抓取智云课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态重试一次。"
-            "登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，不要传 Cookie。"
+            "抓取智云课堂 / 互动式课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态"
+            "重试一次，并自动回退互动式课堂后端。登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，"
+            "不要传 Cookie。"
             "默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，"
             "per_segment 仅在确实需要秒级时间戳时用。"
         ),
@@ -503,7 +515,9 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "url_or_sub_id": {
                     "type": "string",
-                    "description": "回放 URL 或 sub_id",
+                    "description": (
+                        "回放 URL（含互动式课堂 #/replay hash 链接）或 sub_id"
+                    ),
                 },
                 "tenant_code": {
                     "type": "string",
@@ -544,8 +558,10 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_fetch_slides",
         "description": (
-            "（投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是"
-            "投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF。"
+            "（投影模块）抓取智云课堂 / 互动式课堂投影 PPT 截图清单。search-ppt 返回的是"
+            "投影截图，不是文字层/OCR；主站为空时自动回退互动式课堂后端。"
+            "download=true 时下载截图并合成 PDF。"
+            "返回紧凑索引：截图目录/文件名模式、页时间轴、建议抽查页与引用示例。"
             "当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，"
             "写讲义前应调用一次并传 download=true, confirm=true；download 省略时"
             "跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。"
@@ -559,7 +575,9 @@ TOOLS: List[Dict[str, Any]] = [
             "properties": {
                 "url_or_sub_id": {
                     "type": "string",
-                    "description": "回放 URL（通常含 course_id）或 sub_id",
+                    "description": (
+                        "回放 URL（通常含 course_id，支持互动式课堂 hash 链接）或 sub_id"
+                    ),
                 },
                 "course_id": {
                     "type": "string",
@@ -708,7 +726,7 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "zju_write_note",
         "description": (
-            "写入讲义 Markdown：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、"
+            "写入讲义 Markdown（content 或 content_file 二选一）：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、"
             "写前修正公式、写后返回规范检查，并按设置自动排版同名 PDF——"
             "写文件、检查、出 PDF 一次完成。只写工作区内的 .md 文件。"
         ),
@@ -722,7 +740,14 @@ TOOLS: List[Dict[str, Any]] = [
                 },
                 "content": {
                     "type": "string",
-                    "description": "讲义 Markdown 全文",
+                    "description": "讲义 Markdown 全文（与 content_file 二选一）",
+                },
+                "content_file": {
+                    "type": "string",
+                    "description": (
+                        "从工作区内的 Markdown 草稿读取讲义全文（与 content 二选一）。"
+                        "长篇讲义建议先用 write 落盘，再传此路径，避免在 run_code 里重复粘贴。"
+                    ),
                 },
                 "name": {
                     "type": "string",
@@ -761,7 +786,7 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "写入后是否排版同名 PDF（默认跟随插件设置 renderPdf；显式 true/false 可覆盖）",
                 },
             },
-            "required": ["sub_id", "content"],
+            "required": ["sub_id"],
         },
     },
     {
@@ -1248,10 +1273,80 @@ def _doctor_report(install: bool, check_login: bool = False) -> str:
     return "\n".join(lines)
 
 
+_NOTE_IMAGE_RE = re.compile(
+    r'!\[[^\]]*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)'
+)
+
+
+def _note_image_report(note_text: str, note_path: str) -> str:
+    """One compact line for the image references in a note.
+
+    The reading PDF silently turns a missing local image into an
+    ``#aside("图片未嵌入")`` placeholder; the agent should not have to glob
+    every path to discover that.  Remote images are counted separately because
+    the PDF never downloads them.
+    """
+    refs: List[str] = []
+    in_fence = False
+    for line in (note_text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith(('```', "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        refs.extend(_NOTE_IMAGE_RE.findall(line))
+    if not refs:
+        return ""
+    note_dir = os.path.dirname(os.path.abspath(note_path))
+    external = 0
+    local = 0
+    bad: List[str] = []
+    for raw in refs:
+        ref = str(raw or "").strip().strip("<>")
+        if not ref:
+            continue
+        if ref.startswith(("http://", "https://")):
+            external += 1
+            continue
+        if ref.startswith("data:"):
+            continue
+        local += 1
+        candidate = os.path.abspath(os.path.join(note_dir, unquote(ref)))
+        if not is_inside_workspace(candidate) or not os.path.isfile(candidate):
+            bad.append(ref)
+    parts = [f"{len(refs)} 张"]
+    if external:
+        parts.append(f"外链 {external} 张（PDF 不嵌入）")
+    if bad:
+        shown = ", ".join(bad[:5])
+        if len(bad) > 5:
+            shown += f" … 另有 {len(bad) - 5} 张"
+        parts.append(f"缺失/不可用 {len(bad)} 张：{shown}")
+    elif local:
+        parts.append("本地文件全部存在")
+    return "图片引用: " + " | ".join(parts)
+
+
+def _pdf_warning_lines(warnings: Optional[List[str]]) -> List[str]:
+    cleaned = [
+        " ".join(str(item).split())[:240]
+        for item in (warnings or [])
+        if str(item).strip()
+    ]
+    if not cleaned:
+        return []
+    lines = ["PDF 提示:"]
+    lines.extend(f"- {item}" for item in cleaned[:5])
+    if len(cleaned) > 5:
+        lines.append(f"- 另有 {len(cleaned) - 5} 条提示未展开")
+    return lines
+
+
 def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
     """Typeset the written note into a reading PDF; never raises.
 
-    Returns 0–2 short lines for the tool result. A missing Typst or a
+    Returns a few short lines for the tool result. A missing Typst or a
     rendering error must not turn a successful Markdown write into a failure:
     the Markdown is the deliverable, the PDF is an enhancement.
     """
@@ -1272,7 +1367,9 @@ def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
         return [f"PDF 跳过: {exc}"]
     if result.ok:
         pages = f"（{result.pages} 页）" if result.pages else ""
-        return [f"PDF: {result.pdf_path}{pages}"]
+        lines = [f"PDF: {result.pdf_path}{pages}"]
+        lines.extend(_pdf_warning_lines(result.warnings))
+        return lines
     detail = "；".join(result.errors[:2]) or "未知原因"
     if "找不到 typst" in detail:
         # Keep the common "Typst is not installed" case to one short line:
@@ -1282,10 +1379,12 @@ def _render_note_pdf(note_path: str, note_text: str) -> List[str]:
         detail = detail[:219] + "…"
     # 这是「同一份讲义要不要再查一次」的唯一例外：上面报的是渲染错误，
     # 不改文件永远好不了。给一句可执行的下一步，Agent 就不必自己猜。
-    return [
+    lines = [
         f"PDF 跳过: {detail}",
         "Markdown 已写好；按上面的错误改掉对应公式后，调用 zju_check_note(pdf=true) 重排一次。",
     ]
+    lines.extend(_pdf_warning_lines(result.warnings))
+    return lines
 
 
 def _patch_draft(arguments: Dict[str, Any]) -> str:
@@ -1780,6 +1879,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         pdf_path = ""
         download_note = ""
         note_example = ""
+        pages: List[Dict[str, Any]] = []
         if download:
             target, target_error = artifact_dir(
                 output_dir,
@@ -1805,19 +1905,25 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                         pdf_path = written
                 download_note = (
                     f"下载 {summary.get('downloaded', 0)} 张，失败 {summary.get('failed', 0)} 张，"
-                    f"连续重复折叠 {summary.get('duplicates', 0)} 张；"
+                    f"连续字节完全重复折叠 {summary.get('duplicates', 0)} 张（仅字节级去重）；"
                     f"截图目录: {summary.get('images_dir')}"
                 )
                 if pdf_path:
                     download_note += f"\nPDF: {pdf_path}（{len(pages)} 页）"
 
-        md = format_slides_as_markdown(slides_data, pdf_path=pdf_path)
+        index_slides = pages if (download and pages) else slides_data
+        md = format_slides_as_markdown(
+            index_slides,
+            pdf_path=pdf_path,
+            compact=True,
+            download_attempted=download,
+        )
         mode_text = "开启" if slide_images_enabled else (
             "关闭" if slides_as_source else "关闭（默认）"
         )
         source_text = "开启" if slides_as_source else "关闭（默认）"
         lines = [
-            f"=== 课堂投影 PPT 截图 (sub_id={sub_id}, 共 {len(slides_data)} 页) ===",
+            f"=== 课堂投影 PPT 截图 (sub_id={sub_id}, 共 {len(index_slides)} 页) ===",
             f"投影作为讲义来源: {source_text}"
             "（dsh 设置 slidesAsSource / 环境变量 ZJU_SLIDES_SOURCE）",
             f"讲义插图模式: {mode_text}"
@@ -1952,6 +2058,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         report = format_report(
             os.path.basename(file_path), check_markdown(note_text), max_samples
         )
+        image_line = _note_image_report(note_text, file_path)
+        if image_line:
+            report = image_line + "\n\n" + report
         if applied:
             applied_block = "\n".join(f"- {item}" for item in applied)
             if backup_path:
@@ -1964,27 +2073,64 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
     if name == "zju_write_note":
         sub_id = str(arguments.get("sub_id", "")).strip()
         content = arguments.get("content")
+        content_file = str(arguments.get("content_file") or "").strip()
         if not sub_id:
             raise ValueError("zju_write_note 需要 sub_id 参数")
+        if content_file and isinstance(content, str) and content.strip():
+            raise ValueError("zju_write_note 的 content 与 content_file 只能传一个")
+
+        source_path = ""
+        if content_file:
+            source_path, path_error = require_workspace_path(
+                content_file, extensions=NOTE_EXTENSIONS, kind="讲义草稿"
+            )
+            if path_error:
+                return f"错误: {path_error}"
+            try:
+                # UTF-8 is at most 4 bytes per character; this rejects a
+                # pathological file before materialising it in memory.
+                if os.path.getsize(source_path) > MAX_NOTE_CHARS * 4:
+                    return (
+                        f"错误: 讲义草稿超过 {MAX_NOTE_CHARS} 字符上限，"
+                        "请检查是否误传了别的内容。"
+                    )
+                with open(source_path, "r", encoding="utf-8") as handle:
+                    content = handle.read()
+            except UnicodeDecodeError:
+                return f"错误: 讲义草稿不是 UTF-8 编码: {source_path}"
+            except OSError as exc:
+                return f"错误: 读取讲义草稿失败: {exc}"
+
         if not isinstance(content, str) or not content.strip():
-            raise ValueError("zju_write_note 需要非空的 content 参数（讲义 Markdown 全文）")
+            raise ValueError(
+                "zju_write_note 需要非空的 content 或 content_file 参数（讲义 Markdown 全文）"
+            )
         if len(content) > MAX_NOTE_CHARS:
             return (
                 f"错误: 讲义内容 {len(content)} 字符，超过 {MAX_NOTE_CHARS} 字符上限；"
                 "请分批写入或检查是否误传了别的内容。"
             )
 
+        note_name = str(arguments.get("name") or "").strip()
+        if not note_name and source_path:
+            draft_stem = os.path.splitext(os.path.basename(source_path))[0]
+            if draft_stem.startswith("知识总结"):
+                note_name = draft_stem
         target, target_error = note_target(
             sub_id,
             str(arguments.get("slug") or ""),
             arguments.get("directory"),
-            str(arguments.get("name") or ""),
+            note_name,
         )
         if target_error:
             return f"错误: {target_error}"
 
         overwrite = bool(arguments.get("overwrite"))
-        already = os.path.exists(target)
+        same_file = bool(source_path) and (
+            os.path.normcase(os.path.realpath(target))
+            == os.path.normcase(os.path.realpath(source_path))
+        )
+        already = os.path.exists(target) and not same_file
         if already and not overwrite:
             # Silent overwrite is how one lecture's note ate the previous one's:
             # hand the decision back to the caller instead of guessing.
@@ -2004,7 +2150,7 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         if arguments.get("fix", True):
             fixed_text, applied = fix_markdown(content)
         try:
-            if already:
+            if already or same_file:
                 backup_path = write_with_backup(target, fixed_text)
             else:
                 backup_path = ""
@@ -2021,11 +2167,16 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
             f"路径: {target}",
             f"字数: {len(fixed_text)} 字符",
         ]
-        if not str(arguments.get("name") or "").strip():
+        image_line = _note_image_report(fixed_text, target)
+        if image_line:
+            header.append(image_line)
+        if not note_name:
             header.append(
                 "提示: 本次用的是回退文件名。建议下次传 name=知识总结-<上课日期>-<课程简称>-<本节主题>，"
                 "文件名带日期与内容更利于区分不同讲次。"
             )
+        if source_path:
+            header.append(f"草稿来源: {source_path}")
         if applied:
             header.append("自动修复:")
             header.extend(f"- {item}" for item in applied)

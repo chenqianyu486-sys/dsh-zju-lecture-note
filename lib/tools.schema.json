@@ -1,10 +1,10 @@
 [
   {
     "name": "zju_parse_url",
-    "description": "解析浙大智云课堂 (classroom.zju.edu.cn) 回放链接，提取 sub_id、course_id 与 tenant_code。",
+    "description": "解析浙大智云课堂 / 互动式课堂回放链接，提取 sub_id、course_id 与 tenant_code；兼容 classroom.zju.edu.cn/livingroom?... 与 interactivemeta.cmc.zju.edu.cn/#/replay?... 两种 URL。",
     "parameters": {
       "url": {
-        "description": "智云课堂回放 URL（例如 https://classroom.zju.edu.cn/livingroom?course_id=...&sub_id=...）或纯 sub_id 数字",
+        "description": "回放 URL（classroom.zju.edu.cn/livingroom?... 或 interactivemeta.cmc.zju.edu.cn/#/replay?...）或纯 sub_id 数字",
         "type": "string",
         "required": true
       }
@@ -12,10 +12,10 @@
   },
   {
     "name": "zju_fetch_transcript",
-    "description": "抓取智云课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态重试一次。登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，不要传 Cookie。默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用。",
+    "description": "抓取智云课堂 / 互动式课堂某节课的语音识别字幕。先匿名；401/403 时自动用本机登录态重试一次，并自动回退互动式课堂后端。登录态只能来自本机 Edge 或 ZJU_COOKIE_FILE，不要传 Cookie。默认 per_minute 带时间戳；长课用 chunked；同一节课只抓一次，per_segment 仅在确实需要秒级时间戳时用。",
     "parameters": {
       "url_or_sub_id": {
-        "description": "回放 URL 或 sub_id",
+        "description": "回放 URL（含互动式课堂 #/replay hash 链接）或 sub_id",
         "type": "string",
         "required": true
       },
@@ -52,10 +52,10 @@
   },
   {
     "name": "zju_fetch_slides",
-    "description": "（投影模块）抓取智云课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；download=true 时下载截图并合成 PDF。当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，写讲义前应调用一次并传 download=true, confirm=true；download 省略时跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides（ZJU_ENABLE_SLIDES）关闭时本工具不注册。",
+    "description": "（投影模块）抓取智云课堂 / 互动式课堂投影 PPT 截图清单。search-ppt 返回的是投影截图，不是文字层/OCR；主站为空时自动回退互动式课堂后端。download=true 时下载截图并合成 PDF。返回紧凑索引：截图目录/文件名模式、页时间轴、建议抽查页与引用示例。当插件把投影作为讲义来源（slidesAsSource / ZJU_SLIDES_SOURCE=1）时，写讲义前应调用一次并传 download=true, confirm=true；download 省略时跟随 slidesAsSource / embedSlideImages（ZJU_SLIDES_SOURCE / ZJU_EMBED_SLIDES）。需要登录态（Cookie 含 _token，由服务端本地解析，不接受也不回显 Cookie）。抓不到时返回诊断，可降级为纯字幕总结。dsh 的 enableSlides（ZJU_ENABLE_SLIDES）关闭时本工具不注册。",
     "parameters": {
       "url_or_sub_id": {
-        "description": "回放 URL（通常含 course_id）或 sub_id",
+        "description": "回放 URL（通常含 course_id，支持互动式课堂 hash 链接）或 sub_id",
         "type": "string",
         "required": true
       },
@@ -156,7 +156,7 @@
   },
   {
     "name": "zju_write_note",
-    "description": "写入讲义 Markdown：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、写前修正公式、写后返回规范检查，并按设置自动排版同名 PDF——写文件、检查、出 PDF 一次完成。只写工作区内的 .md 文件。",
+    "description": "写入讲义 Markdown（content 或 content_file 二选一）：自动命名（知识总结-<日期>-<课程>-<主题>）、默认拒绝静默覆盖、写前修正公式、写后返回规范检查，并按设置自动排版同名 PDF——写文件、检查、出 PDF 一次完成。只写工作区内的 .md 文件。",
     "parameters": {
       "sub_id": {
         "description": "课程回放的 sub_id，用于追溯（不传 name 时也参与文件名）",
@@ -164,9 +164,12 @@
         "required": true
       },
       "content": {
-        "description": "讲义 Markdown 全文",
-        "type": "string",
-        "required": true
+        "description": "讲义 Markdown 全文（与 content_file 二选一）",
+        "type": "string"
+      },
+      "content_file": {
+        "description": "从工作区内的 Markdown 草稿读取讲义全文（与 content 二选一）。长篇讲义建议先用 write 落盘，再传此路径，避免在 run_code 里重复粘贴。",
+        "type": "string"
       },
       "name": {
         "description": "讲义文件名（可省略 .md），由你按上课时间与本节内容命名，推荐 知识总结-<上课日期 YYYY-MM-DD>-<课程简称>-<本节主题>；拿不到上课日期时省略日期段，不要用当天日期顶替",
