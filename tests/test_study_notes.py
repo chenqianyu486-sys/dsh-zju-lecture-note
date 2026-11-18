@@ -318,6 +318,40 @@ class TestCompile(unittest.TestCase):
             self.assertEqual(result.png_paths, [])
             self.assertTrue(any("PNG" in warning for warning in result.warnings))
 
+    def test_shorter_compile_removes_stale_generated_pages(self):
+        if not find_typst():
+            self.skipTest("本机没有 typst，跳过编译测试")
+        with tempfile.TemporaryDirectory() as directory:
+            diagram = os.path.join(directory, "page-diagram.png")
+            with open(diagram, "wb") as handle:
+                handle.write(b"user image")
+            first = compile_project(
+                directory,
+                "Page one\n\n#pagebreak()\n\nPage two",
+                make_png=True,
+            )
+            self.assertTrue(first.ok, first.errors)
+            self.assertEqual(
+                [os.path.basename(path) for path in first.png_paths],
+                ["page-1.png", "page-2.png"],
+            )
+            self.assertNotIn(diagram, first.png_paths)
+
+            second = compile_project(directory, "Only one page", make_png=True)
+            self.assertTrue(second.ok, second.errors)
+            self.assertEqual(
+                [os.path.basename(path) for path in second.png_paths],
+                ["page-1.png"],
+            )
+            self.assertFalse(os.path.exists(os.path.join(directory, "page-2.png")))
+            self.assertTrue(os.path.exists(diagram))
+            with open(diagram, "rb") as handle:
+                self.assertEqual(handle.read(), b"user image")
+            self.assertEqual(
+                [name for name in os.listdir(directory) if name.startswith(".zju-page-")],
+                [],
+            )
+
     def test_user_named_png_is_not_a_generated_page(self):
         if not find_typst():
             self.skipTest("本机没有 typst，跳过编译测试")

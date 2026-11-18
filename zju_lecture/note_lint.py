@@ -23,7 +23,9 @@ import time
 from typing import List, NamedTuple
 
 from .markdown_code import INLINE_CODE_RE, fenced_line_flags
-from .study_notes import MARKERS, _UNKNOWN_MARKER_RE
+from .study_notes import (
+    MARKERS, _UNKNOWN_MARKER_RE, _structural_label_lines,
+)
 
 ERROR = "error"
 WARN = "warn"
@@ -74,6 +76,10 @@ def _complex_context(math: str, line: str) -> bool:
     return bool(_COMPLEX_MATH_RE.search(math))
 
 _INLINE_CODE_RE = INLINE_CODE_RE
+
+#: 带命名空间的 label（如 ``<def:x>`` / ``<thm:main>``）。HTML 标签不带冒号，
+#: 所以这里用冒号过滤，避免把 <details> / <summary> 当成笔记 label。
+_NOTE_LABEL_RE = re.compile(r"<([A-Za-z][A-Za-z0-9_.:-]*)>")
 
 #: 「本该是方框、却被写成小标题或粗体」。这类写法在 PDF 里只是小标题 / 粗体，
 #: 拿不到方框的编号、配色与左侧竖线 —— 实测一份 3.5 万字的讲义里 10 处「例 N」
@@ -136,6 +142,7 @@ def check_markdown(text: str) -> List[Issue]:
     """Check a lecture-note Markdown document and return the findings."""
     issues: List[Issue] = []
     lines = text.split("\n")
+    structural_labels = _structural_label_lines(lines)
 
     in_display = False
     display_start = 0
@@ -183,6 +190,26 @@ def check_markdown(text: str) -> List[Issue]:
 
         # Inline code spans are not math.
         probe = _INLINE_CODE_RE.sub(" ", raw)
+
+        # 普通段落末尾的 <def:x> 没有编号，不能作为 @def:x 的链接目标。
+        # 阅读版会软降级成字面量，填空版也走同一口径；这里提前给作者可操作提示。
+        misplaced = []
+        for match in _NOTE_LABEL_RE.finditer(probe):
+            name = match.group(1)
+            if ":" not in name:
+                continue
+            if structural_labels.get(idx - 1) == name:
+                continue
+            misplaced.append(name)
+        if misplaced:
+            rendered = "、".join(f"<{name}>" for name in misplaced)
+            issues.append(Issue(
+                idx, WARN, "label_not_structural",
+                f"标签 {rendered} 没有挂在结构块上",
+                "标签需挂在 [定义]/[定理]/[证明] 等标记块或标题末尾；"
+                "普通段落末尾不会被编号，回指会按字面量保留。",
+                _excerpt(stripped),
+            ))
 
         if "$$" in probe:
             issues.append(Issue(

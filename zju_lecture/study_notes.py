@@ -1960,6 +1960,80 @@ def _strip_html_comments(text: str) -> Tuple[str, List[str]]:
     return re.sub(r"<!--(.*?)-->", _replace, text, flags=re.DOTALL), comments
 
 
+def _structural_label_lines(lines: Sequence[str]) -> Dict[int, str]:
+    """找出真正挂在结构上的 label，返回 ``行号(0-based) -> label``。
+
+    讲义里的 ``<def:x>`` 只有挂在标题、定义/定理等标记块上才会被编号；
+    普通段落末尾的 label 没有编号，不能作为 ``@def:x`` 的链接目标。
+    这里与渲染器共用同一套 block_boundary 规则，避免「检查说合法、编译却失败」。
+    """
+    code_lines = list(fenced_line_flags(lines))
+    found: Dict[int, str] = {}
+
+    def trailing_label(raw: str) -> str:
+        probe = INLINE_CODE_RE.sub(" ", raw)
+        match = _LABEL_RE.search(probe)
+        return match.group(1) if match else ""
+
+    index = 0
+    total = len(lines)
+    while index < total:
+        if code_lines[index]:
+            index += 1
+            continue
+        probe = INLINE_CODE_RE.sub(" ", lines[index])
+        stripped = probe.strip()
+        heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading:
+            label = trailing_label(heading.group(2))
+            if label:
+                found[index] = label
+            index += 1
+            continue
+
+        marker = _MARKER_RE.match(stripped)
+        if marker and marker.group(1) in MARKERS:
+            name = marker.group(1)
+            label = trailing_label(marker.group(2))
+            if label:
+                found[index] = label
+            elif _marker_absorbs_blocks(name):
+                block: List[int] = []
+                cursor = index + 1
+                while cursor < total:
+                    if (
+                        not code_lines[cursor]
+                        and lines[cursor].strip()
+                        and block_boundary(lines[cursor].strip(), proof=(name == "证明"))
+                    ):
+                        break
+                    block.append(cursor)
+                    cursor += 1
+
+                # 与 _render_block_marker 的取 label 顺序保持一致：
+                # 先找独占一行的 <label>，否则取最后一段末尾的 <label>。
+                standalone = ""
+                for position in block:
+                    if code_lines[position]:
+                        continue
+                    line_probe = INLINE_CODE_RE.sub(" ", lines[position])
+                    match = _LABEL_RE.search(line_probe)
+                    if match and not line_probe[: match.start()].strip():
+                        found[position] = match.group(1)
+                        standalone = match.group(1)
+                        break
+                if not standalone:
+                    for position in reversed(block):
+                        if code_lines[position] or not lines[position].strip():
+                            continue
+                        label = trailing_label(lines[position])
+                        if label:
+                            found[position] = label
+                        break
+        index += 1
+    return found
+
+
 def render_typst(
     draft_text: str,
     theme: str = "light",
@@ -2002,7 +2076,9 @@ def render_typst(
     prose_parts: List[str] = []
     transform_prose(normalized, lambda part: prose_parts.append(part) or part)
     prose_text = "".join(prose_parts)
-    known_labels = sorted({m.group(1) for m in re.finditer(r"<([A-Za-z][A-Za-z0-9_.:-]*)>", prose_text)})
+    # 只把真正挂在标题/标记块上的 label 当结构目标。普通段落末尾的
+    # <def:x> 没有编号，不能作为 @def:x 的链接目标；其回指按字面量降级。
+    known_labels = sorted(set(_structural_label_lines(normalized.split("\n")).values()))
 
     section = ""
     in_cover = False
@@ -2041,6 +2117,7 @@ def render_typst(
         if heading:
             level = len(heading.group(1))
             title = strip_heading_number(heading.group(2).strip())
+            title, heading_label = _split_trailing_label(title)
             if level == 1 and title in ("封面", "Cover", "cover"):
                 # 封面块由 _render_cover 单独处理：标题行与它下面的
                 # `- key: value` 都不能再进正文，否则会在正文里多出一张列表。
@@ -2054,7 +2131,11 @@ def render_typst(
                 # 按 h2 统计会把 7 小节的框全算到同一节，明明每节 1–2 个
                 # 却报「9 个，超预算」（实地会话里 Agent 为此纠结了很久）。
                 section = title
-            lines_out.append("=" * (level - 1) + " " + escape_typst(title, known_labels))
+            heading_typst = "=" * (level - 1) + " " + escape_typst(title, known_labels)
+            if heading_label:
+                heading_typst += f" <{heading_label}>"
+                labels.append(heading_label)
+            lines_out.append(heading_typst)
             continue
 
         if in_cover:
@@ -2283,7 +2364,10 @@ def render_typst(
 
     if dangling:
         warnings.append(
-            "底稿里有找不到对应 label 的回指（编译会报错）：" + "、".join(dangling)
+            "底稿里有未登记为结构标签的回指（已按字面量保留）："
+            + "、".join(dangling)
+            + "。标签需挂在 [定义]/[定理]/[证明] 等标记块或标题末尾；"
+            "普通段落末尾不会被编号。"
         )
 
     over_budget = _over_budget_sections(knots)
@@ -2639,6 +2723,12 @@ def _run_typst(typst: str, args: Sequence[str], cwd: str, timeout: int) -> Tuple
     return completed.returncode, output
 
 
+#: 正式逐页 PNG 与内部临时页的文件名。临时名先落盘，成功导出后再和旧页对账。
+_PNG_PAGE_RE = re.compile(r"^page-(\d+)\.png$")
+_PNG_TEMP_RE = re.compile(r"^\.zju-page-(\d+)\.png$")
+_PNG_TEMP_PATTERN = ".zju-page-{p}.png"
+
+
 def compile_project(
     project_dir: str,
     typst_source: str,
@@ -2691,24 +2781,94 @@ def compile_project(
         result.errors.append(f"typst 退出码 {code}（输出见下）")
 
     if result.ok and make_png:
+        # 先导出到临时页名，成功后再和旧 page-N.png 对账。这样：
+        # - PNG 导出失败时，不会把上一轮旧页伪报成本次产物；
+        # - 重编译页数变短时，能准确删除上一轮多出来的数字页；
+        # - 用户自有的 page-diagram.png 等非数字页完全不受影响。
+        temp_paths = [
+            os.path.join(project_dir, name)
+            for name in os.listdir(project_dir)
+            if _PNG_TEMP_RE.fullmatch(name)
+        ]
+        temp_cleanup_failed = False
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError as exc:
+                temp_cleanup_failed = True
+                result.warnings.append(
+                    f"无法清理上次 PNG 临时文件 {os.path.basename(path)}：{exc}"
+                )
+        if temp_cleanup_failed:
+            result.warnings.append("本次跳过逐页 PNG 导出；PDF 已成功生成。")
+            return result
+
         png_args = ["compile", *shared, "--root", project_dir]
         if pages:
             png_args += ["--pages", pages]
-        png_args += ["main.typ", "page-{p}.png"]
+        png_args += ["main.typ", _PNG_TEMP_PATTERN]
         png_code, png_output = _run_typst(typst, png_args, project_dir, timeout)
         if png_code != 0:
             result.warnings.append(
                 "PDF 编译成功，但逐页 PNG 导出失败（不影响 PDF）：" +
                 (png_output.strip().splitlines()[-1] if png_output.strip() else f"退出码 {png_code}")
             )
+            # 清掉失败导出可能留下的半成品临时页，但不碰上一轮正式 page-N.png。
+            for path in [
+                os.path.join(project_dir, name)
+                for name in os.listdir(project_dir)
+                if _PNG_TEMP_RE.fullmatch(name)
+            ]:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         else:
-            # 只收集本次成功导出的数字页：失败时不能把上一次的旧页当作本次产物，
-            # 用户自有的 page-*.png（如 page-diagram.png）也不算生成页。
-            result.png_paths = sorted(
-                (os.path.join(project_dir, name)
-                 for name in os.listdir(project_dir)
-                 if re.fullmatch(r"page-\d+\.png", name)),
-                key=lambda path: int(os.path.basename(path)[5:-4]),
-            )
+            generated = []
+            for name in os.listdir(project_dir):
+                match = _PNG_TEMP_RE.fullmatch(name)
+                if match:
+                    generated.append(
+                        (int(match.group(1)), os.path.join(project_dir, name))
+                    )
+            generated.sort(key=lambda item: item[0])
+            if not generated:
+                result.warnings.append("PDF 编译成功，但本次 PNG 导出没有产生任何数字页。")
+            else:
+                new_names = {f"page-{number}.png" for number, _path in generated}
+                # 删除上一轮多出来的数字页；仅匹配 page-<数字>.png。
+                for name in os.listdir(project_dir):
+                    if _PNG_PAGE_RE.fullmatch(name) and name not in new_names:
+                        try:
+                            os.remove(os.path.join(project_dir, name))
+                        except OSError as exc:
+                            result.warnings.append(
+                                f"无法清理旧页面 {name}：{exc}"
+                            )
+
+                for number, temp_path in generated:
+                    target = os.path.join(project_dir, f"page-{number}.png")
+                    try:
+                        os.replace(temp_path, target)
+                    except OSError as exc:
+                        result.warnings.append(
+                            f"无法写入本次页面 {os.path.basename(target)}：{exc}"
+                        )
+                    else:
+                        result.png_paths.append(target)
+
+                # 极端情况下 rename 失败，清理残留临时页；正式数字页不受影响。
+                for _number, temp_path in generated:
+                    if not os.path.exists(temp_path):
+                        continue
+                    try:
+                        os.remove(temp_path)
+                    except OSError as exc:
+                        result.warnings.append(
+                            f"无法清理 PNG 临时文件 {os.path.basename(temp_path)}：{exc}"
+                        )
+                result.png_paths.sort(
+                    key=lambda path: int(os.path.basename(path)[5:-4])
+                )
 
     return result

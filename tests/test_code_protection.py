@@ -63,6 +63,53 @@ class TestHandoutCodeProtection(unittest.TestCase):
         self.assertIn('#raw("# important comment\\nprint(1)"', result.typst)
 
 
+class TestStructuralLabelValidation(unittest.TestCase):
+    def test_plain_paragraph_label_is_actionable_warning(self):
+        issues = note_lint.check_markdown("# 标题\n\n普通段落末尾 <def:x>。")
+        finding = next(
+            (item for item in issues if item.code == "label_not_structural"),
+            None,
+        )
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.level, "warn")
+        self.assertIn("普通段落末尾不会被编号", finding.hint)
+
+    def test_marker_and_heading_labels_are_structural(self):
+        for markdown in (
+            "# 标题\n\n[定义] 定义正文 <def:x>",
+            "## 定义标题 <def:x>\n\n正文",
+        ):
+            with self.subTest(markdown=markdown):
+                issues = note_lint.check_markdown(markdown)
+                self.assertFalse(
+                    [item for item in issues if item.code == "label_not_structural"]
+                )
+
+    def test_unregistered_reference_is_literal_not_typst_ref(self):
+        rendered = study_notes.render_typst(
+            "见 @def:x 的定义。\n\n普通段落末尾 <def:x>。"
+        )
+        self.assertIn(r"\@def:x", rendered.typst)
+        self.assertNotIn("@def:x", rendered.typst.replace(r"\@def:x", ""))
+        self.assertTrue(any("已按字面量保留" in item for item in rendered.warnings))
+
+    def test_heading_label_stays_a_typst_ref(self):
+        rendered = study_notes.render_typst(
+            "见 @def:x 的定义。\n\n## 定义标题 <def:x>\n\n正文"
+        )
+        self.assertRegex(rendered.typst, r"(?<!\\)@def:x")
+        self.assertIn("= 定义标题 <def:x>", rendered.typst)
+        self.assertFalse(any("未登记为结构标签" in item for item in rendered.warnings))
+
+    def test_registered_reference_stays_a_typst_ref(self):
+        rendered = study_notes.render_typst(
+            "见 @def:x 的定义。\n\n[定义] 定义正文 <def:x>"
+        )
+        self.assertRegex(rendered.typst, r"(?<!\\)@def:x")
+        self.assertIn("<def:x>", rendered.typst)
+        self.assertFalse(any("未登记为结构标签" in item for item in rendered.warnings))
+
+
 class TestLintCodeProtection(unittest.TestCase):
     def test_fixer_and_linter_respect_fence_length_and_char(self):
         for opening, inner, closing in (
@@ -86,6 +133,16 @@ class TestLintCodeProtection(unittest.TestCase):
 
 @unittest.skipUnless(study_notes.find_typst(), "本机没有 typst，跳过编译测试")
 class TestCodeCompiles(unittest.TestCase):
+    def test_unregistered_reference_compiles_as_literal(self):
+        rendered = study_notes.render_typst(
+            "见 @def:x 的定义。\n\n普通段落末尾 <def:x>。"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            result = study_notes.compile_project(
+                directory, rendered.typst, make_png=False
+            )
+            self.assertTrue(result.ok, result.errors)
+
     def test_code_samples_compile_in_both_renderers(self):
         markdown = "# Code\n\n```python\n# comment\nprint('$\\frac12$')\n```\n\n正文 $x^2$。"
         with tempfile.TemporaryDirectory() as directory:
