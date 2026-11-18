@@ -26,6 +26,7 @@ import shutil
 import sys
 import time
 import traceback
+import hashlib
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
@@ -551,6 +552,13 @@ TOOLS: List[Dict[str, Any]] = [
                     "description": "单次返回的字符上限（默认 60000）。超出会截断并在末尾标注，长课程建议改用 view_format=chunked",
                     "default": 60000,
                 },
+                "cursor": {
+                    "type": "string",
+                    "description": (
+                        "json/chunked 分页续取：原样传回上一页的 next_cursor，保持课程、视图和时间区间参数不变。"
+                        "next_start_minute 仅用于时间定位，不能代替精确游标"
+                    ),
+                },
             },
             "required": ["url_or_sub_id"],
         },
@@ -996,11 +1004,83 @@ def _truncate(text: str, max_chars: Optional[int]) -> str:
     return text[:max_chars] + f"\n\n[... 内容超过 {max_chars} 字符，已截断；请缩小时间区间或改用 view_format=chunked ...]"
 
 
-def _hard_truncate(text: str, max_chars: Optional[int]) -> str:
-    """Cut ``text`` to the hard budget, without appending a suffix."""
-    if not max_chars or len(text) <= max_chars:
-        return text
-    return text[:max_chars]
+def _cursor_token(sub_id: str) -> str:
+    """游标绑定课程：短哈希防止把 A 课的游标误用到 B 课。"""
+    return hashlib.sha1(sub_id.encode("utf-8")).hexdigest()[:8]
+
+
+def _page_records(
+    records: List[Dict[str, Any]],
+    max_chars: int,
+    cursor: str,
+    kind: str,
+    sub_id: str,
+    build,
+) -> str:
+    """无损分页：能装整条就装整条，装不下就切单条文本，游标精确续取。
+
+    游标 = ``kind:课程哈希:记录索引:字符偏移``，绑定课程与视图；``next_start_minute``
+    只供时间定位。绝不硬截断 JSON——预算连元数据都装不下时明确报错，而不是返回半截 JSON。
+    """
+    token = _cursor_token(sub_id)
+    index = offset = 0
+    if cursor:
+        parts = cursor.split(":")
+        if len(parts) != 4 or parts[0] != kind or parts[1] != token:
+            raise ValueError("无效的字幕分页 cursor；请使用同一课程、同一视图返回的 next_cursor")
+        try:
+            index, offset = int(parts[2]), int(parts[3])
+        except ValueError:
+            raise ValueError("无效的字幕分页 cursor；请使用同一课程、同一视图返回的 next_cursor")
+        if index < 0 or offset < 0 or index >= len(records):
+            raise ValueError("字幕分页 cursor 超出当前字幕范围，请从第一页重新获取")
+        if offset and offset >= len(str(records[index].get("text", ""))):
+            raise ValueError("字幕分页 cursor 超出当前字幕范围，请从第一页重新获取")
+
+    def payload(subset, next_index, next_offset=0):
+        continuation = (
+            f"{kind}:{token}:{next_index}:{next_offset}" if next_index < len(records) else None
+        )
+        return build(subset, next_index, continuation)
+
+    remaining = records[index:]
+    if offset:
+        first = dict(remaining[0])
+        first["text"] = str(first["text"])[offset:]
+        first["text_offset"] = offset
+        if "char_count" in first:
+            first["char_count"] = len(first["text"])
+        remaining = [first, *remaining[1:]]
+
+    keep = _fit_prefix(remaining, lambda subset: payload(subset, index + len(subset)), max_chars)
+    if keep or not remaining:
+        result = payload(remaining[:keep], index + keep)
+        if _payload_len(result) > max_chars:
+            raise ValueError("max_chars 不足以容纳字幕元数据，请增大字符上限")
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    # 单条记录比预算还大：无损切文本，游标记录精确偏移供下一页续取。
+    first = dict(remaining[0])
+    text = str(first.get("text", ""))
+    first["text_offset"] = offset
+    first["text_truncated"] = True
+
+    def partial(length):
+        first["text"] = text[:length]
+        if "char_count" in first:
+            first["char_count"] = length
+        return payload([first], index, offset + length)
+
+    low, high = 0, max(0, len(text) - 1)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _payload_len(partial(middle)) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    if low == 0:
+        raise ValueError("max_chars 不足以容纳一段字幕及分页元数据，请增大字符上限")
+    return json.dumps(partial(low), ensure_ascii=False, indent=2)
 
 
 def _payload_len(payload: Any) -> int:
@@ -1024,25 +1104,24 @@ def _chunked_payload(
     minutes_map: Dict[int, List[str]],
     max_chars: int,
     quality: Optional[Dict[str, Any]] = None,
+    cursor: str = "",
 ) -> str:
-    """Serialize transcript chunks within ``max_chars``.
+    """Serialize transcript chunks within ``max_chars``, losslessly resumable.
 
-    ``chunked`` exists for long lectures, so returning every chunk regardless
-    of the budget would defeat its purpose. Chunks are built against half the
-    budget, then the largest fitting prefix is returned together with
-    ``truncated`` / ``next_start_minute`` so the agent can fetch the rest.
+    逻辑分块用 chunk_transcript 的固定目标（与 max_chars 解耦）：改预算续取时
+    chunk 边界不变，游标索引才稳定。``next_cursor`` 精确续取，``next_start_minute``
+    仅作时间定位。
     """
-    budget = max(1200, max_chars // 2)
-    chunks = chunk_transcript(minutes_map, max_chars=budget)
+    chunks = chunk_transcript(minutes_map)
 
-    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
-        returned = len(subset)
+    def build(subset: List[Dict[str, Any]], next_index: int, next_cursor) -> Dict[str, Any]:
         payload = {
             "sub_id": sub_id,
             "total_chunks": len(chunks),
-            "returned_chunks": returned,
-            "truncated": returned < len(chunks),
-            "next_start_minute": chunks[returned]["start_min"] if returned < len(chunks) else None,
+            "returned_chunks": len(subset),
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
+            "next_start_minute": chunks[next_index]["start_min"] if next_cursor else None,
             "chunks": subset,
         }
         if quality:
@@ -1051,27 +1130,7 @@ def _chunked_payload(
             payload["quality"] = quality
         return payload
 
-    keep = _fit_prefix(chunks, build, max_chars)
-    if keep == 0 and chunks:
-        first = dict(chunks[0])
-        text = str(first.get("text", ""))
-        low, high = 0, len(text)
-        while low < high:
-            mid = (low + high + 1) // 2
-            first["text"] = text[:mid]
-            first["char_count"] = mid
-            if _payload_len(build([first])) <= max_chars:
-                low = mid
-            else:
-                high = mid - 1
-        first["text"] = text[:low]
-        first["char_count"] = low
-        first["text_truncated"] = True
-        payload = json.dumps(build([first]), ensure_ascii=False, indent=2)
-        if len(payload) <= max_chars:
-            return payload
-        return _hard_truncate(json.dumps(build([]), ensure_ascii=False, indent=2), max_chars)
-    return json.dumps(build(chunks[:keep]), ensure_ascii=False, indent=2)
+    return _page_records(chunks, max_chars, cursor, "c", sub_id, build)
 
 
 def _segments_payload(
@@ -1080,19 +1139,20 @@ def _segments_payload(
     duration: str,
     max_chars: int,
     quality: Optional[Dict[str, Any]] = None,
+    cursor: str = "",
 ) -> str:
-    """Serialize raw segments within ``max_chars``, reporting the cut point."""
+    """Serialize raw segments within ``max_chars``, losslessly resumable."""
 
-    def build(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
-        returned = len(subset)
+    def build(subset: List[Dict[str, Any]], next_index: int, next_cursor) -> Dict[str, Any]:
         payload = {
             "sub_id": sub_id,
             "duration": duration,
             "total_segments": len(segments),
-            "returned_segments": returned,
-            "truncated": returned < len(segments),
+            "returned_segments": len(subset),
+            "truncated": next_cursor is not None,
+            "next_cursor": next_cursor,
             "next_start_minute": (
-                segments[returned]["begin_sec"] // 60 if returned < len(segments) else None
+                segments[next_index]["begin_sec"] // 60 if next_cursor else None
             ),
             "segments": subset,
         }
@@ -1100,9 +1160,7 @@ def _segments_payload(
             payload["quality"] = quality
         return payload
 
-    keep = _fit_prefix(segments, build, max_chars)
-    payload = json.dumps(build(segments[:keep]), ensure_ascii=False, indent=2)
-    return payload if len(payload) <= max_chars else _hard_truncate(payload, max_chars)
+    return _page_records(segments, max_chars, cursor, "s", sub_id, build)
 
 
 def _study_notes_output_dir(source_path: str, output_dir: str) -> Tuple[Optional[str], Optional[str]]:
@@ -1734,6 +1792,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         tenant = arguments.get("tenant_code") or parsed.get("tenant_code") or DEFAULT_TENANT
         view_format = arguments.get("view_format", "per_minute")
         max_chars = arguments.get("max_chars") or 60000
+        cursor = str(arguments.get("cursor") or "")
+        if cursor and view_format not in ("json", "chunked"):
+            raise ValueError("cursor 仅适用于 json/chunked 字幕视图")
 
         start_min = arguments.get("start_minute")
         end_min = arguments.get("end_minute")
@@ -1804,9 +1865,9 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
         if view_format == "per_segment":
             return _truncate(header + "\n" + per_seg, max_chars)
         if view_format == "chunked":
-            return _chunked_payload(sub_id, minutes_map, max_chars, quality)
+            return _chunked_payload(sub_id, minutes_map, max_chars, quality, cursor)
         if view_format == "json":
-            return _segments_payload(sub_id, raw_segments, duration_str, max_chars, quality)
+            return _segments_payload(sub_id, raw_segments, duration_str, max_chars, quality, cursor)
         return _truncate(header + "\n" + per_min, max_chars)
 
     if name == "zju_fetch_slides":

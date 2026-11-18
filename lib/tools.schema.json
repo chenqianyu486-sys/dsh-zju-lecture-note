@@ -47,6 +47,10 @@
         "description": "单次返回的字符上限（默认 60000）。超出会截断并在末尾标注，长课程建议改用 view_format=chunked",
         "default": 60000,
         "type": "integer"
+      },
+      "cursor": {
+        "description": "json/chunked 分页续取：原样传回上一页的 next_cursor，保持课程、视图和时间区间参数不变。next_start_minute 仅用于时间定位，不能代替精确游标",
+        "type": "string"
       }
     }
   },
