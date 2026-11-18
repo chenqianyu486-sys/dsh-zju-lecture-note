@@ -187,6 +187,13 @@ class TestBridge(unittest.TestCase):
         )
         self.assertTrue(payload["errorListsCandidates"], payload)
 
+    def test_bridge_recovers_after_timeout_and_isolates_stale_children(self):
+        """超时后同一工作区可重建；旧子进程的延迟事件不能污染新请求。"""
+        result = run_node(os.path.join("tests", "bridge_timeout_recovery.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload.get("ok"), payload)
+
 
 class TestPackage(unittest.TestCase):
 

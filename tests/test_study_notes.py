@@ -19,12 +19,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import mcp_server  # noqa: E402
+from zju_lecture import study_notes  # noqa: E402
 from zju_lecture.study_notes import (  # noqa: E402
     StudyNotesError,
     build_draft,
@@ -76,6 +78,22 @@ class TestLatexToTypst(unittest.TestCase):
     def test_blackboard_bold(self):
         self.assertEqual(latex_to_typst(r"\mathbb{R}")[0], "RR")
 
+    def test_blackboard_bold_keeps_other_letters(self):
+        # E/P/H 没有专用黑板符号，保留原字母交给 bb()，不能一律回退成 RR。
+        for expr, want in ((r"\mathbb{E}[X]", "bb(E)[X]"),
+                           (r"\mathbb{P}(A)", "bb(P)(A)"),
+                           (r"\mathbb{H}", "bb(H)")):
+            converted, warnings = latex_to_typst(expr)
+            self.assertEqual(converted, want)
+            self.assertEqual(warnings, [])
+            self.assertEqual(latex_to_typst(converted)[0], converted)
+
+    def test_blackboard_bold_symbols_are_idempotent(self):
+        for letter, symbol in (("R", "RR"), ("N", "NN"), ("Z", "ZZ"), ("C", "CC"), ("Q", "QQ")):
+            converted, _ = latex_to_typst(r"\mathbb{" + letter + "}")
+            self.assertEqual(converted, symbol)
+            self.assertEqual(latex_to_typst(converted)[0], converted)
+
     def test_differential_is_split(self):
         # `$dz$` 在 Typst 里是未知变量 dz；微分约定要写成 d z。
         self.assertIn("d z", latex_to_typst(r"\oint_C f(z) \, dz")[0])
@@ -116,6 +134,12 @@ class TestTypstEscaping(unittest.TestCase):
     def test_email_is_not_treated_as_a_reference(self):
         rendered = render_typst("联系 someone@example.com 获取")
         self.assertNotIn("@example.com", rendered.typst.replace("\\@", ""))
+
+    def test_unknown_reference_keeps_literal_text(self):
+        # 未知回指需要整段保留为字面量，不能把名字（邮箱域名/下划线）删掉。
+        rendered = render_typst("联系 someone@example.com；@missing_label 是正文。")
+        self.assertIn(r"someone\@example.com", rendered.typst)
+        self.assertIn(r"\@missing\_label", rendered.typst)
 
     def test_known_reference_survives(self):
         rendered = render_typst("见 @def:term 的定义 <def:term>")
@@ -273,6 +297,38 @@ class TestCompile(unittest.TestCase):
             with self.assertRaises(StudyNotesError) as ctx:
                 compile_project(directory, "// empty")
             self.assertIn("typst", str(ctx.exception))
+
+    def test_png_failure_does_not_return_stale_pages(self):
+        if not find_typst():
+            self.skipTest("本机没有 typst，跳过编译测试")
+        with tempfile.TemporaryDirectory() as directory:
+            first = compile_project(directory, "Old page", make_png=True)
+            self.assertTrue(first.ok, first.errors)
+            self.assertTrue(first.png_paths)
+            real_run = study_notes._run_typst
+
+            def fail_png(typst, args, cwd, timeout):
+                if args[-1].endswith(".png"):
+                    return 1, "error: synthetic PNG export failure"
+                return real_run(typst, args, cwd, timeout)
+
+            with mock.patch.object(study_notes, "_run_typst", side_effect=fail_png):
+                result = compile_project(directory, "New page", make_png=True)
+            self.assertTrue(result.ok, result.errors)
+            self.assertEqual(result.png_paths, [])
+            self.assertTrue(any("PNG" in warning for warning in result.warnings))
+
+    def test_user_named_png_is_not_a_generated_page(self):
+        if not find_typst():
+            self.skipTest("本机没有 typst，跳过编译测试")
+        with tempfile.TemporaryDirectory() as directory:
+            with open(os.path.join(directory, "page-diagram.png"), "wb") as handle:
+                handle.write(b"user image")
+            result = compile_project(directory, "One page", make_png=True)
+            self.assertTrue(result.ok, result.errors)
+            self.assertEqual(
+                [os.path.basename(path) for path in result.png_paths], ["page-1.png"]
+            )
 
 
 class TestMcpTool(unittest.TestCase):
