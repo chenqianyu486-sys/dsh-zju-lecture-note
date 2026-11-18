@@ -38,6 +38,11 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from .markdown_code import (
+    INLINE_CODE_RE, code_block_typst, fenced_line_flags, is_fence_close,
+    opening_fence, transform_prose,
+)
+
 __all__ = [
     "StudyNotesError",
     "DraftResult",
@@ -265,7 +270,7 @@ _LABEL_RE = re.compile(r"\s*<([A-Za-z][A-Za-z0-9_.:-]*)>\s*$")
 #: 原生交叉引用：`@def:xxx`
 _REF_RE = re.compile(r"@[A-Za-z][A-Za-z0-9_.:-]*")
 #: 行内代码 span（`` `…` ``）。Typst 的反引号是 raw，内容原样输出。
-_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+_INLINE_CODE_RE = INLINE_CODE_RE
 
 #: 独占一行的公式：``$ … $``。
 #:
@@ -1566,10 +1571,11 @@ def _collect_block_lines(
     body: List[str] = []
     total = len(lines)
     proof = name == "证明"
+    code_lines = list(fenced_line_flags(lines))
     while cursor < total:
         raw = lines[cursor]
         stripped = raw.strip()
-        if stripped and block_boundary(stripped, proof=proof):
+        if not code_lines[cursor] and stripped and block_boundary(stripped, proof=proof):
             break
         body.append(raw)
         cursor += 1
@@ -1585,6 +1591,19 @@ def _split_trailing_label(text: str) -> Tuple[str, str]:
     if not match:
         return text.rstrip(), ""
     return text[: match.start()].rstrip(), match.group(1)
+
+
+def _render_code_block(lines: Sequence[str], index: int) -> Tuple[str, int]:
+    """消费从起始行 ``index`` 开始的围栏代码块，渲染成 ``#raw``，返回 (Typst, 下一行索引)。"""
+    marker, info = opening_fence(lines[index])
+    index += 1
+    body: List[str] = []
+    while index < len(lines) and not is_fence_close(lines[index], marker):
+        body.append(lines[index])
+        index += 1
+    if index < len(lines):
+        index += 1
+    return code_block_typst(body, info), index
 
 
 def _render_block_body(
@@ -1604,6 +1623,10 @@ def _render_block_body(
     while index < total:
         raw = lines[index]
         stripped = raw.strip()
+        if opening_fence(raw):
+            code, index = _render_code_block(lines, index)
+            out.append(code)
+            continue
         if not stripped:
             out.append("")
             index += 1
@@ -1956,19 +1979,30 @@ def render_typst(
     labels: List[str] = []
     warnings: List[str] = []
 
-    normalized = _collapse_display_math(draft_text.replace("\r\n", "\n"))
-    normalized, _comments = _strip_html_comments(normalized)
-    if convert_math:
-        normalized, math_warnings = _convert_draft_math(normalized)
-        if math_warnings:
-            warnings.append(
-                "底稿里还有 LaTeX 写法的数学（已尽量自动改写），以下片段无法机械转换，请手工改成 Typst 写法："
-                + "、".join(sorted(set(math_warnings)))
-            )
+    math_warnings: List[str] = []
+
+    def prepare_prose(text: str) -> str:
+        text, _comments = _strip_html_comments(_collapse_display_math(text))
+        if convert_math:
+            text, issues = _convert_draft_math(text)
+            math_warnings.extend(issues)
+        return text
+
+    # 转换只跑正文：围栏与行内代码里的公式/注释示例逐字节保留（见 markdown_code）。
+    normalized = transform_prose(draft_text.replace("\r\n", "\n"), prepare_prose)
+    if math_warnings:
+        warnings.append(
+            "底稿里还有 LaTeX 写法的数学（已尽量自动改写），以下片段无法机械转换，请手工改成 Typst 写法："
+            + "、".join(sorted(set(math_warnings)))
+        )
 
     # 第一遍：先把全文里定义过的 label 收集出来。回指只有指向这些 label 时
     # 才按 Typst 引用保留，否则正文里的邮箱会被当成引用而报错。
-    known_labels = sorted({m.group(1) for m in re.finditer(r"<([A-Za-z][A-Za-z0-9_.:-]*)>", normalized)})
+    # 代码示例里的 <label> / @ref 不算结构，只在正文里扫。
+    prose_parts: List[str] = []
+    transform_prose(normalized, lambda part: prose_parts.append(part) or part)
+    prose_text = "".join(prose_parts)
+    known_labels = sorted({m.group(1) for m in re.finditer(r"<([A-Za-z][A-Za-z0-9_.:-]*)>", prose_text)})
 
     section = ""
     in_cover = False
@@ -1992,6 +2026,13 @@ def render_typst(
 
         if not stripped:
             lines_out.append("")
+            continue
+
+        # 围栏代码整块排成 #raw：里面的 # 注释 / 公式 / 标记都是示例，不是结构。
+        if opening_fence(raw_line):
+            code, cursor = _render_code_block(input_lines, cursor - 1)
+            lines_out.append(code)
+            _count("code")
             continue
 
         # HTML 注释在预处理阶段已经摘掉了（见 _strip_html_comments）
@@ -2237,7 +2278,7 @@ def render_typst(
 
     typst = "\n".join(setup) + cover + "\n\n" + body_text + "\n"
 
-    references = sorted(set(_REF_RE.findall(normalized)))
+    references = sorted(set(_REF_RE.findall(prose_text)))
     dangling = [ref for ref in references if ref[1:] not in known_labels]
 
     if dangling:
@@ -2287,7 +2328,10 @@ def _render_cover(draft_text: str) -> str:
     """渲染 ``# 封面`` 块。"""
     fields: Dict[str, str] = {}
     in_cover = False
-    for line in draft_text.replace("\r\n", "\n").split("\n"):
+    lines = draft_text.replace("\r\n", "\n").split("\n")
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
+        if is_code:
+            continue
         stripped = line.strip()
         heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading:
@@ -2364,7 +2408,10 @@ def build_draft(
     doc_title = title.strip()
     body_lines: List[str] = []
     in_cover = False
-    for line in lines:
+    for line, is_code in zip(lines, fenced_line_flags(lines)):
+        if is_code:
+            body_lines.append(line)
+            continue
         stripped = line.strip()
         heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
         if heading:
@@ -2385,8 +2432,8 @@ def build_draft(
     # 按标题切块
     blocks: List[Dict[str, object]] = []
     current: Optional[Dict[str, object]] = None
-    for line in body_lines:
-        heading = re.match(r"^(#{2,6})\s+(.*)$", line.strip())
+    for line, is_code in zip(body_lines, fenced_line_flags(body_lines)):
+        heading = None if is_code else re.match(r"^(#{2,6})\s+(.*)$", line.strip())
         if heading:
             current = {
                 "level": len(heading.group(1)),
