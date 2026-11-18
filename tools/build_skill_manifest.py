@@ -42,12 +42,37 @@ def package_version():
         return json.load(handle)["version"]
 
 
-def sha256(path):
-    digest = hashlib.sha256()
+#: Skill 目录里目前可能有文本文件。清单是跨平台审计凭据，文本统一按
+#: LF 计算哈希与大小；否则 Windows 的 core.autocrlf 会把同一份内容算成另一个值。
+TEXT_EXTENSIONS = frozenset({
+    ".md", ".typ", ".txt", ".json", ".py", ".js", ".mjs", ".cjs",
+    ".ts", ".tsx", ".css", ".html", ".yml", ".yaml", ".toml", ".csv",
+    ".svg", ".xml",
+})
+TEXT_NAMES = frozenset({
+    "LICENSE", "UNLICENSE", "COPYING", "NOTICE", "AUTHORS", "CHANGELOG",
+    "README",
+})
+
+
+def is_text_file(path):
+    return (
+        os.path.splitext(path)[1].lower() in TEXT_EXTENSIONS
+        or os.path.basename(path).upper() in TEXT_NAMES
+    )
+
+
+def canonical_bytes(path):
+    """返回清单审计使用的字节：文本文件把 CRLF/CR 规范成 LF。"""
     with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        raw = handle.read()
+    if is_text_file(path):
+        raw = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return raw
+
+
+def sha256(path):
+    return hashlib.sha256(canonical_bytes(path)).hexdigest()
 
 
 def collect(skill_name):
@@ -60,10 +85,11 @@ def collect(skill_name):
                 continue
             path = os.path.join(root, name)
             rel = os.path.relpath(path, skill_dir).replace(os.sep, "/")
+            content = canonical_bytes(path)
             files.append({
                 "path": rel,
-                "sha256": sha256(path),
-                "size": os.path.getsize(path),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size": len(content),
                 "mode": "0644",
             })
     return sorted(files, key=lambda item: item["path"])

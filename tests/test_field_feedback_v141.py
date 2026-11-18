@@ -539,11 +539,16 @@ class TestSkillDriftGuard(unittest.TestCase):
 
     def test_manifest_hash_matches_the_shipped_skill(self):
         with open(self.SKILL, "rb") as handle:
-            digest = hashlib.sha256(handle.read()).hexdigest()
+            raw = handle.read()
+        # 清单是跨平台凭据：Git 仓库与清单都以 LF 为规范字节。
+        # Windows core.autocrlf=true 只改变工作区 checkout，不应造成漂移。
+        canonical = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        digest = hashlib.sha256(canonical).hexdigest()
         with io.open(self.MANIFEST, encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(manifest["contentHash"], f"sha256:{digest}")
         self.assertEqual(manifest["files"][0]["sha256"], digest)
+        self.assertEqual(manifest["files"][0]["size"], len(canonical))
 
     def test_manifest_version_follows_the_package(self):
         with io.open(os.path.join(BASE_DIR, "package.json"), encoding="utf-8") as handle:

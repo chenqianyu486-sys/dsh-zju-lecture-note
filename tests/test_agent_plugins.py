@@ -8,10 +8,12 @@
 不会把根清单混进去。全部用 stdlib 离线断言，不依赖网络与 ``jsonschema``。
 """
 
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -197,10 +199,69 @@ class TestSkillDiscovery(unittest.TestCase):
             self.assertTrue(1 <= len(name) <= 64, name)
             self.assertRegex(name, SKILL_NAME_RE)
 
+    def test_validate_skill_normalizes_crlf_frontmatter(self):
+        with tempfile.TemporaryDirectory() as root:
+            skill_dir = os.path.join(root, "crlf-skill")
+            os.makedirs(skill_dir)
+            path = os.path.join(skill_dir, "SKILL.md")
+            content = (
+                "---\r\n"
+                "name: crlf-skill\r\n"
+                "description: CRLF frontmatter must still parse\r\n"
+                "---\r\n"
+                "\r\n"
+                "# Body\r\n"
+            )
+            with open(path, "wb") as handle:
+                handle.write(content.encode("utf-8"))
+            self.assertEqual(load_build_plugin().validate_skill(path), [])
+
+    def test_gitattributes_pins_text_checkouts_to_lf(self):
+        path = os.path.join(ROOT, ".gitattributes")
+        self.assertTrue(os.path.isfile(path))
+        with open(path, encoding="utf-8") as handle:
+            rules = handle.read()
+        self.assertRegex(rules, r"(?m)^\*\s+text=auto\s+eol=lf\s*$")
+
     def test_descriptions_are_within_the_agent_skills_limit(self):
         for name in SKILL_DIRS:
             description = frontmatter(("skills", name, "SKILL.md")).get("description", "")
             self.assertTrue(1 <= len(description) <= 1024, f"{name}: {len(description)}")
+
+
+class TestSkillManifestCanonicalHashes(unittest.TestCase):
+    def test_all_manifests_use_lf_canonical_bytes(self):
+        for name in SKILL_DIRS:
+            manifest = load_strict_json("skills", f"{name}.manifest.json")
+            for item in manifest["files"]:
+                path = os.path.join(ROOT, "skills", name, *item["path"].split("/"))
+                with open(path, "rb") as handle:
+                    raw = handle.read()
+                canonical = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                self.assertEqual(
+                    item["sha256"], hashlib.sha256(canonical).hexdigest(), path
+                )
+                self.assertEqual(item["size"], len(canonical), path)
+
+    def test_manifest_generator_canonicalizes_crlf(self):
+        spec = importlib.util.spec_from_file_location(
+            "build_skill_manifest",
+            os.path.join(ROOT, "tools", "build_skill_manifest.py"),
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as root:
+            crlf = os.path.join(root, "crlf.md")
+            lf = os.path.join(root, "lf.md")
+            with open(crlf, "wb") as handle:
+                handle.write(b"heading\r\nbody\r\n")
+            with open(lf, "wb") as handle:
+                handle.write(b"heading\nbody\n")
+            self.assertEqual(module.sha256(crlf), module.sha256(lf))
+            self.assertEqual(
+                len(module.canonical_bytes(crlf)),
+                len(module.canonical_bytes(lf)),
+            )
 
 
 class TestNpmPackageShipsTheEntry(unittest.TestCase):

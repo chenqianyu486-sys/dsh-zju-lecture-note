@@ -158,6 +158,13 @@ class TestNoSecretToolInputs(unittest.TestCase):
 
 class TestBridge(unittest.TestCase):
 
+    def test_skill_frontmatter_parser_accepts_crlf(self):
+        result = run_node(os.path.join("tests", "frontmatter_crlf.mjs"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout.strip())
+        self.assertTrue(payload["ok"], payload)
+        self.assertEqual(payload["parsed"], ["lf", "crlf"])
+
     def test_bridge_calls_the_python_core(self):
         result = run_node(os.path.join("tests", "bridge_smoke.mjs"))
         self.assertEqual(result.returncode, 0, result.stderr)

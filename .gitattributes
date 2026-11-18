@@ -1,0 +1,4 @@
+# Keep text files byte-stable across Windows, macOS and Linux checkouts.
+# Skill manifests record SHA-256 and byte sizes, so CRLF conversion would make
+# unittest discover and package verification depend on the Git config.
+* text=auto eol=lf

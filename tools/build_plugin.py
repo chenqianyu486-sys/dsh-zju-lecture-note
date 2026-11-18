@@ -211,7 +211,9 @@ def validate_skill(path: str) -> List[str]:
         raw = handle.read()
     if raw.startswith(b"\xef\xbb\xbf"):
         problems.append(f"{path} 含 BOM")
-    text = raw.decode("utf-8")
+    # 校验器不能依赖 checkout 的换行风格：Windows + core.autocrlf=true
+    # 会把工作区的 SKILL.md 变成 CRLF，而 Git 仓库里的规范内容是 LF。
+    text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         problems.append(f"{path} 缺少 YAML frontmatter")
         return problems
