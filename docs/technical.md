@@ -636,7 +636,7 @@ FIPS-197 AES-128 已知向量、Edge Cookie 失败原因分类、Cookie 主机�
 Cookie 不回显与错误 redaction、敏感本地文件拒绝、TLS 不降级与三级信任库回落、
 瞬时故障重试与证书失败不重试、`isError` 冒泡、跨域重定向拒绝、
 讲义公式规范检查与自动修复、隐私扫描器自测、review 批次回归
-（行内代码不被改写、修复前备份、DOCX 段落保留、`chunked`/`json` 截断、切片时长、
+（行内代码不被改写、修复前备份、DOCX 段落保留、`chunked`/`json` 无损分页续取、切片时长、
 Cookie WAL 回放、ABE 探测、PDF 报错带解释器路径、bridge 超时语义、系统提示适用范围）、
 登录态安全存储 / Cookie 域过滤 / 登录 URL 白名单 / 失效清除 / `zju_login(clear=true)`、
 阅读版 PDF 的标记装置与真实编译、配色三处一致与字体可再分发性、填空笔记链路。
