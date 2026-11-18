@@ -1661,8 +1661,11 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                 )
             result = clear_session(delete_profile=True)
             _COOKIE_CACHE.pop(DEFAULT_DOMAIN, None)
+            failed = bool(result.get("backend_error") or result.get("profile_error"))
             lines = [
-                "已清除本机保存的登录态。"
+                "登录态清理未完成。"
+                if failed
+                else "已清除本机保存的登录态。"
                 if result.get("session_removed")
                 else "本机没有保存的登录态。"
             ]
@@ -1680,7 +1683,10 @@ def _dispatch_tool(name: str, arguments: Dict[str, Any]) -> Any:
                     f"{REDACTOR.redact(str(result['backend_error']))}。"
                     "可在系统钥匙串/密钥环里手动删除后重试。"
                 )
-            return "\n".join(lines)
+            message = "\n".join(lines)
+            if failed:
+                raise ZJUAPIError(message)
+            return message
 
         timeout = arguments.get("timeout_seconds") or 300
         try:

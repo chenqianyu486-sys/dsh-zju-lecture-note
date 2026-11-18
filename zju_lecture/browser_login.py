@@ -361,24 +361,30 @@ def _wipe_profile() -> Tuple[bool, str]:
 def clear_session(delete_profile: bool = True) -> Dict[str, Any]:
     """Delete the saved session (all backends) and the browser profile."""
     backend = credential_store.backend()
-    removed_file = os.path.exists(session_file())
-    if removed_file:
-        _secure_remove(session_file())
     backend_error = ""
     cleared = False
     try:
         cleared = bool(backend.clear())
     except StoreUnavailable as exc:
         backend_error = exc.reason
-    if removed_file:
-        cleared = True
+    # 以「删除后是否还在」为准，绝不用删前存在冒充注销成功。dpapi 后端的文件即
+    # session_file()，已由 backend.clear() 处理；其余后端可能另留旧明文文件。
+    if os.path.lexists(session_file()):
+        _secure_remove(session_file())
+        if os.path.lexists(session_file()):
+            cleared = False
+            backend_error = "; ".join(filter(None, (
+                backend_error, "登录态文件未能删除（可能被占用或没有写权限）。"
+            )))
+        elif backend.name != "dpapi":
+            cleared = True
     removed_profile, profile_error = _wipe_profile() if delete_profile else (False, "")
     try:
         os.rmdir(login_dir())
     except OSError:
         pass
     return {
-        "session_removed": bool(cleared or removed_file),
+        "session_removed": bool(cleared and not backend_error),
         "backend": backend.name,
         "backend_error": backend_error,
         "profile_removed": removed_profile,
