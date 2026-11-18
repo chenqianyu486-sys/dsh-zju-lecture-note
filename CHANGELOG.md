@@ -1,5 +1,46 @@
 # 更新日志
 
+## 2.2.11 — 2026-11-18
+
+> 包含未单独发布的 2.2.10（GitHub alert 同行正文解析）。本版本是 2.2.9 之后的首个发布版。
+
+### 可靠性修复
+
+- **bridge 超时恢复**：某次工具调用超时后，同一工作区会话能重建 Python 子进程继续服务，
+  不再永久「会话已关闭」；被回收子进程的延迟 stdout/stderr/exit 事件按进程身份隔离，
+  不会污染新请求。容量模型不变。
+- **注销如实报告**：`zju_login(clear=true, confirm=true)` 只在登录态确实清除后才报「已清除」；
+  本机无登录态报「本机没有保存」；凭据库/旧文件清理失败时返回 MCP `isError` 并以
+  「登录态清理未完成。」开头说明原因，CLI 同步退出码 1，不再把失败伪报成成功。
+- **长字幕无损分页**：`zju_fetch_transcript` 的 `json` / `chunked` 视图超出 `max_chars` 时
+  返回 `truncated=true` 与 `next_cursor`；把游标原样传回 `cursor` 可无损重建全文，
+  中途改 `max_chars` 仍稳定。游标绑定课程（跨课复用报错），单条超长字幕按字符无损切分，
+  不再硬截断 JSON。`next_start_minute` 仅作时间定位。
+
+### 讲义渲染
+
+- **代码示例保护**：新增共用模块 `zju_lecture/markdown_code.py` 统一围栏/行内代码边界，
+  阅读版、填空笔记与 `note_lint` 三处共用。代码块里的 `#` 注释、`$公式$`、`<!-- 注释 -->`
+  逐字节保留，不被当标题/封面/数学；嵌套围栏（````markdown 嵌 ```latex）、多反引号行内、
+  `~~~` 围栏都按字符与长度正确闭合，`fix=true` 不再改写代码示例。
+- **mathbb 字母**：`\mathbb{E/P/H}` 等保留原字母（`bb(E)`），不再误渲成 `ℝ`；
+  `\mathbb{R/N/Z/C/Q}` 仍映射 `RR/NN/ZZ/CC/QQ`，二次转换幂等。
+- **未知 @ 引用与邮箱**：正文里的邮箱与未登记 `@label` 整段按字面量保留，不再删名字；
+  已知 `<label>` 回指仍正常跳转。
+- **未登记结构标签降级**：普通段落末尾的 `<def:x>` 没有编号，不再让填空版硬抛
+  `label does not exist`——其回指按字面量保留，与阅读版软降级同口径；`note_lint` 新增
+  `label_not_structural` 提示「标签需挂在 [定义]/[定理]/[证明] 等标记块或标题末尾」。
+  结构标签判定由 `_structural_label_lines` 单一真相源提供，lint 与渲染共用。
+- **逐页 PNG 对账**：填空笔记先导出到临时页名 `.zju-page-N.png`，成功后再与旧 `page-N.png`
+  对账——导出失败不伪报上一轮旧页，重编译页数变短时准确删除多余数字页，用户自有的
+  `page-diagram.png` 等非数字页完全不受影响。
+
+### 跨平台
+
+- **Windows CRLF checkout 兼容**：新增 `.gitattributes`（`* text=auto eol=lf`）固定行尾；
+  Skill 清单的 SHA-256 与大小按 canonical LF 字节计算，frontmatter 解析前归一化换行并支持
+  scholia 的 `description: |` 块标量。校验与清单哈希不再依赖本机 `core.autocrlf` 配置。
+
 ## 2.2.10 — 2026-11-17
 
 - 修复 GitHub alert 同行正文解析：`> [!IMPORTANT] 正文` 以前会原样印出

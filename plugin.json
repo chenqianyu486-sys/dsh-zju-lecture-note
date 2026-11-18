@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zju-lecture",
-  "version": "2.2.10",
+  "version": "2.2.11",
   "description": "浙大智云课堂回放讲义：语音字幕 + 本地课件 → 结构化讲义与 PDF（MCP + Agent Skills）",
   "author": {
     "name": "chenqianyu486"
