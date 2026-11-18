@@ -479,6 +479,7 @@ _TYPST_BARE_NAMES = (
     | frozenset(w for w in _LATEX_SYMBOLS.values() if re.fullmatch(r"[A-Za-z]+", w))
     | frozenset({
         "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op",
+        "bb", "RR", "NN", "ZZ", "CC", "QQ",
         "mat", "cases", "quad", "wide", "thin", "med", "slash",
         "product", "integral", "sum", "dots",
         "overbrace", "underbrace", "overline", "underline",
@@ -986,11 +987,17 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
                 argument, next_index = _read_group(expression, index)
                 if argument is None:
                     warnings.append("\\mathbb")
-                    _emit("RR", next_index)
+                    _emit("bb", next_index)
                     index = next_index
                     continue
                 mapping = {"R": "RR", "N": "NN", "Z": "ZZ", "C": "CC", "Q": "QQ"}
-                _emit(mapping.get(argument.strip(), "RR"), next_index)
+                symbol = mapping.get(argument.strip())
+                if symbol is None:
+                    # E/P/H 等没有专用符号，保留原字母交给 bb()，不能一律回退成 RR。
+                    converted, issues = latex_to_typst(argument)
+                    warnings.extend(issues)
+                    symbol = "bb(" + converted + ")"
+                _emit(symbol, next_index)
                 index = next_index
                 continue
 
@@ -1259,7 +1266,9 @@ def escape_typst_text(text: str, known_labels: Optional[Sequence[str]] = None) -
             name = match.group(0)[1:]
             # 指向未知 label 的回指按字面量处理：正文里的邮箱
             # （foo@example.com）不该被 Typst 当成引用而报错。
-            return match.group(0) if name in allowed else "\\@"
+            # 保留完整原文（含名字与下划线），只转义 @ 和 _，不能把名字删掉。
+            return (match.group(0) if name in allowed
+                    else "\\" + match.group(0).replace("_", "\\_"))
 
         protected, kept_ref = _protect(protected, _REF_RE, _ref_builder)
 
@@ -1731,6 +1740,7 @@ _TYPST_SAFE_WORDS = (
     | frozenset(_LATEX_FUNCTIONS.values())
     | frozenset({
         "frac", "sqrt", "root", "mat", "cases", "cal", "frak", "bold",
+        "bb", "RR", "NN", "ZZ", "CC", "QQ",
         "upright", "op", "compose", "norm", "abs", "floor", "ceil", "round",
         "diag", "rank", "Res", "tr", "det", "lim", "max", "min", "sup", "inf",
         "wide", "thin", "med", "slash", "degree",
@@ -2644,10 +2654,14 @@ def compile_project(
                 "PDF 编译成功，但逐页 PNG 导出失败（不影响 PDF）：" +
                 (png_output.strip().splitlines()[-1] if png_output.strip() else f"退出码 {png_code}")
             )
-        result.png_paths = sorted(
-            os.path.join(project_dir, name)
-            for name in os.listdir(project_dir)
-            if name.startswith("page-") and name.endswith(".png")
-        )
+        else:
+            # 只收集本次成功导出的数字页：失败时不能把上一次的旧页当作本次产物，
+            # 用户自有的 page-*.png（如 page-diagram.png）也不算生成页。
+            result.png_paths = sorted(
+                (os.path.join(project_dir, name)
+                 for name in os.listdir(project_dir)
+                 if re.fullmatch(r"page-\d+\.png", name)),
+                key=lambda path: int(os.path.basename(path)[5:-4]),
+            )
 
     return result
