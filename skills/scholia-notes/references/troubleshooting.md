@@ -16,14 +16,9 @@ Typst 回退到 Libertinus 或随包字体，中英文照常出字，PDF 完整�
 
 ## 3. `lang` 被写死为 `"en"`
 
-`lib.typ` 里 `set text(..., lang: "en")`，所以中文按西文断行/断词规则处理，`justify: true` 会拉开字距。
-中文文档建议：
-
-```typst
-#set text(lang: "zh")   # 放在 #show: scholia.with(...) 之后，覆盖包装器的设置
-```
-
-想控制两端对齐的松紧，再调 `set par(justify: false)`。
+包装器 `set text(..., lang: "en")` 且 `justify: true`，中文按西文断行、字距被拉开。
+中文两行（`#set text(lang: "zh")` + `#set par(justify: false)`，放在 `use-palette` 之后）的口径与原因见
+[`style.md`](style.md) §7。
 
 ## 4. `remark` 会居中
 
@@ -85,12 +80,9 @@ Typst 数学模式**不是 LaTeX**，写数学复习提纲时以下写法必然�
 
 ## 9. 改配色时颜色「太淡」
 
-踩过的坑：把 `thm` 从 `#33609B` 压到 `#7C8DB5`，彩度是降了，但强调文字几乎消失，
-整页发灰。原因是 `tint()` 会把强调色按 9% 混向纸白——强调色一变淡，
-`definition` / `theorem` 的块底色会一起褪掉，方框的区分度随之消失。
-
-**淡 = 降彩度，不是降亮度差**。判定：缩到 25% 还看得出重点才够；
-或直接对照 `references/style.md` 里的三档表格。
+踩过的坑：`thm` 从 `#33609B` 压到 `#7C8DB5` 后强调文字几乎消失、整页发灰——`tint()` 把强调色按 9%
+混向纸白，强调色变淡时方框底色一起褪掉。**淡 = 降彩度，不是降亮度差**；三档对照与判定标准见
+[`style.md`](style.md) §2，量化口径见 [`typography-spec.md`](typography-spec.md) §7.3。
 
 ## 10. 内容块里写颜色报错 `invalid number suffix`
 
@@ -111,6 +103,7 @@ Typst 数学模式**不是 LaTeX**，写数学复习提纲时以下写法必然�
 ```powershell
 typst compile main.typ "page-{p}.png"          # 每页一张 PNG
 typst compile --pages 1-2 main.typ "head-{p}.png"
+typst fonts                                    # 看本机可用字体名
 ```
 
 深色主题另出一份对照：
@@ -121,7 +114,7 @@ typst compile --pages 1-2 main.typ "head-{p}.png"
 
 深色主题的封面/正文底色是 `#141B27`，页面本身不透明，直接投屏或打印深色页时注意留白。
 
-## 11. 要把 PDF 对外分发 —— 先查字体
+## 12. 要把 PDF 对外分发 —— 先查字体
 
 两条链路的默认字体栈**已经是可再分发的**：STIX Two / Libertinus / 随包
 `Notes Kai SC` 与 `Notes Serif SC` / Noto / Source Han / DejaVu。商业专有字体

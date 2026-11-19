@@ -16,27 +16,19 @@ descriptions:
 # Scholia Notes
 
 > **口径**：本 Skill 产出的是**基于 Typst scholia 模板排版的填空式学习笔记**；
-> 配色与段落规范由本项目定义，见
-> [`references/typography-spec.md`](references/typography-spec.md)。
->
-> **先分清两份 PDF**：普通讲义（知识总结）的阅读版 PDF 由 `zju_write_note` 自动生成，
-> 不需要本 Skill；本 Skill 只负责「可动手填写的复习笔记」这一种更重的产物。
-> 用户只是要一份好读的讲义时，直接走 `zju_write_note`，不要启动这条填空链路。
-> 两份 PDF 共用同一套配色、标记语义与版心参数（见格式规范），区别只在阅读版不挖空。
+> 配色与段落规范由本项目定义，见 [`references/typography-spec.md`](references/typography-spec.md)。
+> **先分清两份 PDF**：普通讲义的阅读版 PDF 由 `zju_write_note` 自动生成，不需要本 Skill；
+> 本 Skill 只负责「可动手填写的复习笔记」。用户只要一份好读的讲义时直接走 `zju_write_note`。
+> 两份 PDF 共用同一套配色、标记语义与版心参数，区别只在阅读版不挖空。
 
 两段式工作流：**先用 Markdown 把内容和结构定死，再套模板排版**。
-排版默认走淡彩极简——纸白、正文近黑、淡蓝淡青点睛、方框只在必要时出现。
+排版默认淡彩极简——纸白、正文近黑、淡蓝淡青点睛、方框只在必要时出现。
 
 > **格式规范（规范性文件）：[`references/format-spec.md`](references/format-spec.md)。**
-> 语义对应关系、预算、禁止事项、数学写法、校验清单都在那里；
-> 本文只讲怎么做事，细节冲突以规范为准。
-
-> **正文是主角，框框是例外。** 一个框框唯一的正当理由是「这条内容需要被编号、
-> 被后面的内容回指」。不需要被引用，就写成普通段落，用 `[强调]` / `[易错]` 标重点。
-> 每节的框（所有类型合计）**不超过 2 个**；工具会逐节点名超预算的节。
-
-> **本 skill 是非官方的第三方工作流说明**，与 `@preview/scholia` 包的作者、发行方无关，也未获其背书。
-> 它使用该 MIT 授权的 Typst 包作为排版引擎。
+> 语义对应、预算、禁止事项、数学写法、校验清单都在那里；本文只讲怎么做事，细节冲突以规范为准。
+> **正文是主角，框框是例外**：框唯一的正当理由是「需要被编号、被回指」；每节框合计 **≤ 2**，
+> 工具会逐节点名超预算的节。不需要被引用就写普通段落，用 `[强调]` / `[易错]` 标重点。
+> 本 skill 是**非官方**的第三方工作流说明，与 `@preview/scholia` 的作者、发行方无关，也**未获其背书**；
 > 许可与归属见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## Inputs to collect
@@ -46,49 +38,36 @@ descriptions:
 | 笔记主题与章节范围 | 用户没说就只做一节样例，不要虚构整套课程 |
 | 语言 | 中文正文（Typst 0.15 自带回退，实测不用配 CJK 字体） |
 | 风格 | 淡彩极简（默认）；用户明确要深色才切 `theme: "dark"` |
-| 配色 | **按内容类型固定分色**，见下方色相表 |
+| 配色 | **按内容类型固定分色**，见下 |
 | 强调强度 | 正文近黑 + 行内淡色加粗；不主动铺色块 |
 | 交付物 | `notes.md`（内容底稿）+ `main.typ` + `out.pdf` |
 
 ## 配色：按内容类型固定分色
 
-prelude 已内置四色体系，**照着用，不要另挑颜色**：
-
-| 内容类型 | 色相 | 覆盖 |
-|---|---|---|
-| 结论 / 推理 | 蓝 `#33609B` | theorem lemma proposition corollary · `proof` · qed · 回指 |
-| 定义 / 术语 | 青绿 `#20705F` | definition axiom assumption notation · `remark` · `mark-key` · `label-it` |
-| 例子 / 练习 | 琥珀 `#8F6218` | `example` · `yourturn` · `TODO` · `workspace` |
-| 易错 / 陷阱 | 紫 `#6350A8` | `#warn[…]` |
-| 次要信息 | 灰 `#6F7683` | 页码 · 边注 · `aside` |
-| 正文 | 近黑 `#1A1A1C` | 普通段落（主体） |
-
-四个强调色的对比度极差 **1.11**，视觉等权，所以看起来是一套配色而不是一主两辅。
-分组依据是「推理—定义—应用」的内容链条，色相全篇固定，读者才能靠颜色建立预期。
-要换整套色相时保持等权（极差 ≤ 1.2）且每个 ≥ 4.5:1 —— 详见 `references/style.md`。
+prelude 已内置四色体系，**照着用，不要另挑颜色**：结论 / 推理蓝、定义 / 术语青绿、例子 / 练习琥珀、
+易错 / 陷阱紫、次要信息灰、正文近黑。色值、等权（极差 ≤ 1.2）与对比度 ≥ 4.5:1 的量化口径见
+[`references/typography-spec.md`](references/typography-spec.md) §7 与 [`references/style.md`](references/style.md)。
 
 ## Procedure
 
 ### 第 0 步：先判断有没有现成的通路
 
-**在 dsh / MCP 宿主里（`dsh-zju-lecture-note` 插件已内置本 skill）**，两段式工作流是**工具化**的，
-不要手写 Typst。如果看不到 `zju_build_study_notes`，说明插件里的「填空式学习笔记」模块
-处于关闭状态（默认关闭）：要么让用户在设置里打开，要么按下面的手动流程走，不要假装工具存在。
+**在 dsh / MCP 宿主里（插件已内置本 skill）**，两段式工作流是**工具化**的，不要手写 Typst。
+看不到 `zju_build_study_notes` 说明「填空式学习笔记」模块关闭（默认关闭）：让用户在设置里打开，
+或按下面的手动流程走，不要假装工具存在。
 
 | 步骤 | 工具 | 做什么 |
 |---|---|---|
-| 1 | `zju_build_study_notes(mode="draft", note_path=…)` | 讲义 → 填空底稿 `*-填空底稿.md`（标题层级映射、正文原样搬运；**公式保持 LaTeX、表格保持 Markdown**，不写任何 Typst 语法，也**不逐节塞空占位**） |
-| 2 | 人工/Agent 填底稿 | 按内容补 `[直觉]`/`[练习]`/`[边注]`（可选，不需要就别加）、该挖空的地方写 `____`；**不要重写全文**，也别把公式改成 Typst |
-| 3 | `zju_build_study_notes(mode="patch", draft_path=…, edits=[{old,new}, …])` | 把第 2 步的全部改动**一次**写回底稿（每处 `old` 必须唯一命中；命中结果逐条报出来）。**不要一处一处调用编辑工具**——一次课的挖空有十几处 |
-| 4 | `zju_build_study_notes(mode="compile", draft_path=…)` | 底稿 → `main.typ` + `prelude.typ` → `out.pdf` + 逐页 `page-N.png`（PDF 同时落在底稿同目录，无需再拷） |
+| 1 | `zju_build_study_notes(mode="draft", note_path=…)` | 讲义 → 填空底稿 `*-填空底稿.md`（标题层级映射、正文原样搬运；**公式保持 LaTeX、表格保持 Markdown**，不写 Typst 语法，也**不逐节塞空占位**） |
+| 2 | 人工/Agent 填底稿 | 按内容补 `[直觉]`/`[练习]`/`[边注]`（不需要就别加）、该挖空处写 `____`；**不要重写全文**，也别把公式改成 Typst |
+| 3 | `zju_build_study_notes(mode="patch", draft_path=…, edits=[{old,new}, …])` | 把第 2 步全部改动**一次**写回（每处 `old` 必须唯一命中，命中结果逐条报出）。**不要一处一处调用编辑工具** |
+| 4 | `zju_build_study_notes(mode="compile", draft_path=…)` | 底稿 → `main.typ` + `prelude.typ` → `out.pdf` + 逐页 `page-N.png`（PDF 同时落在底稿同目录） |
 
-工具只做**搬运与排版**：哪些是定理、哪里该挖空，是内容判断，仍由你（Agent）完成。
-LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里保持 LaTeX，
-工具会统一改写，转不动的会点名。反过来（把底稿改写成 Typst）会被二次转换拆坏。
-工具会把「无法机械转换的数学」「超出视觉预算的方框」「方框 : 正文段落比值」
-「编译错误」原样报出来，别自行吞掉。
+工具只做**搬运与排版**：哪些是定理、哪里该挖空是内容判断，仍由你完成。LaTeX → Typst 转换**只在 compile
+做一次**：底稿保持 LaTeX，反过来把底稿改写成 Typst 会被二次转换拆坏。无法机械转换的数学、超预算方框、
+方框 : 正文比值、编译错误都会原样报出来，别自行吞掉。
 
-**`mode=patch` 的用法**：第 2 步读完底稿后，把十几处 `{old, new}` 攒成一个数组一次提交：
+**`mode=patch` 的用法**：读完底稿后把十几处 `{old, new}` 攒成一个数组一次提交：
 
 ```json
 {"mode": "patch", "draft_path": "…-填空底稿.md",
@@ -98,18 +77,13 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
  ]}
 ```
 
-`old` 在底稿里必须**恰好出现一次**（重复时加长上下文，或加 `"all": true`）。
-没命中的几条会逐条点名，已命中的照常写回，不必重发。
-
-**格式规范（规范性文件）在 [`references/format-spec.md`](references/format-spec.md)** ——
-语义对应关系、预算、禁止事项、校验清单都在那里。
-
-下面的手动流程适用于**没有装这个插件**的环境（纯 Typst、Claude Code、Cursor 等），
-以及工具报出「无法机械转换」需要手工兜底的场合。
+`old` 在底稿里必须**恰好出现一次**（重复时加长上下文，或加 `"all": true`）；没命中的逐条点名，已命中的照常写回。
+格式规范在 [`references/format-spec.md`](references/format-spec.md)。下面的手动流程适用于**没装插件**的环境
+（纯 Typst、Claude Code、Cursor 等）以及工具报「无法机械转换」需要手工兜底的场合。
 
 ### 第一阶段：Markdown 定内容
 
-1. 先写 `notes.md`，把这一份笔记的**全部内容与层级**用纯 Markdown 写完，不碰任何 Typst 语法。
+1. 先写 `notes.md`，把**全部内容与层级**用纯 Markdown 写完，不碰任何 Typst 语法。
    结构用约定标记（不是最终排版，是「意图声明」）：
 
    ```markdown
@@ -132,17 +106,12 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
    [强调] 需要淡色点睛的句子，登记在这里。
    ```
 
-   原因：内容与排版分离后，公式、层级、留白位置都能一次审到位；
-   直接写 Typst 会在版式调试中反复改内容，返工成本高（eval 实证：先写 Markdown 的那轮
-   2 轮编译通过，写满 Typst 才编译的那轮 6 轮、4 个硬错误）。
-
-   **底稿里不要写 Typst 语法**（`#note[…]`、`= 标题`、颜色、字号、手写编号）：
-   底稿要保持「人能读、LLM 能改」的纯 Markdown。完整约定见
+   内容与排版分离才能一次审到位；直接写 Typst 会在版式调试中反复改内容。**底稿里不要写 Typst 语法**
+   （`#note[…]`、`= 标题`、颜色、字号、手写编号），保持「人能读、LLM 能改」；完整约定见
    [`references/format-spec.md`](references/format-spec.md)。
 
 2. 审一遍底稿再进第二阶段：公式、章节顺序、哪句要强调、**哪几条真的需要被回指**。
-   Typst 数学的坑（`a_(ij)`、多字母标识符、`\overline`）**不用你手工改** ——
-   工具会统一把 LaTeX 数学转成 Typst 数学，转不动的会点名报出来（见 §4 的工具路径）。
+   Typst 数学的坑不用你手工改——工具统一把 LaTeX 转成 Typst，转不动的会点名（见第 0 步工具路径）。
 
 3. 复制 `references/prelude.typ` 到项目目录，然后写 `main.typ`：
 
@@ -152,29 +121,13 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
    #show: use-palette
    ```
 
-   原因：prelude 提供淡彩 palette 与 `accent` / `mark-key` / `divider` / `aside`；
-   `use-palette` 必须排在 `scholia.with(...)` **之后**，否则会被包装器重置回内置 light。
-   必须 `#import` 不能 `#include`（见失败处理）。
+   `use-palette` 必须排在 `scholia.with(...)` **之后**（否则被包装器重置回内置 light）；必须 `#import` 不能
+   `#include`（见失败处理）。目录里的 `references/prelude.typ` 是**生成副本**，单一来源在 `zju_lecture/prelude.typ`，
+   由 `tools/sync_skill_assets.py` 同步，不要手改副本。
 
-   > 本 skill 目录里的 `references/prelude.typ` 是**生成副本**，单一来源在
-   > `zju_lecture/prelude.typ`；由 `tools/sync_skill_assets.py` 同步，测试会校验两者逐字节一致。
-
-4. 按 Markdown 骨架逐条映射（**规范见 [`references/format-spec.md`](references/format-spec.md)**，
-   速查表见 [`references/mapping.md`](references/mapping.md)），并遵守视觉预算：
-
-   | | 每节上限 | 说明 |
-   |---|---|---|
-   | 正文段落 | 不限 | 近黑，是主体 |
-   | `accent` / `mark-key` 行内强调 | 2～3 处 | **首选**的强调手段 |
-   | `divider` | 1～2 条 | 段落切分 |
-   | `note`（带底色块） | 1 | 整节直觉 |
-   | knot 方框（**所有类型合计**） | **≤ 2** | 含 definition/theorem/example 等，仅为编号回指而设 |
-   | `yourturn` 练习块 | 1 | 需要留白给用户写 |
-   | `recall` / `sidenote` 边注 | 1～2 | 不占版面，最省空间 |
-
-   原因：方框是这套模板最重的视觉元素，堆多了整页就糊；正文保持黑白，
-   强调用行内淡色加粗，视觉负担小一个数量级。knot 只为「可编号、可回指」而存在。
-   口径以 `references/format-spec.md` §2.2 为准。
+4. 按骨架逐条映射（规范见 [`references/format-spec.md`](references/format-spec.md)，速查见
+   [`references/mapping.md`](references/mapping.md)）。视觉预算：knot 方框每节合计 **≤ 2**、直觉 / 练习各 1、
+   边注 1–2、行内强调 2–3、正文段落不限；口径以 `references/format-spec.md` §2.2 为准。
 
    **中文正文额外加这两行**（放在 `#show: use-palette` 之后）：
 
@@ -183,9 +136,7 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
    #set par(justify: false)
    ```
 
-   原因：scholia 包装器写死 `lang: "en"` 且 `justify: true`；
-   前者影响断行规则，后者会让两端对齐把中文字距拉得很松（实测 `justify: false` 才是关键）。
-   行距、段距、缩进、公式间距等**数值**见
+   包装器写死 `lang: "en"` 且 `justify: true`，后者会把中文字距拉松；行距 / 段距 / 缩进 / 公式间距等**数值**见
    [`references/typography-spec.md`](references/typography-spec.md) §3，不要在这里重复。
 
 5. 编译并肉眼验版（**两道关，缺一不可**）：
@@ -195,56 +146,26 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
    typst compile main.typ "page-{p}.png"     # 逐页看排版
    ```
 
-   第一道关：`error:` 一条都不能留。
-   第二道关：**必须看 PNG**。knot 的内容块数量错位时**不会报错**——
-   `#theorem[标题][正文]` 误写成 `#theorem[标题][正文][多余内容]` 时，
-   第二个块会被当成标签槽渲染成小字标签，退出码仍是 0。
-   所以 grep `error:` 不能替代肉眼验版。
+   第一道关：`error:` 一条都不能留。第二道关：**必须看 PNG**——knot 内容块数量错位时不报错（见失败处理）。
    字体告警无害，见 `references/troubleshooting.md`。
 
 6. 交付 `notes.md` + `main.typ` + `out.pdf`，并说明用了哪套 palette、方框用了多少个。
 
-## Markdown → Typst 映射表
+## Markdown → Typst 映射
 
-**完整语义对应表在 [`references/format-spec.md`](references/format-spec.md)**（规范性文件），
+完整语义对应表在 [`references/format-spec.md`](references/format-spec.md)（规范性文件），
 速查版在 [`references/mapping.md`](references/mapping.md)。
 
-| notes.md 标记 | Typst 写法 | 重量 |
-|---|---|---|
-| `# 封面` 段 | `#cover("标题", subtitle: …, author: …, date: …, kicker: …)` | — |
-| `## 章节` | `= 章节` | — |
-| `### 小节` | `== 小节`（**不要手写编号**，包装器自动编号） | — |
-| **普通段落** | **直接写 —— 正文的主体** | **无** |
-| `[直觉]` | `#note[…]` | 带底色，每节≤1 |
-| `[定义]` | `#definition[术语][…] <def:x>` | 方框（≤2/节） |
-| `[定理]/[引理]/[推论]` | `#theorem[标题][来源标签][…] <thm:x>` | 方框（≤2/节） |
-| `[证明]` | `#proof[… #TODO[缺口] …]` | 无框 + **块末** qed |
-| `[例]` | `#example[标题][…]` | 方框（≤2/节） |
-| `[练习]` | `#yourturn[…] #workspace(n: 3)` | 方框 + 留白 |
-| `[边注]` | `#recall[…]` | 右栏，最省空间 |
-| `[易错]` | `#warn[…]` | 行内紫字，不占预算 |
-| `[强调]` | `#accent([句子])` / `#mark-key[术语]` | **行内，最轻** |
-| `____` 填空 | `#fillin(width: 2.2cm)`（灰色；**练习块里不画**，那里已有书写横线） | — |
-| `@def:xxx` 回指 | 原生 `@def:xxx`，label 写在 knot 后 | — |
-
-> **框与证明是「块」，不是「一行」**：`[定义]` / `[定理]` / `[例]` / `[证明]` 从标记行开始，
-> 一直排到下一个标记、标题或整行粗体的伪标题为止。块里的空行是段落分隔，
-> `$$…$$`、列表、表格都留在装置里。`[证明]` 的 qed 方块因此排在**块内最后一行** ——
-> 证明要一直写到最后一段，不要把结论另起一段写在标记外面（方块会停在半路，误导读者的
-> 正是这个）。`[直觉]` / `[练习]` / `[边注]` / `[强调]` 只吃标记行那一句。
+> **框与证明是「块」，不是「一行」**：从标记行开始一直排到下一个标记、标题或整行粗体的伪标题；
+> 块里空行是段落分隔，`$$…$$`、列表、表格都留在装置里。`[证明]` 的 qed 排在**块内最后一行**——
+> 证明要写到最后一段，不要把结论另起一段写在标记外面。`[直觉]` / `[练习]` / `[边注]` / `[强调]` 只吃标记行那一句。
 > 完整规则见 [`references/format-spec.md`](references/format-spec.md) §2.4。
 
 ## 内容出处：自己的话 + 可核对的来源
 
-模板只管排版，**内容归属是你要负责的事**：
-
-- 定理、公式、结论可以用**自己的话复述**事实，但**必须注明出处**（书名/讲义/课程号），
-  例如「（Smith, *Linear Algebra*, 3rd ed., Thm 4.2）」。
+- 定理、公式、结论可以用**自己的话复述**事实，但**必须注明出处**（书名/讲义/课程号）。
 - **习题、习题答案、教材例题原文不要整段照搬**；改成自己编的等价题，或注明出处并只引用结论。
-- 讲义的**课堂截图、PPT 画面**属于授课教师与学校的材料，不要原样嵌进公开分发的笔记；
-  需要时用自己重画的示意图替代。
-- 定理的**表述本身**不是著作权对象（事实与思路不受保护），但**特定表达**受保护；
-  复述时用自己的句子写。
+- 课堂截图、PPT 画面属授课教师与学校的材料，不要原样嵌进公开分发的笔记；需要时用自己重画的示意图替代。
 
 ## Output contract
 
@@ -255,30 +176,20 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
 
 ## Failure handling
 
-- `#include "prelude.typ"` 后报 `unknown variable: accent`：prelude 必须用 `#import "prelude.typ": *`，
-  include 拿不到作用域。
+- `#include "prelude.typ"` 后报 `unknown variable: accent`：prelude 必须用 `#import "prelude.typ": *`，include 拿不到作用域。
 - 注入的配色没生效：`#show: use-palette` 必须写在 `#show: scholia.with(...)` 之后。
-- 在 prelude 的 `accent(裸中文, tone: …)` 报 `unknown variable`：圆括号是 code 模式，裸中文被当变量名，
-  用方括号 `#accent[中文]`。
-- 标题渲染成 `1.1 1.1 小节`：包装器已自动编号，正文不要手写编号。
-- **渲染出来位置不对但不报错**：knot 的内容块是位置参数，
-  `[a]`=标题、`[a][b]`=标题+正文、`[a][b][c]`=标题+标签+正文。
-  写了三个块却以为是「标题+正文」，第二个块会被渲染成小字标签——
-  **退出码是 0，grep `error:` 抓不到**，只能靠看 PNG 发现。
-- 公式报 `unknown variable` 或渲染出字面量：`$a_(ij)$`、`$rank(A)$`、`$\prod_…$`、`$\overline{A}$`
-  在 Typst 里全是错的；正确写法见 `references/troubleshooting.md`。这类错应在 Markdown 阶段就改掉。
-- **几条公式并排写成 `a \qquad b`**：工具会把 `\qquad` 映射成 2em 的 `wide`、`\quad` 映射成
-  1em 的 `quad`，直接排就对了。**不要**再写脚本把它们拆成多个公式块（实测那会多跑两轮排版）。
-  一行真的放不下时，再拆成独立 `$$` 块。
-- **行内 `$1/r$`**：工具在行内把 `/` 排成平排的斜杠（`1 slash r`），只有独占一行的 `$$` 才排
-  上下分式。看到 `1/r` 不必手改成 `r^{-1}`。
-- **讲义抬头的多行引用块**（`> **来源**：…`）在两条 PDF 链路里都会排成左侧细线的灰色小字块，
-  字段之间自动换行。不要为了「排版」把它改成普通段落。
-- 方框预算按**最小**小节统计：`## 二、分章详解` 下面挂 7 个 `### 2.x` 时，每个 `2.x` 各自
-  ≤2 就行，不会因为整章合计超 2 就报警。
-- `sidenote` 的 `symbol` 必须圆括号：`#sidenote([正文], symbol: [!])`，方括号写法直接报 `unexpected argument`。
-- 首次编译卡住无输出（包注册表不通）：重试一次，仍不行就把依赖名报给用户，别空等。
-- 用户要的是中文论文/长文排版而非填空笔记：这个 skill 不适用，转 `typst-author-chinese`。
+- `accent(裸中文, tone: …)` 报 `unknown variable`：圆括号是 code 模式，裸中文被当变量名，用方括号 `#accent[中文]`。
+- **渲染位置不对但不报错**：knot 的内容块是位置参数，`[a]`=标题、`[a][b]`=标题+正文、`[a][b][c]`=标题+标签+正文。
+  写了三个块却以为「标题+正文」时第二个块会被渲染成小字标签——**退出码 0，grep `error:` 抓不到**，只能看 PNG 发现。
+- 公式报 `unknown variable` 或渲染出字面量（`$a_(ij)$`、`$rank(A)$`、`$\overline{A}$` 等）：正确写法见
+  `references/troubleshooting.md` §8；这类错应在 Markdown 阶段就改掉。
+- **几条公式并排 `a \qquad b`**：工具把 `\qquad` 映射成 2em 的 `wide`、`\quad` 映射成 1em 的 `quad`，直接排就对了；
+  **不要**写脚本拆成多个公式块。一行真放不下时再拆独立 `$$` 块。
+- **行内 `$1/r$`**：工具在行内把 `/` 排成平排斜杠，只有独占一行的 `$$` 才排上下分式；看到 `1/r` 不必手改成 `r^{-1}`。
+- **讲义抬头多行引用块**（`> **来源**：…`）两条链路都排成左侧细线灰色小字块、字段自动换行；不要为「排版」改成普通段落。
+- 方框预算按**最小**小节统计：`## 二、分章详解` 下挂 7 个 `### 2.x` 时每个 `2.x` 各自 ≤2 即可。
+- 标题编号重复、`sidenote` 的 `symbol` 写法、首次编译卡包：见 `references/troubleshooting.md` §5–§7。
+- 用户要的是中文论文/长文排版而非填空笔记：本 skill 不适用，转 `typst-author-chinese`。
 
 ## Examples
 
@@ -293,40 +204,14 @@ LaTeX → Typst 的数学转换**只在 compile 这一步做一次**：底稿里
 
 ## Windows (win32) platform notes
 
-```powershell
-typst --version                 # 需要 ≥ 0.13.0
-typst compile main.typ out.pdf
-typst compile main.typ "page-{p}.png"
-typst compile --pages 1-2 main.typ "page-{p}.png"
-typst fonts                     # 看本机可用字体名
-```
-
 - 用 Read/Write 工具写 `.md`/`.typ`，不要用 `Set-Content`（PowerShell 5.1 默认 ANSI 会破坏 UTF-8 中文）。
-- 两条链路的默认字体栈已经统一：`STIX Two` / `Libertinus` / 随包 `Notes Kai SC` 与
-  `Notes Serif SC` / `Noto` / `Source Han`。本机缺 `STIX Two` 时会刷
-  `warning: unknown font family`，**无害**，Typst 自动回退到 Libertinus / 随包字体。
-- 不需要再手工覆盖字体：vendored `scholia` 的 `default-fonts` 已 patch，
-  `note` / `sidenote` / `label-it` 也跟随同一套字体。实际字体表见
-  [`references/typography-spec.md`](references/typography-spec.md) §1。
-
-### 字体与分发（对外分享 PDF 前必读）
-
-两条链路的默认字体栈只包含**可再分发**字体（STIX Two / Libertinus / 随包
-`Notes Kai SC` 与 `Notes Serif SC` / Noto / Source Han / DejaVu）。商业专有字体
-（Optima / Avenir Next / Menlo / Songti SC / SimSun / Microsoft YaHei / Consolas）
-不在生效列表里；模板里即使出现，也只以注释形式保留。
-
-对外分发前跑一次 `pdffonts out.pdf`：看到上述商业字体，说明生僻字回退到了系统字体，
-换一份完整 OFL 字体再排。完整口径见
-[`references/typography-spec.md`](references/typography-spec.md) §1 与 §8。
+- 编译 / 逐页 PNG / 指定页 / `typst fonts` 命令、字体告警处理、对外分发前 `pdffonts out.pdf` 核对商业字体回退：
+  见 [`references/troubleshooting.md`](references/troubleshooting.md)；实际字体表见
+  [`references/typography-spec.md`](references/typography-spec.md) §1 与 §8。
 
 ## 许可与致谢
 
-- 本 skill（工作流说明、配色方案、`prelude.typ` 扩展、`mapping` / `style` / `troubleshooting` 文档）
-  以 **MIT** 授权发布，见 [`LICENSE`](LICENSE)。
-- 排版引擎 [`@preview/scholia`](https://typst.app/universe/package/scholia)（MIT © Eric Yang）
-  及其依赖 `@preview/frame-it`（MIT）、`@preview/marginalia`（UNLICENSE）等已
-  **vendor 进 `zju_lecture/typst-packages/`**（保留各自许可文件），编译时离线解析；
-  本项目对 `scholia` 的 `src/fonts.typ` / `src/lib.typ` 打了补丁，记录在
-  `zju_lecture/typst-packages/VENDORED.md`。
-- 逐条归属见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+- 本 skill（工作流说明、配色方案、`prelude.typ` 扩展、`mapping` / `style` / `troubleshooting` 文档）以 **MIT** 发布，
+  见 [`LICENSE`](LICENSE)；逐条归属见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+- 排版引擎 [`@preview/scholia`](https://typst.app/universe/package/scholia)（MIT © Eric Yang）及其依赖已
+  **vendor 进 `zju_lecture/typst-packages/`**（保留各自许可文件）；本项目对 `src/fonts.typ` / `src/lib.typ` 的补丁记录在 `VENDORED.md`。
