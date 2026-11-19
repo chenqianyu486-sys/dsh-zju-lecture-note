@@ -185,16 +185,73 @@ class TestMathEnvironments(unittest.TestCase):
         converted, _ = latex_to_typst(
             r"\begin{cases} x & x > 0 \\ -x & x \le 0 \end{cases}"
         )
-        self.assertEqual(converted, "cases(x & x > 0, -x & x ≤ 0)")
+        self.assertEqual(converted, "cases(x & quad x > 0, -x & quad x ≤ 0)")
         converted, _ = latex_to_typst(r"\begin{aligned} a &= b \\ c &= d \end{aligned}")
         self.assertIn("&=", converted)
         self.assertIn("\\", converted)
+
+    def test_cases_punctuation_commas_do_not_split_rows(self):
+        # LaTeX 的收尾逗号 / 条件里的逗号是标点，不能变成 Typst 的分支分隔符，
+        # 否则条件散成碎行、对齐全乱（实地截图）。
+        converted, _ = latex_to_typst(
+            r"\begin{cases} x^2, & x \ge 0, t > 0 \\ 0, & x < 0 \end{cases}"
+        )
+        self.assertEqual(
+            converted,
+            "cases(x^2 comma & quad x ≥ 0 comma t > 0, 0 comma & quad x < 0)",
+        )
+        # 函数参数 / 括号里的逗号保持原样。
+        converted, _ = latex_to_typst(
+            r"\begin{cases} \frac{t^2 x^2}{2}, & x \ge t \ge 0 \\ 0, & t \ge x \ge 0 \end{cases}"
+        )
+        self.assertIn("frac(t^2 x^2, 2)", converted)
+        self.assertEqual(converted.count(" & quad "), 2)
+
+    def test_cases_single_column_keeps_left_brace_only(self):
+        converted, _ = latex_to_typst(r"\begin{cases} x \\ -x \end{cases}")
+        self.assertEqual(converted, "cases(x, -x)")
+
+    def test_cases_conversion_is_idempotent(self):
+        for src in (
+            r"\begin{cases} x, & x > 0 \\ -x, & x \le 0 \end{cases}",
+            r"\begin{cases} x^2, & x \ge 0, t > 0 \\ 0, & x < 0 \end{cases}",
+            r"\begin{cases} x \\ -x \end{cases}",
+        ):
+            once, _ = latex_to_typst(src)
+            twice, _ = latex_to_typst(once)
+            self.assertEqual(once, twice, src)
+
+    def test_cases_escaped_braces_keep_branch_count(self):
+        # \left\{ … \right. 只产出 \{，没有配对的 \}；逗号转义不能因此失效。
+        converted, _ = latex_to_typst(
+            r"\begin{cases} \left\{ x \mid x > 0 \right., & t > 0 \\ 0, & t \le 0 \end{cases}"
+        )
+        self.assertEqual(
+            converted,
+            r"cases(\{ x | x > 0 comma & quad t > 0, 0 comma & quad t ≤ 0)",
+        )
+        self.assertEqual(converted.count(" & quad "), 2)
+        twice, _ = latex_to_typst(converted)
+        self.assertEqual(twice, converted)
+
+    def test_bar_uses_overline_not_typst_bar(self):
+        # Typst 0.15 的 bar 不是上划线：bar(u) 会排成 |u|（旧 PDF 实测）。
+        self.assertEqual(latex_to_typst(r"\bar{u}")[0], "overline(u)")
+        self.assertEqual(latex_to_typst(r"\bar z_0")[0], "overline(z_0)")
+        once, _ = latex_to_typst(r"\bar{u}")
+        self.assertEqual(latex_to_typst(once)[0], once)
+
+    def test_escaped_braces_are_idempotent(self):
+        for src in (r"\left\{ x \mid x > 0 \right.", r"\mathcal{L}\{f(t)\}"):
+            once, _ = latex_to_typst(src)
+            twice, _ = latex_to_typst(once)
+            self.assertEqual(once, twice, src)
 
     def test_multi_letter_identifiers_do_not_break_typst(self):
         self.assertEqual(latex_to_typst("B^2 - 4AC")[0], "B^2 - 4A C")
         self.assertEqual(latex_to_typst("e^{-st}")[0], "e^(-s t)")
         self.assertEqual(latex_to_typst(r"\operatorname{Res}(f, z_0)")[0], '"Res"(f, z_0)')
-        self.assertEqual(latex_to_typst(r"\mathcal{L}\{f(t)\}")[0], "cal(L){f(t)}")
+        self.assertEqual(latex_to_typst(r"\mathcal{L}\{f(t)\}")[0], r"cal(L)\{f(t)\}")
 
     def test_unknown_environment_is_named(self):
         converted, issues = latex_to_typst(r"\begin{tikz} \draw (0,0); \end{tikz}")

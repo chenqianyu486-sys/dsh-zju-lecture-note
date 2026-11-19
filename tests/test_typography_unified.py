@@ -350,6 +350,20 @@ class TestInlineMathPadding(unittest.TestCase):
         starter = os.path.join(os.path.dirname(SPEC), "starter.typ")
         self.assertRegex(read(starter), self._rule_re())
 
+    def _cases_gap_re(self):
+        return r"#set math\.cases\(gap: {}\)".format(
+            re.escape(self.spec["math.cases.gap"])
+        )
+
+    def test_cases_row_gap_matches_spec_everywhere(self):
+        # 方程组分支间距：机器块 ↔ Python 常量 ↔ 阅读版 ↔ 填空头部 ↔ starter。
+        self.assertEqual(self.spec["math.cases.gap"], study_notes.CASES_ROW_GAP)
+        rule = self._cases_gap_re()
+        self.assertRegex(read(HANDOUT_TYP), rule)
+        self.assertRegex(study_notes.render_typst("正文。").typst, rule)
+        starter = os.path.join(os.path.dirname(SPEC), "starter.typ")
+        self.assertRegex(read(starter), rule)
+
     def test_tall_formulas_get_extra_room(self):
         pad = study_notes.INLINE_MATH_TALL_INSET
         self.assertEqual(self.spec["body.inline-math.tall"], pad)
