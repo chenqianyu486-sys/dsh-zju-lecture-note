@@ -18,7 +18,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXPECTED_VERSION = "2.2.11"
+EXPECTED_VERSION = "2.2.12"
 
 #: dsh 设置页应当覆盖的所有字段。新增字段必须同时出现在这里、Config 与 client.js。
 SETTING_FIELDS = (

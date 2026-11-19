@@ -1,6 +1,6 @@
 {
   "name": "scholia-notes",
-  "version": "2.2.11",
+  "version": "2.2.12",
   "contentHash": "sha256:a2996a352ec54b35350e9830e3a9063d4ae147324a48ab89efd10fe429e64f3b",
   "fileCount": 12,
   "files": [
@@ -54,8 +54,8 @@
     },
     {
       "path": "references/starter.typ",
-      "sha256": "f8818cfb1c9db6428a940ce28b5d1e646a95b07244d81ac2096ac3f21af117c4",
-      "size": 2919,
+      "sha256": "19d4eed185420eebbb21c9856557aa191a67270cd3810b7611037301a06f6806",
+      "size": 2947,
       "mode": "0644"
     },
     {
@@ -72,8 +72,8 @@
     },
     {
       "path": "references/typography-spec.md",
-      "sha256": "1151b53bab4520b6d1cef55eb0338150ca3fda1901b22a4a6dc083f50b2d4dc5",
-      "size": 18006,
+      "sha256": "9469004b78726221327734405753e1f9f82d95289b34fbb004a569b28941f946",
+      "size": 19473,
       "mode": "0644"
     }
   ]
