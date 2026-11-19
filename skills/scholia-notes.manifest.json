@@ -1,7 +1,7 @@
 {
   "name": "scholia-notes",
   "version": "2.2.12",
-  "contentHash": "sha256:a2996a352ec54b35350e9830e3a9063d4ae147324a48ab89efd10fe429e64f3b",
+  "contentHash": "sha256:6f5fb08c532ff7ea3dfeee9d5d73dcc8f71d59e0d7e22340d03afcd8a91da41d",
   "fileCount": 12,
   "files": [
     {
@@ -18,8 +18,8 @@
     },
     {
       "path": "SKILL.md",
-      "sha256": "a2996a352ec54b35350e9830e3a9063d4ae147324a48ab89efd10fe429e64f3b",
-      "size": 20183,
+      "sha256": "6f5fb08c532ff7ea3dfeee9d5d73dcc8f71d59e0d7e22340d03afcd8a91da41d",
+      "size": 14122,
       "mode": "0644"
     },
     {
@@ -60,14 +60,14 @@
     },
     {
       "path": "references/style.md",
-      "sha256": "3f0c938a509cd5408b03564e0175acabdce87666fb68c21785938ec6482f69bf",
-      "size": 8389,
+      "sha256": "1b817f9877168ac8ccf09f2cab793ad8f2b64c1a1ba5204fbb3269c320590875",
+      "size": 8216,
       "mode": "0644"
     },
     {
       "path": "references/troubleshooting.md",
-      "sha256": "83eba0bf04d9dfc0c9f192d7eafb8f7e9e0ff24d3da42147c7c17ba4888c3376",
-      "size": 6566,
+      "sha256": "164abe1542c6ba2f40a9f8ac35bb5ae716ac517e120cf726b9b07021a2ef1aea",
+      "size": 6484,
       "mode": "0644"
     },
     {
