@@ -39,6 +39,7 @@ body.formula = 1.6em
 body.inline-math.top = 0.12em
 body.inline-math.bottom = 0.10em
 body.inline-math.tall = 0.30em
+math.cases.gap = 0.6em
 list.spacing = 0.7em
 list.indent = 1.5em
 cover.kicker = 10pt
@@ -150,6 +151,7 @@ divider.stroke = 0.4pt
 | 块级公式上下 | **1.6em** | 显式给出，不跟随 `par.spacing` |
 | 行内公式上下（基础） | 上 **0.12em** / 下 **0.10em** | 每个行内公式都补；见 §3.2 |
 | 行内公式下留白（高公式） | **0.30em** | 只给分式/根式/矩阵/大算子的上下限；见 §3.2 |
+| 方程组分支间距 `math.cases.gap` | **0.6em** | `cases` 默认 0.2em 太挤；见 §3.3 |
 | `justify` | **false** | 两端对齐会把中文字距拉松 |
 | `first-line-indent` | **0pt** | 配合 `#h(2em)`，避免双重缩进 |
 
@@ -202,8 +204,31 @@ divider.stroke = 0.4pt
 #set list(indent: 1.5em, spacing: 0.7em)
 #set enum(indent: 1.5em, spacing: 0.7em)
 #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
+#set math.cases(gap: 0.6em)
 #show math.equation.where(block: false): it => box(inset: (top: 0.12em, bottom: 0.10em), it)
 ```
+
+### 3.3 方程组（`cases`）的对齐与间距（`math.cases.gap`）
+
+**现象**：分段函数 / 初边值问题的大括号方程组，条件列错位、散成碎行，相邻两行
+的分式几乎贴在一起。
+
+**原因**（实测，Typst 0.15.1）：
+
+- `cases(…)` 用**逗号分隔分支**、`&` 对齐列。LaTeX 源里 `expr, & cond` 的收尾逗号、
+  条件里的 `x \ge 0, t > 0` 都是**标点**，但转换后若原样留在子项里，会被 Typst 当成
+  **换行**，于是条件独立成行、对齐全乱。
+- `cases` 的分支间距默认 `0% + 0.2em`，带分式的两行墨迹几乎相接；列距是固定值，
+  最宽那一行的条件会贴到表达式上。
+
+**做法**：
+
+1. **标点逗号转符号**：转换器把子项里**顶层**的逗号换成 `comma` 符号
+   （`_escape_case_commas`）；括号 / 方括号 / 花括号 / 引号里的逗号是函数参数或内容
+   （`frac(a, b)`、`(x, t)`），不动。这样分支数与 LaTeX 的行数一一对应。
+2. **列距**：条件列前补 `quad`（1em）。`cases` 的列距 set 不了，通过内容补白实现。
+3. **行距**：`#set math.cases(gap: 0.6em)`。阅读版写在 `handout_prelude.typ`，填空笔记
+   由 `render_typst` 写进固定头部，手工排版照抄 starter.typ；三处与机器块绑定。
 
 ## 4. 版心与边注
 
