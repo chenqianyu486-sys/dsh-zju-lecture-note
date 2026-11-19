@@ -96,6 +96,8 @@
 )
 // 块级公式的上下间距**显式**给出，不跟随 par.spacing（否则一压段距就重叠）。
 #show math.equation.where(block: true): set block(above: 1.6em, below: 1.6em)
+// 方程组（cases）分支间距：默认 0.2em 会让带分式的相邻两行贴在一起。
+#set math.cases(gap: 0.6em)
 
 // 行内公式的上下留白。Typst 的行内数学盒子高度是固定值（11pt 下约 0.68em，
 // 与内容无关）：分式的分子/分母、根式、大算子的上下限会溢出盒子、压到邻行

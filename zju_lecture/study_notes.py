@@ -146,6 +146,11 @@ KNOT_RATIO_TOO_MANY = 4
 #: 否则一调段间距，公式就会贴到上下段落上（实测直接重叠）。
 EQUATION_BLOCK_SPACING = "1.6em"
 
+#: 方程组（``cases``）相邻分支的间距。Typst 默认 ``0% + 0.2em``，带分式的
+#: 两行几乎贴在一起（实测分子压到上一行分母）；0.6em 留出呼吸又不散架。
+#: 列距由转换器在条件列前补 ``quad``（cases 的列距是固定值，set 不了）。
+CASES_ROW_GAP = "0.6em"
+
 #: 中文正文的排版参数（口径见 ``format-spec.md`` §1.2）：
 #:
 #: - **段首空两格**：用 ``#h(2em)`` 显式顶首行，**不用** ``par.first-line-indent``。
@@ -443,7 +448,8 @@ _LATEX_SYMBOLS: Dict[str, str] = {
 #: 需要一个花括号参数、且 Typst 侧同名函数的 LaTeX 命令。
 _LATEX_FUNCTIONS: Dict[str, str] = {
     "overline": "overline", "underline": "underline", "hat": "hat",
-    "tilde": "tilde", "bar": "bar", "vec": "vec", "dot": "dot",
+    # Typst 0.15 的 `bar` 不是上划线（会排成 |u|），`\bar` 走 overline。
+    "tilde": "tilde", "bar": "overline", "vec": "vec", "dot": "dot",
     "ddot": "ddot", "widehat": "hat", "widetilde": "tilde",
 }
 
@@ -485,7 +491,7 @@ _TYPST_BARE_NAMES = (
     | frozenset({
         "frac", "sqrt", "root", "cal", "frak", "bold", "upright", "op",
         "bb", "RR", "NN", "ZZ", "CC", "QQ",
-        "mat", "cases", "quad", "wide", "thin", "med", "slash",
+        "mat", "cases", "quad", "wide", "thin", "med", "slash", "comma",
         "product", "integral", "sum", "dots",
         "overbrace", "underbrace", "overline", "underline",
         "hat", "tilde", "bar", "vec", "dot", "ddot", "compose", "degree",
@@ -659,6 +665,47 @@ def _plain_word(word: str) -> str:
     return 'upright("' + word + '")'
 
 
+def _escape_case_commas(converted: str) -> str:
+    """把 ``cases`` 子项里**顶层**的标点逗号换成 ``comma`` 符号。
+
+    Typst 的 ``cases(…)`` 用逗号分隔分支：LaTeX 里 ``expr, & cond`` 的收尾逗号、
+    条件里的 ``x \\ge 0, t > 0`` 若原样留下，会被当成**换行**，条件就散成碎行、
+    对齐全乱（实测截图）。函数调用 / 元组括号与引号里的逗号是参数或内容
+    （``frac(a, b)``、``(x, t)``），保持原样；字面花括号里的逗号仍是标点。
+    """
+    out: List[str] = []
+    depth = 0
+    in_quote = False
+    escaped = False
+    for index, char in enumerate(converted):
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            # 保留反斜杠；下一个字符是转义目标（\{ / \} / 换行），不参与配平。
+            out.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            in_quote = not in_quote
+        elif not in_quote:
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth = max(0, depth - 1)
+            elif char == "," and depth == 0:
+                # 前后各留一个空格，但不要和原文已有空白叠成两个。
+                if out and not out[-1].isspace():
+                    out.append(" ")
+                out.append("comma")
+                if index + 1 < len(converted) and not converted[index + 1].isspace():
+                    out.append(" ")
+                continue
+        out.append(char)
+    return "".join(out)
+
+
 def _convert_environment(name: str, inner: str) -> Tuple[str, List[str]]:
     """把 LaTeX 环境改写成 Typst 数学。
 
@@ -696,16 +743,16 @@ def _convert_environment(name: str, inner: str) -> Tuple[str, List[str]]:
         ), warnings
 
     if name == "cases":
-        if all("&" in row for row in rows):
-            entries = []
-            for row in rows:
-                cells = [convert_cell(cell) for cell in row.split("&")]
-                entries.append(" & ".join(cells))
-            return "cases(" + ", ".join(entries) + ")", warnings
-        # 没有条件对齐符时退回成带左花括号的矩阵，视觉上仍然是 cases。
-        return (
-            'mat(delim: "{", ' + "; ".join(matrix_columns()) + ")"
-        ), warnings
+        entries = []
+        for row in rows:
+            cells = [
+                _escape_case_commas(convert_cell(cell)) for cell in row.split("&")
+            ]
+            # 条件列前补一 em：cases 的列距是固定值，不补的话最宽那一行的
+            # 条件会贴到表达式的分式上。单列（无 &）不补。
+            cells = [cells[0]] + ["quad " + cell for cell in cells[1:]]
+            entries.append(" & ".join(cells))
+        return "cases(" + ", ".join(entries) + ")", warnings
 
     if name in _ALIGN_ENVS:
         return (" \\ ").join(convert_cell(row) for row in rows), warnings
@@ -1103,8 +1150,9 @@ def latex_to_typst(expression: str, inline: bool = False) -> Tuple[str, List[str
             if command in _LATEX_SYMBOLS:
                 symbol = _LATEX_SYMBOLS[command]
                 if symbol in ("{", "}"):
-                    # 花括号是字面量：左右补空格会在 `\{f(t)\}` 里留下空隙。
-                    out.append(symbol)
+                    # 花括号是字面量；保留反斜杠才能让 f(f(x)) == f(x)
+                    # （早先输出裸 `{`，二次转换会丢掉反斜杠）。
+                    out.append("\\" + symbol)
                 else:
                     _emit(symbol, index)
                 continue
@@ -2350,6 +2398,8 @@ def render_typst(
         # 否则一调段间距，公式就贴到上下段落上。
         "#show math.equation.where(block: true): set block("
         f"above: {EQUATION_BLOCK_SPACING}, below: {EQUATION_BLOCK_SPACING})",
+        # 方程组分支间距：默认 0.2em 会让带分式的相邻两行贴在一起。
+        f"#set math.cases(gap: {CASES_ROW_GAP})",
         # 行内公式的上下留白：Typst 的行内数学盒子高度固定，分式/根式会压到
         # 邻行（数值与含义见 INLINE_MATH_INSET_* 与 typography-spec.md §3.2）。
         "#show math.equation.where(block: false): it => box("
